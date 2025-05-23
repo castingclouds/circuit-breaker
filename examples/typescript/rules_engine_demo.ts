@@ -1,121 +1,37 @@
-// TypeScript client demonstrating Circuit Breaker Rules Engine
-// This shows complex rule evaluation for token transitions via GraphQL
-// Run with: npm run start:rules
+#!/usr/bin/env npx tsx
+// Rules engine demonstration - TypeScript GraphQL Client
+// Shows advanced rules evaluation for conditional workflow transitions
+// Run with: npx tsx examples/typescript/rules_engine_demo.ts
 
-import { GraphQLClient, gql } from 'graphql-request';
-import chalk from 'chalk';
+import { CircuitBreakerClient } from './basic_workflow.js';
 
-// GraphQL endpoint (assumes Rust server is running)
-const GRAPHQL_ENDPOINT = 'http://localhost:4000/graphql';
-
-// Rules Engine Types (mirroring Rust implementation)
 interface Rule {
   id: string;
+  name: string;
   description: string;
   condition: RuleCondition;
 }
 
 interface RuleCondition {
-  type: 'FieldExists' | 'FieldEquals' | 'FieldGreaterThan' | 'FieldLessThan' | 'FieldContains' | 'And' | 'Or' | 'Not' | 'Expression';
+  type: 'And' | 'Or' | 'Not' | 'FieldExists' | 'FieldEquals' | 'FieldGreaterThan' | 'FieldLessThan' | 'FieldContains';
   field?: string;
   value?: any;
-  threshold?: number;
-  substring?: string;
-  rules?: Rule[];
-  rule?: Rule;
-  script?: string;
-}
-
-interface WorkflowDefinition {
-  name: string;
-  places: string[];
-  transitions: TransitionDefinition[];
-  initialPlace: string;
-}
-
-interface TransitionDefinition {
-  id: string;
-  fromPlaces: string[];
-  toPlace: string;
-  conditions?: string[];
-  rules?: Rule[];
-}
-
-interface Token {
-  id: string;
-  place: string;
-  workflowId: string;
-  data?: any;
-  metadata?: any;
-  history?: HistoryEvent[];
-  createdAt?: string;
-  updatedAt?: string;
-}
-
-interface HistoryEvent {
-  transition: string;
-  fromPlace: string;
-  toPlace: string;
-  timestamp: string;
+  conditions?: RuleCondition[];
 }
 
 interface RuleEvaluationResult {
-  ruleId: string;
+  rule_id: string;
   passed: boolean;
-  explanation: string;
-  subResults: { ruleId: string; passed: boolean }[];
+  reason: string;
+  details?: Record<string, any>;
 }
 
-interface TransitionRuleEvaluation {
-  transitionId: string;
-  placeCompatible: boolean;
-  rulesPassed: boolean;
-  canFire: boolean;
-  ruleResults: RuleEvaluationResult[];
-  explanation: string;
-}
-
-interface WorkflowEvaluationResult {
-  workflowId: string;
-  tokenId: string;
-  currentPlace: string;
-  transitionResults: TransitionRuleEvaluation[];
-  availableCount: number;
-  blockedCount: number;
-}
-
-// GraphQL Response Types
-interface CreateWorkflowResponse {
-  createWorkflow: {
-    id: string;
-    name: string;
-    places: string[];
-    initialPlace: string;
-  };
-}
-
-interface CreateTokenResponse {
-  createToken: Token;
-}
-
-interface GetTokenResponse {
-  token: Token;
-}
-
-interface AvailableTransitionsResponse {
-  availableTransitions: {
-    id: string;
-    fromPlaces: string[];
-    toPlace: string;
-  }[];
-}
-
-// Rule Builder Functions (TypeScript equivalents of Rust builders)
 class RuleBuilder {
-  static fieldExists(id: string, field: string): Rule {
+  static fieldExists(id: string, description: string, field: string): Rule {
     return {
       id,
-      description: `Field '${field}' must exist`,
+      name: `Field Exists: ${field}`,
+      description,
       condition: {
         type: 'FieldExists',
         field
@@ -123,10 +39,11 @@ class RuleBuilder {
     };
   }
 
-  static fieldEquals(id: string, field: string, value: any): Rule {
+  static fieldEquals(id: string, description: string, field: string, value: any): Rule {
     return {
       id,
-      description: `Field '${field}' must equal ${JSON.stringify(value)}`,
+      name: `Field Equals: ${field} = ${value}`,
+      description,
       condition: {
         type: 'FieldEquals',
         field,
@@ -135,530 +52,469 @@ class RuleBuilder {
     };
   }
 
-  static fieldGreaterThan(id: string, field: string, threshold: number): Rule {
+  static fieldGreaterThan(id: string, description: string, field: string, value: number): Rule {
     return {
       id,
-      description: `Field '${field}' must be greater than ${threshold}`,
+      name: `Field Greater Than: ${field} > ${value}`,
+      description,
       condition: {
         type: 'FieldGreaterThan',
         field,
-        threshold
+        value
       }
     };
   }
 
-  static fieldLessThan(id: string, field: string, threshold: number): Rule {
+  static fieldContains(id: string, description: string, field: string, value: string): Rule {
     return {
       id,
-      description: `Field '${field}' must be less than ${threshold}`,
-      condition: {
-        type: 'FieldLessThan',
-        field,
-        threshold
-      }
-    };
-  }
-
-  static fieldContains(id: string, field: string, substring: string): Rule {
-    return {
-      id,
-      description: `Field '${field}' must contain '${substring}'`,
+      name: `Field Contains: ${field} contains "${value}"`,
+      description,
       condition: {
         type: 'FieldContains',
         field,
-        substring
+        value
       }
     };
   }
 
-  static and(id: string, description: string, rules: Rule[]): Rule {
+  static and(id: string, description: string, conditions: Rule[]): Rule {
     return {
       id,
+      name: `AND: ${conditions.map(c => c.name).join(' AND ')}`,
       description,
       condition: {
         type: 'And',
-        rules
+        conditions: conditions.map(c => c.condition)
       }
     };
   }
 
-  static or(id: string, description: string, rules: Rule[]): Rule {
+  static or(id: string, description: string, conditions: Rule[]): Rule {
     return {
       id,
+      name: `OR: ${conditions.map(c => c.name).join(' OR ')}`,
       description,
       condition: {
         type: 'Or',
-        rules
-      }
-    };
-  }
-
-  static not(id: string, description: string, rule: Rule): Rule {
-    return {
-      id,
-      description,
-      condition: {
-        type: 'Not',
-        rule
+        conditions: conditions.map(c => c.condition)
       }
     };
   }
 }
 
-// Client-side rule evaluation (for demo purposes)
-class ClientRulesEngine {
-  private rules: Map<string, Rule> = new Map();
-
-  constructor() {
-    this.registerCommonRules();
+class ClientRuleEngine {
+  /**
+   * Client-side rule evaluation for immediate UI feedback
+   * Note: This should always be validated on the server for authoritative results
+   */
+  static evaluateRule(rule: Rule, tokenData: any, tokenMetadata: any): RuleEvaluationResult {
+    return this.evaluateCondition(rule.condition, tokenData, tokenMetadata, rule.id);
   }
 
-  private registerCommonRules() {
-    // Content validation rules
-    this.registerRule(RuleBuilder.fieldExists('has_content', 'content'));
-    this.registerRule(RuleBuilder.fieldExists('has_title', 'title'));
-    this.registerRule(RuleBuilder.fieldExists('has_description', 'description'));
+  private static evaluateCondition(
+    condition: RuleCondition, 
+    data: any, 
+    metadata: any, 
+    ruleId: string
+  ): RuleEvaluationResult {
+    const combinedData = { ...data, ...metadata };
 
-    // Approval workflow rules
-    this.registerRule(RuleBuilder.fieldExists('has_reviewer', 'reviewer'));
-    this.registerRule(RuleBuilder.fieldExists('has_approver', 'approver'));
-    this.registerRule(RuleBuilder.fieldEquals('status_approved', 'status', 'approved'));
-    this.registerRule(RuleBuilder.fieldEquals('status_rejected', 'status', 'rejected'));
-    this.registerRule(RuleBuilder.fieldEquals('status_pending', 'status', 'pending'));
-
-    // Priority and urgency rules
-    this.registerRule(RuleBuilder.fieldGreaterThan('high_priority', 'priority', 5));
-    this.registerRule(RuleBuilder.fieldGreaterThan('critical_priority', 'priority', 8));
-    this.registerRule(RuleBuilder.fieldEquals('emergency_flag', 'emergency', true));
-
-    // Testing and deployment rules
-    this.registerRule(RuleBuilder.fieldEquals('tests_passed', 'test_status', 'passed'));
-    this.registerRule(RuleBuilder.fieldEquals('tests_failed', 'test_status', 'failed'));
-    this.registerRule(RuleBuilder.fieldEquals('security_approved', 'security_status', 'approved'));
-
-    // Custom rules for our demo
-    this.registerRule(RuleBuilder.fieldEquals('document_type_article', 'document_type', 'article'));
-    this.registerRule(RuleBuilder.fieldGreaterThan('word_count_sufficient', 'word_count', 500));
-  }
-
-  registerRule(rule: Rule) {
-    this.rules.set(rule.id, rule);
-  }
-
-  listRuleIds(): string[] {
-    return Array.from(this.rules.keys());
-  }
-
-  evaluateRule(rule: Rule, metadata: any, data: any): RuleEvaluationResult {
-    const passed = this.evaluateCondition(rule.condition, metadata, data);
-    return {
-      ruleId: rule.id,
-      passed,
-      explanation: passed ? `Rule '${rule.id}' passed` : `Rule '${rule.id}' failed`,
-      subResults: []
-    };
-  }
-
-  private evaluateCondition(condition: RuleCondition, metadata: any, data: any): boolean {
     switch (condition.type) {
       case 'FieldExists':
-        return (metadata && metadata[condition.field!] !== undefined) || 
-               (data && data[condition.field!] !== undefined);
-      
+        const exists = combinedData[condition.field!] !== undefined && combinedData[condition.field!] !== null;
+        return {
+          rule_id: ruleId,
+          passed: exists,
+          reason: exists ? `Field '${condition.field}' exists` : `Field '${condition.field}' does not exist`,
+          details: { field: condition.field, value: combinedData[condition.field!] }
+        };
+
       case 'FieldEquals':
-        const fieldValue = (metadata && metadata[condition.field!]) || 
-                          (data && data[condition.field!]);
-        return fieldValue === condition.value;
-      
+        const fieldValue = combinedData[condition.field!];
+        const equals = fieldValue === condition.value;
+        return {
+          rule_id: ruleId,
+          passed: equals,
+          reason: equals 
+            ? `Field '${condition.field}' equals ${condition.value}` 
+            : `Field '${condition.field}' (${fieldValue}) does not equal ${condition.value}`,
+          details: { field: condition.field, expected: condition.value, actual: fieldValue }
+        };
+
       case 'FieldGreaterThan':
-        const numValue = (metadata && metadata[condition.field!]) || 
-                        (data && data[condition.field!]);
-        return typeof numValue === 'number' && numValue > condition.threshold!;
-      
-      case 'FieldLessThan':
-        const numValue2 = (metadata && metadata[condition.field!]) || 
-                         (data && data[condition.field!]);
-        return typeof numValue2 === 'number' && numValue2 < condition.threshold!;
-      
+        const numValue = Number(combinedData[condition.field!]);
+        const greater = !isNaN(numValue) && numValue > condition.value;
+        return {
+          rule_id: ruleId,
+          passed: greater,
+          reason: greater 
+            ? `Field '${condition.field}' (${numValue}) is greater than ${condition.value}`
+            : `Field '${condition.field}' (${numValue}) is not greater than ${condition.value}`,
+          details: { field: condition.field, threshold: condition.value, actual: numValue }
+        };
+
       case 'FieldContains':
-        const strValue = (metadata && metadata[condition.field!]) || 
-                        (data && data[condition.field!]);
-        return typeof strValue === 'string' && strValue.includes(condition.substring!);
-      
+        const strValue = String(combinedData[condition.field!] || '');
+        const contains = strValue.includes(String(condition.value));
+        return {
+          rule_id: ruleId,
+          passed: contains,
+          reason: contains 
+            ? `Field '${condition.field}' contains "${condition.value}"`
+            : `Field '${condition.field}' does not contain "${condition.value}"`,
+          details: { field: condition.field, searchValue: condition.value, actualValue: strValue }
+        };
+
       case 'And':
-        return condition.rules!.every(rule => this.evaluateCondition(rule.condition, metadata, data));
-      
+        const andResults = condition.conditions!.map(c => this.evaluateCondition(c, data, metadata, ruleId));
+        const allPassed = andResults.every(r => r.passed);
+        return {
+          rule_id: ruleId,
+          passed: allPassed,
+          reason: allPassed ? 'All AND conditions passed' : 'One or more AND conditions failed',
+          details: { subResults: andResults }
+        };
+
       case 'Or':
-        return condition.rules!.some(rule => this.evaluateCondition(rule.condition, metadata, data));
-      
-      case 'Not':
-        return !this.evaluateCondition(condition.rule!.condition, metadata, data);
-      
-      case 'Expression':
-        // Not implemented in this demo
-        return false;
-      
+        const orResults = condition.conditions!.map(c => this.evaluateCondition(c, data, metadata, ruleId));
+        const anyPassed = orResults.some(r => r.passed);
+        return {
+          rule_id: ruleId,
+          passed: anyPassed,
+          reason: anyPassed ? 'At least one OR condition passed' : 'All OR conditions failed',
+          details: { subResults: orResults }
+        };
+
       default:
-        return false;
+        return {
+          rule_id: ruleId,
+          passed: false,
+          reason: `Unknown rule type: ${condition.type}`,
+          details: { condition }
+        };
     }
-  }
-
-  canTransition(token: Token, transition: TransitionDefinition): boolean {
-    // Check place compatibility
-    if (!transition.fromPlaces.includes(token.place)) {
-      return false;
-    }
-
-    // Check rules if any
-    if (transition.rules) {
-      return transition.rules.every(rule => 
-        this.evaluateCondition(rule.condition, token.metadata, token.data)
-      );
-    }
-
-    return true;
-  }
-
-  availableTransitions(token: Token, workflow: WorkflowDefinition): TransitionDefinition[] {
-    return workflow.transitions.filter(transition => 
-      this.canTransition(token, transition)
-    );
   }
 }
 
-// Demo workflow creation
-function createPublishingWorkflow(): WorkflowDefinition {
-  // Complex rule: Ready to publish if (high quality AND sufficient length) OR emergency override
-  const publishRule = RuleBuilder.or(
-    'publish_ready',
-    'Ready to publish',
-    [
-      // Normal publishing criteria
-      RuleBuilder.and(
-        'quality_criteria',
-        'High quality article with sufficient content',
-        [
-          RuleBuilder.fieldExists('has_content', 'content'),
-          RuleBuilder.fieldExists('has_title', 'title'),
-          RuleBuilder.fieldExists('has_reviewer', 'reviewer'),
-          RuleBuilder.fieldEquals('status_approved', 'status', 'approved'),
-          RuleBuilder.fieldEquals('document_type_article', 'document_type', 'article'),
-          RuleBuilder.fieldGreaterThan('word_count_sufficient', 'word_count', 500),
-        ]
-      ),
-      // Emergency override
-      RuleBuilder.fieldEquals('emergency_flag', 'emergency', true),
-    ]
-  );
-
-  // Rule for starting review: must have basic content
-  const reviewRule = RuleBuilder.and(
-    'review_ready',
-    'Ready for review',
-    [
-      RuleBuilder.fieldExists('has_content', 'content'),
-      RuleBuilder.fieldExists('has_title', 'title'),
-      RuleBuilder.fieldGreaterThan('word_count_sufficient', 'word_count', 100), // Lower threshold for review
-    ]
-  );
-
-  return {
-    name: 'Article Publishing Workflow',
-    places: ['draft', 'review', 'approved', 'published', 'rejected'],
-    transitions: [
-      {
-        id: 'submit_for_review',
-        fromPlaces: ['draft'],
-        toPlace: 'review',
-        rules: [reviewRule]
-      },
-      {
-        id: 'approve_article',
-        fromPlaces: ['review'],
-        toPlace: 'approved',
-        rules: [RuleBuilder.fieldExists('has_reviewer', 'reviewer')]
-      },
-      {
-        id: 'publish_article',
-        fromPlaces: ['approved'],
-        toPlace: 'published',
-        rules: [publishRule]
-      },
-      {
-        id: 'reject_article',
-        fromPlaces: ['review'],
-        toPlace: 'rejected',
-        rules: [RuleBuilder.fieldExists('has_reviewer', 'reviewer')]
-      },
-      {
-        id: 'revise_article',
-        fromPlaces: ['rejected'],
-        toPlace: 'draft',
-        rules: [] // No rules - can always revise
-      }
-    ],
-    initialPlace: 'draft'
-  };
+function logSuccess(message: string) {
+  console.log(`✅ ${message}`);
 }
 
-// Test token creation functions
-function createReadyToken(): Partial<Token> {
-  return {
-    place: 'approved',
-    data: {
-      content: 'This is a comprehensive article about the new features in our platform. '.repeat(50),
-      title: 'New Platform Features: A Comprehensive Guide',
-      document_type: 'article',
-      word_count: 750
-    },
-    metadata: {
-      status: 'approved',
-      reviewer: 'senior_editor',
-      priority: 8
-    }
-  };
+function logInfo(message: string) {
+  console.log(`ℹ️  ${message}`);
 }
 
-function createIncompleteToken(): Partial<Token> {
-  return {
-    place: 'draft',
-    data: {
-      content: 'Just a short draft...',
-      title: 'Draft Article',
-      document_type: 'article',
-      word_count: 50
-    },
-    metadata: {
-      status: 'draft'
-      // Missing reviewer
-    }
-  };
+function logError(message: string) {
+  console.log(`❌ ${message}`);
 }
 
-function createEmergencyToken(): Partial<Token> {
-  return {
-    place: 'approved',
-    data: {
-      content: 'Emergency security announcement.',
-      title: 'URGENT: Security Update Required',
-      document_type: 'article',
-      word_count: 100
-    },
-    metadata: {
-      emergency: true, // Emergency override
-      status: 'pending'
-    }
-  };
+function logWarning(message: string) {
+  console.log(`⚠️  ${message}`);
 }
 
-// Demo evaluation function
-function demoTokenEvaluation(
-  engine: ClientRulesEngine,
-  token: Partial<Token>,
-  workflow: WorkflowDefinition,
-  scenarioName: string
-) {
-  console.log(chalk.cyan(`🔍 Scenario: ${scenarioName}`));
-  console.log(chalk.gray(`Token is in place: '${token.place}'`));
-
-  // Get available transitions (client-side evaluation for demo)
-  const fullToken = { ...token, id: 'demo', workflowId: 'demo' } as Token;
-  const available = engine.availableTransitions(fullToken, workflow);
-  console.log(chalk.blue(`Available transitions: ${available.length}`));
-
-  for (const transition of available) {
-    console.log(chalk.green(`  ✅ Can fire: '${transition.id}' -> '${transition.toPlace}'`));
+function logRule(rule: Rule, result: RuleEvaluationResult) {
+  const icon = result.passed ? '✅' : '❌';
+  console.log(`${icon} ${rule.name}: ${result.reason}`);
+  if (result.details && !result.passed) {
+    console.log(`   Details: ${JSON.stringify(result.details, null, 2)}`);
   }
-
-  // Show detailed evaluation for all transitions
-  console.log(chalk.blue('\nDetailed evaluation:'));
-  const allTransitions = workflow.transitions;
-  let availableCount = 0;
-  let blockedCount = 0;
-
-  for (const transition of allTransitions) {
-    const canFire = engine.canTransition(fullToken, transition);
-    const status = canFire ? '✅' : '❌';
-    const placeOk = transition.fromPlaces.includes(token.place!);
-    
-    if (canFire) availableCount++;
-    else blockedCount++;
-
-    console.log(chalk.gray(`  ${status} ${transition.id} (${placeOk ? 'place ok' : 'wrong place'})`));
-
-    // Show rule details for complex transitions
-    if (transition.id === 'publish_article' && transition.rules && transition.rules.length > 0) {
-      console.log(chalk.gray('    Rule details:'));
-      for (const rule of transition.rules) {
-        const ruleResult = engine.evaluateRule(rule, token.metadata, token.data);
-        const ruleStatus = ruleResult.passed ? '✅' : '❌';
-        console.log(chalk.gray(`      ${ruleStatus} ${rule.id}: ${rule.description}`));
-
-        // Show logical structure for complex rules
-        if (rule.condition.type === 'Or' && rule.condition.rules) {
-          console.log(chalk.gray('        OR conditions:'));
-          for (const subRule of rule.condition.rules) {
-            const subResult = engine.evaluateRule(subRule, token.metadata, token.data);
-            const subStatus = subResult.passed ? '✅' : '❌';
-            console.log(chalk.gray(`          ${subStatus} ${subRule.id}`));
-            
-            if (subRule.condition.type === 'And' && subRule.condition.rules) {
-              console.log(chalk.gray('            AND conditions:'));
-              for (const andRule of subRule.condition.rules) {
-                const andResult = engine.evaluateRule(andRule, token.metadata, token.data);
-                const andStatus = andResult.passed ? '✅' : '❌';
-                console.log(chalk.gray(`              ${andStatus} ${andRule.id}`));
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  console.log(chalk.blue(`  Available: ${availableCount}, Blocked: ${blockedCount}`));
-  console.log(chalk.gray('─'.repeat(60)));
-  console.log();
 }
 
 async function main() {
-  console.log(chalk.cyan('🤖 Circuit Breaker Rules Engine Demo (TypeScript)'));
-  console.log(chalk.cyan('===================================================='));
-  console.log(chalk.green('Demonstrating complex rule evaluation for token transitions'));
+  console.log('🚀 Circuit Breaker Rules Engine Demo - TypeScript Client');
+  console.log('========================================================');
   console.log();
 
+  const client = new CircuitBreakerClient();
+
   try {
-    // 1. Create a client-side rules engine for demonstration
-    const rulesEngine = new ClientRulesEngine();
+    // Create article publishing workflow with quality gates
+    logInfo('Creating Article Publishing Workflow...');
     
-    console.log(chalk.blue(`📋 Registered ${rulesEngine.listRuleIds().length} rules in the engine`));
-    console.log(chalk.gray('Rules available:'), rulesEngine.listRuleIds().slice(0, 10).join(', '), '...');
-    console.log();
+    const workflowInput = {
+      name: 'Article Publishing with Quality Gates',
+      places: ['draft', 'review', 'revision', 'quality_check', 'approved', 'published', 'rejected'],
+      transitions: [
+        {
+          id: 'submit_for_review',
+          fromPlaces: ['draft'],
+          toPlace: 'review',
+          conditions: []
+        },
+        {
+          id: 'request_revision',
+          fromPlaces: ['review'],
+          toPlace: 'revision',
+          conditions: []
+        },
+        {
+          id: 'back_to_draft',
+          fromPlaces: ['revision'],
+          toPlace: 'draft',
+          conditions: []
+        },
+        {
+          id: 'quality_check',
+          fromPlaces: ['review'],
+          toPlace: 'quality_check',
+          conditions: []
+        },
+        {
+          id: 'approve_article',
+          fromPlaces: ['quality_check'],
+          toPlace: 'approved',
+          conditions: []
+        },
+        {
+          id: 'reject_article',
+          fromPlaces: ['quality_check'],
+          toPlace: 'rejected',
+          conditions: []
+        },
+        {
+          id: 'publish_article',
+          fromPlaces: ['approved'],
+          toPlace: 'published',
+          conditions: []
+        },
+        {
+          id: 'emergency_publish',
+          fromPlaces: ['review'],
+          toPlace: 'published',
+          conditions: []
+        }
+      ],
+      initialPlace: 'draft'
+    };
 
-    // 2. Create a complex workflow with sophisticated rules
-    const workflow = createPublishingWorkflow();
-    console.log(chalk.yellow(`📄 Created workflow: ${workflow.name}`));
-    console.log(chalk.gray('Places:'), workflow.places.join(' → '));
-    console.log(chalk.gray(`Transitions: ${workflow.transitions.length}`));
-    console.log();
-
-    // 3. Create test tokens with different scenarios
-    console.log(chalk.blue('🎯 Creating test tokens with different scenarios...'));
-    console.log();
-
-    // Scenario 1: Ready to publish
-    const readyToken = createReadyToken();
-    demoTokenEvaluation(rulesEngine, readyToken, workflow, 'Ready Article');
-
-    // Scenario 2: Incomplete article  
-    const incompleteToken = createIncompleteToken();
-    demoTokenEvaluation(rulesEngine, incompleteToken, workflow, 'Incomplete Article');
-
-    // Scenario 3: Emergency override
-    const emergencyToken = createEmergencyToken();
-    demoTokenEvaluation(rulesEngine, emergencyToken, workflow, 'Emergency Override');
-
-    // 4. Try to connect to backend for real evaluation (if available)
-    console.log(chalk.blue('🌐 Attempting to connect to Rust backend for real evaluation...'));
+    const workflowResult = await client.createWorkflow(workflowInput);
     
-    try {
-      const client = new GraphQLClient(GRAPHQL_ENDPOINT);
+    if (workflowResult.errors) {
+      logError(`Failed to create workflow: ${workflowResult.errors.map(e => e.message).join(', ')}`);
+      return;
+    }
+
+    const workflow = workflowResult.data!.createWorkflow;
+    logSuccess(`Created workflow: ${workflow.name} (${workflow.id})`);
+    console.log();
+
+    // Define quality rules for article publishing
+    const qualityRules = [
+      RuleBuilder.fieldExists('has_content', 'Article must have content', 'content'),
+      RuleBuilder.fieldExists('has_reviewer', 'Article must have a reviewer assigned', 'reviewer'),
+      RuleBuilder.fieldGreaterThan('word_count_sufficient', 'Article must have at least 500 words', 'word_count', 500),
+      RuleBuilder.fieldGreaterThan('quality_score_high', 'Article must have quality score > 7', 'quality_score', 7),
+      RuleBuilder.fieldContains('has_urgent_tag', 'Article tagged as urgent', 'tags', 'urgent')
+    ];
+
+    const publishReadyRule = RuleBuilder.or('publish_ready', 'Ready to publish', [
+      RuleBuilder.and('quality_criteria', 'High quality article', [
+        qualityRules[0], // has_content
+        qualityRules[1], // has_reviewer 
+        qualityRules[2], // word_count_sufficient
+        qualityRules[3]  // quality_score_high
+      ]),
+      RuleBuilder.fieldEquals('emergency_flag', 'Emergency override', 'emergency', true)
+    ]);
+
+    logInfo('Defined Quality Rules:');
+    qualityRules.forEach(rule => {
+      console.log(`  • ${rule.name}: ${rule.description}`);
+    });
+    console.log(`  • ${publishReadyRule.name}: ${publishReadyRule.description}`);
+    console.log();
+
+    // Test scenarios
+    const testScenarios = [
+      {
+        name: 'High Quality Article',
+        data: {
+          title: 'Complete Guide to Rust Programming',
+          content: 'This is a comprehensive guide covering all aspects of Rust programming...',
+          word_count: 1250,
+          quality_score: 9,
+          reviewer: 'senior-editor',
+          tags: ['programming', 'rust', 'tutorial'],
+          author: 'tech-writer'
+        },
+        metadata: {
+          priority: 'high',
+          deadline: '2024-12-31',
+          category: 'technical'
+        }
+      },
+      {
+        name: 'Incomplete Article',
+        data: {
+          title: 'Short Article',
+          content: 'Brief content...',
+          word_count: 150,
+          quality_score: 5,
+          tags: ['draft'],
+          author: 'junior-writer'
+        },
+        metadata: {
+          priority: 'medium',
+          category: 'general'
+        }
+      },
+      {
+        name: 'Emergency Article',
+        data: {
+          title: 'Breaking News Update',
+          content: 'Urgent breaking news content...',
+          word_count: 300,
+          quality_score: 6,
+          emergency: true,
+          tags: ['breaking', 'urgent'],
+          author: 'news-writer'
+        },
+        metadata: {
+          priority: 'urgent',
+          category: 'news'
+        }
+      }
+    ];
+
+    for (const [index, scenario] of testScenarios.entries()) {
+      console.log();
+      logInfo(`Testing Scenario ${index + 1}: ${scenario.name}`);
       
-      // Create workflow in backend
-      const createWorkflowMutation = gql`
-        mutation CreateWorkflow($input: WorkflowDefinitionInput!) {
-          createWorkflow(input: $input) {
-            id
-            name
-            places
-            initialPlace
-          }
-        }
-      `;
-
-      // Note: The backend would need to support rules in the GraphQL schema
-      // For now, we'll just create a basic workflow without rules
-      const basicWorkflow = {
-        name: workflow.name,
-        places: workflow.places,
-        transitions: workflow.transitions.map(t => ({
-          id: t.id,
-          fromPlaces: t.fromPlaces,
-          toPlace: t.toPlace,
-          conditions: [] // Backend doesn't support rules in GraphQL yet
-        })),
-        initialPlace: workflow.initialPlace
-      };
-
-      const workflowResult = await client.request<CreateWorkflowResponse>(createWorkflowMutation, {
-        input: basicWorkflow
+      // Create token for scenario
+      const tokenResult = await client.createToken({
+        workflowId: workflow.id,
+        initialPlace: 'draft',
+        data: scenario.data,
+        metadata: scenario.metadata
       });
-
-      console.log(chalk.green('✅ Connected to backend! Workflow created:'), workflowResult.createWorkflow.id);
       
-      // Create a token in the backend
-      const createTokenMutation = gql`
-        mutation CreateToken($input: TokenCreateInput!) {
-          createToken(input: $input) {
-            id
-            place
-            workflowId
-          }
-        }
-      `;
-
-      const tokenResult = await client.request<CreateTokenResponse>(createTokenMutation, {
-        input: {
-          workflowId: workflowResult.createWorkflow.id,
-          data: readyToken.data,
-          metadata: readyToken.metadata
-        }
-      });
-
-      console.log(chalk.green('✅ Token created in backend:'), tokenResult.createToken.id);
-      
-      // Query available transitions from backend
-      const availableTransitionsQuery = gql`
-        query AvailableTransitions($tokenId: ID!) {
-          availableTransitions(tokenId: $tokenId) {
-            id
-            fromPlaces
-            toPlace
-          }
-        }
-      `;
-
-      const transitionsResult = await client.request<AvailableTransitionsResponse>(availableTransitionsQuery, {
-        tokenId: tokenResult.createToken.id
-      });
-
-      console.log(chalk.blue('🔄 Backend available transitions:'));
-      for (const transition of transitionsResult.availableTransitions) {
-        console.log(chalk.green(`  ✅ ${transition.id}: ${transition.fromPlaces.join(', ')} → ${transition.toPlace}`));
+      if (tokenResult.errors) {
+        logError(`Failed to create token: ${tokenResult.errors.map(e => e.message).join(', ')}`);
+        continue;
       }
 
-    } catch (backendError: any) {
-      console.log(chalk.yellow('⚠️  Backend not available or rules not implemented in GraphQL yet'));
-      console.log(chalk.gray('   Using client-side evaluation only'));
+      const token = tokenResult.data!.createToken;
+      logSuccess(`Created article token: ${token.data.title}`);
+      
+      // Move to review stage
+      const reviewResult = await client.fireTransition({
+        tokenId: token.id,
+        transitionId: 'submit_for_review',
+        data: {
+          action: 'submit_for_review',
+          timestamp: new Date().toISOString()
+        }
+      });
+      
+      if (reviewResult.errors) {
+        logError(`Failed to submit for review: ${reviewResult.errors.map(e => e.message).join(', ')}`);
+        continue;
+      }
+
+      const reviewToken = reviewResult.data!.fireTransition;
+      
+      // Evaluate rules client-side
+      logInfo('Client-side Rule Evaluation:');
+      
+      // Test individual quality rules
+      qualityRules.forEach(rule => {
+        const result = ClientRuleEngine.evaluateRule(rule, reviewToken.data, reviewToken.metadata);
+        logRule(rule, result);
+      });
+      
+      // Test composite publish-ready rule
+      const publishResult = ClientRuleEngine.evaluateRule(publishReadyRule, reviewToken.data, reviewToken.metadata);
+      console.log();
+      logInfo('Overall Publishing Decision:');
+      logRule(publishReadyRule, publishResult);
+      
+      // Determine next action based on rules
+      let nextTransition: string;
+      let nextData: any = {
+        timestamp: new Date().toISOString(),
+        rulesEvaluated: true
+      };
+      
+      if (publishResult.passed) {
+        if (reviewToken.data.emergency) {
+          nextTransition = 'emergency_publish';
+          nextData.publishReason = 'Emergency override - bypassing quality check';
+          logWarning('Using emergency publish due to override flag');
+        } else {
+          nextTransition = 'quality_check';
+          nextData.qualityCheckPassed = true;
+          logInfo('Proceeding to quality check - all criteria met');
+        }
+      } else {
+        nextTransition = 'request_revision';
+        nextData.revisionReason = 'Quality criteria not met';
+        nextData.failedRules = publishResult.details;
+        logWarning('Requesting revision due to failed quality criteria');
+      }
+      
+      // Execute the determined transition
+      const finalResult = await client.fireTransition({
+        tokenId: reviewToken.id,
+        transitionId: nextTransition,
+        data: nextData
+      });
+      
+      if (finalResult.errors) {
+        logError(`Failed to execute transition: ${finalResult.errors.map(e => e.message).join(', ')}`);
+        continue;
+      }
+
+      const finalToken = finalResult.data!.fireTransition;
+      logSuccess(`Article moved to: ${finalToken.place}`);
+      
+      // If approved, publish it
+      if (finalToken.place === 'quality_check') {
+        const approveResult = await client.fireTransition({
+          tokenId: finalToken.id,
+          transitionId: 'approve_article',
+          data: {
+            timestamp: new Date().toISOString(),
+            approvedBy: 'quality-team'
+          }
+        });
+        
+        if (!approveResult.errors) {
+          const approvedToken = approveResult.data!.fireTransition;
+          
+          const publishFinalResult = await client.fireTransition({
+            tokenId: approvedToken.id,
+            transitionId: 'publish_article',
+            data: {
+              timestamp: new Date().toISOString(),
+              publishUrl: `https://blog.example.com/${token.data.title.toLowerCase().replace(/\s+/g, '-')}`
+            }
+          });
+          
+          if (!publishFinalResult.errors) {
+            logSuccess(`Article published: ${token.data.title}`);
+          }
+        }
+      }
     }
 
     console.log();
-    console.log(chalk.magenta('🏗️  Rules Engine Demo Summary:'));
-    console.log(chalk.gray('   ✅ Complex logical expressions (AND, OR, NOT)'));
-    console.log(chalk.gray('   ✅ Token state evaluation against rules'));
-    console.log(chalk.gray('   ✅ Detailed debugging information'));
-    console.log(chalk.gray('   ✅ Emergency override scenarios'));
-    console.log(chalk.gray('   ✅ TypeScript-to-Rust polyglot architecture'));
-    console.log();
-    console.log(chalk.green('✅ Rules engine demo completed successfully!'));
+    logInfo('Rules Engine Demo Summary:');
+    console.log('  • Complex logical rules with AND, OR operations');
+    console.log('  • Field-based conditions (exists, equals, greater than, contains)');
+    console.log('  • Client-side rule evaluation for immediate feedback');
+    console.log('  • Conditional workflow transitions based on rule results');
+    console.log('  • Emergency override scenarios bypassing normal rules');
+    console.log('  • Detailed rule evaluation results and debugging');
 
-  } catch (error: any) {
-    console.error(chalk.red('❌ Demo failed:'), error.message);
-    if (error.stack) {
-      console.error(chalk.gray(error.stack));
-    }
+  } catch (error) {
+    logError(`Demo failed: ${error}`);
+    process.exit(1);
   }
 }
 
-// Run the demo
-main().catch(console.error); 
+if (require.main === module) {
+  main().catch(console.error);
+}
+
+export { RuleBuilder, ClientRuleEngine, type Rule, type RuleCondition, type RuleEvaluationResult }; 

@@ -1,424 +1,347 @@
-// TypeScript client demonstrating Circuit Breaker token lifecycle management
-// This shows rich token data and metadata flowing through state transitions
-// Run with: npm run start:demo
+#!/usr/bin/env npx tsx
+// Token operations demonstration - TypeScript GraphQL Client
+// Shows detailed token lifecycle operations using GraphQL API
+// Run with: npx tsx examples/typescript/token_demo.ts
 
-import { GraphQLClient, gql } from 'graphql-request';
-import chalk from 'chalk';
+import { CircuitBreakerClient, type TokenGQL } from './basic_workflow.js';
 
-// GraphQL endpoint (assumes Rust server is running)
-const GRAPHQL_ENDPOINT = 'http://localhost:4000/graphql';
-
-interface WorkflowDefinition {
-  id?: string;
-  name: string;
-  places: string[];
-  transitions: TransitionDefinition[];
-  initialPlace: string;
+function logSuccess(message: string) {
+  console.log(`✅ ${message}`);
 }
 
-interface TransitionDefinition {
-  id: string;
-  fromPlaces: string[];
-  toPlace: string;
-  conditions?: string[];
+function logInfo(message: string) {
+  console.log(`ℹ️  ${message}`);
 }
 
-interface Token {
-  id: string;
-  place: string;
-  workflowId: string;
-  data?: any;
-  metadata?: any;
-  history?: HistoryEvent[];
-  createdAt?: string;
-  updatedAt?: string;
+function logError(message: string) {
+  console.log(`❌ ${message}`);
 }
 
-interface HistoryEvent {
-  transition: string;
-  fromPlace: string;
-  toPlace: string;
-  timestamp: string;
-}
-
-interface CreateWorkflowResponse {
-  createWorkflow: {
-    id: string;
-    name: string;
-    places: string[];
-    initialPlace: string;
-  };
-}
-
-interface CreateTokenResponse {
-  createToken: Token;
-}
-
-interface FireTransitionResponse {
-  fireTransition: Token;
-}
-
-interface GetTokenResponse {
-  token: Token;
+function logWarning(message: string) {
+  console.log(`⚠️  ${message}`);
 }
 
 async function main() {
-  console.log(chalk.cyan('🌐 Circuit Breaker - TypeScript Token Demo'));
-  console.log(chalk.cyan('==========================================='));
-  console.log(chalk.green('Client-side token operations via GraphQL → Generic Rust Backend'));
+  console.log('🚀 Circuit Breaker Token Operations Demo - TypeScript Client');
+  console.log('============================================================');
   console.log();
 
+  const client = new CircuitBreakerClient();
+
   try {
-    // Connect to the generic Rust backend
-    const client = new GraphQLClient(GRAPHQL_ENDPOINT);
-    console.log(chalk.blue('🔌 Connected to Rust backend at'), GRAPHQL_ENDPOINT);
-    console.log();
-
-    // 1. Create a TypeScript-specific workflow via GraphQL
-    const workflowDefinition = createContentWorkflow();
-    console.log(chalk.yellow('📋 TypeScript-Defined Content Workflow:'));
-    console.log(chalk.gray('   Name:'), workflowDefinition.name);
-    console.log(chalk.gray('   Places:'), workflowDefinition.places.join(' → '));
-    console.log(chalk.gray('   Transitions:'), workflowDefinition.transitions.map(t => t.id).join(', '));
-    console.log();
-
-    // 2. Register workflow with the generic Rust backend
-    const createWorkflowMutation = gql`
-      mutation CreateWorkflow($input: WorkflowDefinitionInput!) {
-        createWorkflow(input: $input) {
-          id
-          name
-          places
-          initialPlace
-        }
-      }
-    `;
-
-    console.log(chalk.blue('🚀 Creating workflow in generic Rust backend...'));
-    const workflowResult = await client.request<CreateWorkflowResponse>(createWorkflowMutation, {
-      input: workflowDefinition
-    });
-
-    console.log(chalk.green('✅ Workflow created with ID:'), workflowResult.createWorkflow.id);
-    console.log();
-
-    // 3. Create a token with TypeScript-specific data
-    const createTokenMutation = gql`
-      mutation CreateToken($input: TokenCreateInput!) {
-        createToken(input: $input) {
-          id
-          place
-          workflowId
-          createdAt
-        }
-      }
-    `;
-
-    // Rich content creation data - this would come from your TypeScript application
-    const contentData = {
-      title: "The Future of State Managed Workflows",
-      author: "Circuit Breaker Team",
-      contentType: "technical_article",
-      targetAudience: "developers",
-      estimatedLength: 2500,
-      keywords: ["workflow", "state management", "GraphQL", "Rust"],
-      priority: "high",
-      deadline: "2024-02-15",
-      assignedTo: "content-team-alpha"
-    };
-
-    const contentMetadata = {
-      department: "engineering",
-      project: "circuit-breaker-docs",
-      version: "1.0",
-      language: "english",
-      format: "markdown",
-      reviewers: ["technical-lead", "content-manager"],
-      distribution: ["website", "newsletter", "social"]
-    };
-
-    console.log(chalk.blue('🎯 Creating content token with rich TypeScript data...'));
-    const tokenResult = await client.request<CreateTokenResponse>(createTokenMutation, {
-      input: {
-        workflowId: workflowResult.createWorkflow.id,
-        data: contentData,
-        metadata: contentMetadata
-      }
-    });
-
-    console.log(chalk.green('✅ Content token created:'), tokenResult.createToken.id);
-    console.log(chalk.gray('   Title:'), contentData.title);
-    console.log(chalk.gray('   Current place:'), tokenResult.createToken.place);
-    console.log(chalk.gray('   Created:'), new Date(tokenResult.createToken.createdAt!).toLocaleString());
-    console.log();
-
-    // 4. Execute content creation workflow
-    const fireTransitionMutation = gql`
-      mutation FireTransition($input: TransitionFireInput!) {
-        fireTransition(input: $input) {
-          id
-          place
-          updatedAt
-          history {
-            transition
-            fromPlace
-            toPlace
-            timestamp
-          }
-        }
-      }
-    `;
-
-    console.log(chalk.blue('🔄 Executing content creation workflow...'));
+    // Create AI content creation workflow
+    logInfo('Creating AI Content Creation Workflow...');
     
-    // Define the workflow transitions with rich data updates
-    const workflowSteps = [
-      {
-        transition: 'start_research',
-        description: 'Begin research phase',
-        data: {
-          researchSources: ['technical_papers', 'github_repos', 'community_discussions'],
-          researchProgress: 0,
-          keyFindings: []
+    const workflowInput = {
+      name: 'AI-Powered Content Creation',
+      places: ['ideation', 'drafting', 'review', 'revision', 'approval', 'published', 'archived'],
+      transitions: [
+        {
+          id: 'start_drafting',
+          fromPlaces: ['ideation'],
+          toPlace: 'drafting',
+          conditions: []
+        },
+        {
+          id: 'submit_for_review',
+          fromPlaces: ['drafting'],
+          toPlace: 'review',
+          conditions: []
+        },
+        {
+          id: 'request_revision',
+          fromPlaces: ['review'],
+          toPlace: 'revision',
+          conditions: []
+        },
+        {
+          id: 'back_to_drafting',
+          fromPlaces: ['revision'],
+          toPlace: 'drafting',
+          conditions: []
+        },
+        {
+          id: 'approve_content',
+          fromPlaces: ['review'],
+          toPlace: 'approval',
+          conditions: []
+        },
+        {
+          id: 'publish_content',
+          fromPlaces: ['approval'],
+          toPlace: 'published',
+          conditions: []
+        },
+        {
+          id: 'archive_content',
+          fromPlaces: ['published'],
+          toPlace: 'archived',
+          conditions: []
+        },
+        {
+          id: 'back_to_ideation',
+          fromPlaces: ['archived'],
+          toPlace: 'ideation',
+          conditions: []
         }
+      ],
+      initialPlace: 'ideation'
+    };
+
+    const workflowResult = await client.createWorkflow(workflowInput);
+    
+    if (workflowResult.errors) {
+      logError(`Failed to create workflow: ${workflowResult.errors.map(e => e.message).join(', ')}`);
+      return;
+    }
+
+    const workflow = workflowResult.data!.createWorkflow;
+    logSuccess(`Created workflow: ${workflow.name} (${workflow.id})`);
+    console.log();
+
+    // Create multiple content tokens
+    const contentTopics = [
+      {
+        title: 'Introduction to Rust Programming',
+        type: 'tutorial',
+        targetAudience: 'beginners',
+        estimatedReadTime: 15
       },
       {
-        transition: 'create_outline',
-        description: 'Create content outline',
-        data: {
-          researchProgress: 100,
-          keyFindings: ['GraphQL flexibility', 'Rust performance', 'State management benefits'],
-          outline: {
-            sections: ['Introduction', 'Core Concepts', 'Implementation', 'Comparison', 'Conclusion'],
-            estimatedSections: 5,
-            approxWordsPerSection: 500
-          }
-        }
+        title: 'Advanced TypeScript Patterns',
+        type: 'guide',
+        targetAudience: 'intermediate',
+        estimatedReadTime: 25
       },
       {
-        transition: 'write_draft',
-        description: 'Write initial draft',
-        data: {
-          wordCount: 1200,
-          sectionsComplete: 3,
-          codeExamples: ['Rust workflow definition', 'GraphQL mutation', 'TypeScript client'],
-          reviewNotes: []
-        }
-      },
-      {
-        transition: 'ai_review',
-        description: 'Submit for AI review',
-        data: {
-          wordCount: 2100,
-          sectionsComplete: 5,
-          aiReviewScore: 8.5,
-          suggestedImprovements: ['Add more examples', 'Clarify performance claims'],
-          grammarIssues: 3,
-          readabilityScore: 'high'
-        }
+        title: 'Building Scalable APIs with GraphQL',
+        type: 'article',
+        targetAudience: 'advanced',
+        estimatedReadTime: 20
       }
     ];
 
-    let currentToken = tokenResult.createToken;
-
-    for (const step of workflowSteps) {
-      console.log(chalk.yellow(`   ➡️  ${step.description} (${step.transition})`));
+    const tokens: TokenGQL[] = [];
+    
+    for (const [index, topic] of contentTopics.entries()) {
+      logInfo(`Creating content token ${index + 1}/3: ${topic.title}`);
       
-      try {
-        const transitionResult = await client.request<FireTransitionResponse>(fireTransitionMutation, {
-          input: {
-            tokenId: currentToken.id,
-            transitionId: step.transition,
-            data: step.data // Use step data directly instead of spreading
-          }
-        });
+      const tokenInput = {
+        workflowId: workflow.id,
+        initialPlace: 'ideation',
+        data: {
+          title: topic.title,
+          type: topic.type,
+          targetAudience: topic.targetAudience,
+          estimatedReadTime: topic.estimatedReadTime,
+          keywords: topic.title.toLowerCase().split(' ').slice(0, 3),
+          status: 'planning',
+          wordCount: 0,
+          authorId: 'ai-assistant',
+          createdAt: new Date().toISOString()
+        },
+        metadata: {
+          priority: index === 1 ? 'high' : 'medium',
+          contentType: topic.type,
+          seoOptimized: false,
+          socialMediaReady: false,
+          version: '1.0'
+        }
+      };
 
-        currentToken = transitionResult.fireTransition;
-        console.log(chalk.green(`   ✅ Moved to place: ${currentToken.place}`));
-        console.log(chalk.gray(`      Updated: ${new Date(currentToken.updatedAt!).toLocaleTimeString()}`));
-      } catch (error: any) {
-        console.log(chalk.red(`   ❌ Transition failed: ${error.message}`));
-        break;
+      const tokenResult = await client.createToken(tokenInput);
+      
+      if (tokenResult.errors) {
+        logError(`Failed to create token: ${tokenResult.errors.map(e => e.message).join(', ')}`);
+        continue;
       }
+
+      const token = tokenResult.data!.createToken;
+      tokens.push(token);
+      logSuccess(`Created token: ${token.data.title} (${token.id})`);
     }
 
     console.log();
-
-    // 5. Demonstrate revision cycle (AI suggests improvements)
-    console.log(chalk.blue('🔄 Demonstrating revision cycle...'));
-    try {
-      console.log(chalk.yellow('   ➡️  AI requests revision (request_revision)'));
-      const revisionResult = await client.request<FireTransitionResponse>(fireTransitionMutation, {
-        input: {
+    logInfo(`Created ${tokens.length} content tokens`);
+    
+    // Demonstrate different token lifecycles
+    for (const [index, token] of tokens.entries()) {
+      console.log();
+      logInfo(`Processing content ${index + 1}: ${token.data.title}`);
+      
+      let currentToken = token;
+      
+      // Start drafting
+      logInfo('Starting drafting phase...');
+      const draftResult = await client.fireTransition({
+        tokenId: currentToken.id,
+        transitionId: 'start_drafting',
+        data: {
+          action: 'start_drafting',
+          timestamp: new Date().toISOString(),
+          notes: 'AI content generation initiated'
+        }
+      });
+      
+      if (draftResult.errors) {
+        logError(`Failed to start drafting: ${draftResult.errors.map(e => e.message).join(', ')}`);
+        continue;
+      }
+      
+      currentToken = draftResult.data!.fireTransition;
+      
+      // Update token data to simulate content creation
+      currentToken.data.wordCount = Math.floor(Math.random() * 1000) + 500;
+      currentToken.data.status = 'draft_complete';
+      
+      // Submit for review
+      logInfo('Submitting for review...');
+      const reviewResult = await client.fireTransition({
+        tokenId: currentToken.id,
+        transitionId: 'submit_for_review',
+        data: {
+          action: 'submit_for_review',
+          timestamp: new Date().toISOString(),
+          wordCount: currentToken.data.wordCount,
+          readabilityScore: Math.floor(Math.random() * 40) + 60
+        }
+      });
+      
+      if (reviewResult.errors) {
+        logError(`Failed to submit for review: ${reviewResult.errors.map(e => e.message).join(', ')}`);
+        continue;
+      }
+      
+      currentToken = reviewResult.data!.fireTransition;
+      
+      // Simulate different review outcomes
+      const reviewOutcome = index === 1 ? 'revision' : 'approval';
+      
+      if (reviewOutcome === 'revision') {
+        logWarning('Content needs revision...');
+        
+        const revisionResult = await client.fireTransition({
           tokenId: currentToken.id,
           transitionId: 'request_revision',
           data: {
-            revisionReason: 'Add performance benchmarks and more code examples',
-            aiSuggestions: [
-              'Include benchmark comparison with DAG systems',
-              'Add TypeScript client integration example',
-              'Expand on Petri Net mathematical foundations'
-            ],
-            priority: 'medium',
-            estimatedRevisionTime: '4 hours'
+            action: 'request_revision',
+            timestamp: new Date().toISOString(),
+            feedback: 'Needs more technical examples and clearer explanations'
           }
+        });
+        
+        if (revisionResult.errors) {
+          logError(`Failed to request revision: ${revisionResult.errors.map(e => e.message).join(', ')}`);
+          continue;
+        }
+        
+        currentToken = revisionResult.data!.fireTransition;
+        
+        // Back to drafting
+        logInfo('Returning to drafting for revisions...');
+        const backToDraftResult = await client.fireTransition({
+          tokenId: currentToken.id,
+          transitionId: 'back_to_drafting',
+          data: {
+            action: 'back_to_drafting',
+            timestamp: new Date().toISOString(),
+            revisionNotes: 'Incorporating reviewer feedback'
+          }
+        });
+        
+        if (backToDraftResult.errors) {
+          logError(`Failed to return to drafting: ${backToDraftResult.errors.map(e => e.message).join(', ')}`);
+          continue;
+        }
+        
+        currentToken = backToDraftResult.data!.fireTransition;
+        
+        // Resubmit
+        logInfo('Resubmitting revised content...');
+        const resubmitResult = await client.fireTransition({
+          tokenId: currentToken.id,
+          transitionId: 'submit_for_review',
+          data: {
+            action: 'resubmit_for_review',
+            timestamp: new Date().toISOString(),
+            revisionComplete: true,
+            wordCount: currentToken.data.wordCount + 200
+          }
+        });
+        
+        if (resubmitResult.errors) {
+          logError(`Failed to resubmit: ${resubmitResult.errors.map(e => e.message).join(', ')}`);
+          continue;
+        }
+        
+        currentToken = resubmitResult.data!.fireTransition;
+      }
+      
+      // Approve content
+      logInfo('Approving content...');
+      const approveResult = await client.fireTransition({
+        tokenId: currentToken.id,
+        transitionId: 'approve_content',
+        data: {
+          action: 'approve_content',
+          timestamp: new Date().toISOString(),
+          approvedBy: 'content-manager',
+          qualityScore: Math.floor(Math.random() * 20) + 80
         }
       });
-
-      currentToken = revisionResult.fireTransition;
-      console.log(chalk.green(`   ✅ Back to place: ${currentToken.place} (revision cycle!)`));
-    } catch (error: any) {
-      console.log(chalk.red(`   ❌ Revision failed: ${error.message}`));
+      
+      if (approveResult.errors) {
+        logError(`Failed to approve content: ${approveResult.errors.map(e => e.message).join(', ')}`);
+        continue;
+      }
+      
+      currentToken = approveResult.data!.fireTransition;
+      
+      // Publish content
+      logInfo('Publishing content...');
+      const publishResult = await client.fireTransition({
+        tokenId: currentToken.id,
+        transitionId: 'publish_content',
+        data: {
+          action: 'publish_content',
+          timestamp: new Date().toISOString(),
+          publishUrl: `https://blog.example.com/${currentToken.data.title.toLowerCase().replace(/\s+/g, '-')}`,
+          seoOptimized: true
+        }
+      });
+      
+      if (publishResult.errors) {
+        logError(`Failed to publish content: ${publishResult.errors.map(e => e.message).join(', ')}`);
+        continue;
+      }
+      
+      currentToken = publishResult.data!.fireTransition;
+      logSuccess(`Content published: ${currentToken.data.title}`);
+      
+      // Show token history
+      logInfo('Token lifecycle history:');
+      currentToken.history.forEach((event, histIndex) => {
+        const timestamp = new Date(event.timestamp).toLocaleTimeString();
+        console.log(`  ${histIndex + 1}. ${event.fromPlace} → ${event.toPlace} via ${event.transition} (${timestamp})`);
+      });
     }
 
     console.log();
+    logInfo('Token Demo Summary:');
+    console.log('  • Created multiple content tokens with different data');
+    console.log('  • Demonstrated complex workflow with revision cycles');
+    console.log('  • Showed token state transitions and data updates');
+    console.log('  • Complete audit trail for each token lifecycle');
+    console.log('  • TypeScript integration with GraphQL API');
 
-    // 6. Query final token state with complete history
-    const getTokenQuery = gql`
-      query GetToken($id: ID!) {
-        token(id: $id) {
-          id
-          place
-          workflowId
-          data
-          metadata
-          createdAt
-          updatedAt
-          history {
-            transition
-            fromPlace
-            toPlace
-            timestamp
-          }
-        }
-      }
-    `;
-
-    console.log(chalk.blue('📚 Fetching complete token lifecycle...'));
-    const finalResult = await client.request<GetTokenResponse>(getTokenQuery, {
-      id: currentToken.id
-    });
-
-    const finalToken = finalResult.token;
-
-    console.log(chalk.green('📈 Complete Workflow History:'));
-    finalToken.history?.forEach((event: HistoryEvent, index: number) => {
-      const time = new Date(event.timestamp).toLocaleTimeString();
-      console.log(chalk.gray(`   ${index + 1}. ${event.fromPlace} → ${event.toPlace} via "${event.transition}" at ${time}`));
-    });
-
-    console.log();
-    console.log(chalk.green('🎯 Final Token State:'));
-    console.log(chalk.gray('   ID:'), finalToken.id);
-    console.log(chalk.gray('   Current Place:'), finalToken.place);
-    console.log(chalk.gray('   Workflow:'), finalToken.workflowId);
-    console.log(chalk.gray('   Created:'), new Date(finalToken.createdAt!).toLocaleString());
-    console.log(chalk.gray('   Last Updated:'), new Date(finalToken.updatedAt!).toLocaleString());
-
-    console.log();
-    console.log(chalk.green('📊 Token Data (Latest State):'));
-    console.log(chalk.gray(JSON.stringify(finalToken.data, null, 2)));
-
-    console.log();
-    console.log(chalk.green('🏷️  Token Metadata:'));
-    console.log(chalk.gray(JSON.stringify(finalToken.metadata, null, 2)));
-
-    console.log();
-
-    // 7. Architecture summary
-    console.log(chalk.magenta('🏗️  TypeScript Token Demo Summary:'));
-    console.log(chalk.gray('   📦 Rich Data:'), 'Tokens carry complex application state');
-    console.log(chalk.gray('   🔄 State Transitions:'), 'Business logic flows through GraphQL');
-    console.log(chalk.gray('   📚 Complete History:'), 'Full audit trail of all state changes');
-    console.log(chalk.gray('   🔁 Cycles Supported:'), 'Revision loops work naturally');
-    console.log(chalk.gray('   🌐 Language Agnostic:'), 'Same backend serves all languages');
-    console.log();
-
-    console.log(chalk.green('🎉 TypeScript token lifecycle demo complete!'));
-    console.log(chalk.blue('Rich stateful workflows with GraphQL + Rust backend! 🚀'));
-
-  } catch (error: any) {
-    console.error(chalk.red('❌ Error:'), error.message);
-    console.log();
-    console.log(chalk.yellow('💡 Make sure the Rust server is running:'));
-    console.log(chalk.gray('   cargo run --bin server'));
+  } catch (error) {
+    logError(`Demo failed: ${error}`);
     process.exit(1);
   }
 }
 
-// TypeScript-specific workflow definition (sent to generic Rust backend)
-function createContentWorkflow(): WorkflowDefinition {
-  return {
-    name: 'AI-Powered Content Creation Workflow',
-    places: [
-      'planning',
-      'research',
-      'outline',
-      'draft',
-      'ai_review',
-      'human_review',
-      'published',
-      'archived'
-    ],
-    transitions: [
-      {
-        id: 'start_research',
-        fromPlaces: ['planning'],
-        toPlace: 'research',
-        conditions: ['topic_defined', 'audience_identified']
-      },
-      {
-        id: 'create_outline',
-        fromPlaces: ['research'],
-        toPlace: 'outline',
-        conditions: ['research_complete', 'sources_validated']
-      },
-      {
-        id: 'write_draft',
-        fromPlaces: ['outline'],
-        toPlace: 'draft',
-        conditions: ['outline_approved', 'style_guide_reviewed']
-      },
-      {
-        id: 'ai_review',
-        fromPlaces: ['draft'],
-        toPlace: 'ai_review',
-        conditions: ['draft_complete', 'word_count_met']
-      },
-      {
-        id: 'request_revision',
-        fromPlaces: ['ai_review'],
-        toPlace: 'draft',
-        conditions: ['ai_feedback_provided'] // Cycle back for revisions!
-      },
-      {
-        id: 'human_review',
-        fromPlaces: ['ai_review'],
-        toPlace: 'human_review',
-        conditions: ['ai_approval', 'fact_check_passed']
-      },
-      {
-        id: 'approve_content',
-        fromPlaces: ['human_review'],
-        toPlace: 'published',
-        conditions: ['editorial_approval', 'legal_cleared']
-      },
-      {
-        id: 'reject_content',
-        fromPlaces: ['human_review'],
-        toPlace: 'draft',
-        conditions: ['revision_required'] // Another cycle!
-      },
-      {
-        id: 'archive',
-        fromPlaces: ['published'],
-        toPlace: 'archived',
-        conditions: ['content_outdated']
-      }
-    ],
-    initialPlace: 'planning'
-  };
+if (require.main === module) {
+  main().catch(console.error);
 }
 
-// Run the demo
-main().catch(console.error); 
+export { main as tokenDemo }; 

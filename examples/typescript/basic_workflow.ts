@@ -1,286 +1,383 @@
-// TypeScript client demonstrating Circuit Breaker polyglot architecture
-// This shows how ANY language can define workflows via GraphQL against the generic Rust backend
-// Run with: npm run start:basic
+#!/usr/bin/env npx tsx
+// Basic workflow demonstration - TypeScript GraphQL Client
+// Shows core workflow operations using GraphQL API
+// Run with: npx tsx examples/typescript/basic_workflow.ts
 
-import { GraphQLClient, gql } from 'graphql-request';
-import chalk from 'chalk';
+interface GraphQLResponse<T = any> {
+  data?: T;
+  errors?: Array<{ message: string; locations?: any[]; path?: any[] }>;
+}
 
-// GraphQL endpoint (assumes Rust server is running)
-const GRAPHQL_ENDPOINT = 'http://localhost:4000/graphql';
-
-interface WorkflowDefinition {
+interface WorkflowGQL {
+  id: string;
   name: string;
   places: string[];
-  transitions: TransitionDefinition[];
+  transitions: TransitionGQL[];
   initialPlace: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
-interface TransitionDefinition {
+interface TransitionGQL {
   id: string;
+  name?: string;
   fromPlaces: string[];
   toPlace: string;
-  conditions?: string[];
+  conditions: string[];
+  description?: string;
 }
 
-interface Token {
+interface TokenGQL {
   id: string;
-  place: string;
   workflowId: string;
-  data?: any;
-  metadata?: any;
-  history?: HistoryEvent[];
+  place: string;
+  data: any;
+  metadata: any;
+  createdAt: string;
+  updatedAt: string;
+  history: HistoryEventGQL[];
 }
 
-interface HistoryEvent {
+interface HistoryEventGQL {
+  timestamp: string;
   transition: string;
   fromPlace: string;
   toPlace: string;
-  timestamp: string;
+  data?: any;
 }
 
-interface WorkflowResponse {
-  id: string;
-  name: string;
-  places: string[];
-  initialPlace: string;
-}
+class CircuitBreakerClient {
+  constructor(private baseUrl: string = 'http://localhost:4000') {}
 
-interface CreateWorkflowResponse {
-  createWorkflow: WorkflowResponse;
-}
+  async graphql<T = any>(query: string, variables?: any): Promise<GraphQLResponse<T>> {
+    const response = await fetch(`${this.baseUrl}/graphql`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query, variables }),
+    });
 
-interface CreateTokenResponse {
-  createToken: Token;
-}
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
 
-interface FireTransitionResponse {
-  fireTransition: Token;
-}
+    return await response.json() as GraphQLResponse<T>;
+  }
 
-interface GetTokenResponse {
-  token: Token;
-}
-
-async function main() {
-  console.log(chalk.cyan('🌐 Circuit Breaker - TypeScript Client Demo'));
-  console.log(chalk.cyan('=============================================='));
-  console.log(chalk.green('Polyglot Architecture: TypeScript → GraphQL → Rust Backend'));
-  console.log();
-
-  try {
-    // 1. Connect to the generic Rust backend
-    const client = new GraphQLClient(GRAPHQL_ENDPOINT);
-    console.log(chalk.blue('🔌 Connected to Rust backend at'), GRAPHQL_ENDPOINT);
-    console.log();
-
-    // 2. Define a TypeScript workflow via GraphQL (client-defined domain logic!)
-    const workflowDefinition = createTypeScriptWorkflow();
-    console.log(chalk.yellow('📋 TypeScript-Defined Workflow:'), workflowDefinition.name);
-    console.log(chalk.gray('   Places:'), workflowDefinition.places.join(' → '));
-    console.log(chalk.gray('   Transitions:'), workflowDefinition.transitions.map(t => t.id).join(', '));
-    console.log();
-
-    // 3. Create workflow in the generic Rust backend
-    const createWorkflowMutation = gql`
+  async createWorkflow(input: any) {
+    const mutation = `
       mutation CreateWorkflow($input: WorkflowDefinitionInput!) {
         createWorkflow(input: $input) {
           id
           name
           places
+          transitions {
+            id
+            fromPlaces
+            toPlace
+            conditions
+          }
           initialPlace
+          createdAt
+          updatedAt
         }
       }
     `;
 
-    console.log(chalk.blue('🚀 Creating workflow in generic Rust backend...'));
-    const workflowResult = await client.request<CreateWorkflowResponse>(createWorkflowMutation, {
-      input: workflowDefinition
-    });
+    return this.graphql<{ createWorkflow: WorkflowGQL }>(mutation, { input });
+  }
 
-    console.log(chalk.green('✅ Workflow created:'), workflowResult.createWorkflow.id);
-    console.log();
-
-    // 4. Create a token via GraphQL
-    const createTokenMutation = gql`
+  async createToken(input: any) {
+    const mutation = `
       mutation CreateToken($input: TokenCreateInput!) {
         createToken(input: $input) {
           id
-          place
           workflowId
+          place
+          data
+          metadata
+          createdAt
+          updatedAt
+          history {
+            timestamp
+            transition
+            fromPlace
+            toPlace
+            data
+          }
         }
       }
     `;
 
-    console.log(chalk.blue('🎯 Creating token via GraphQL...'));
-    const tokenResult = await client.request<CreateTokenResponse>(createTokenMutation, {
-      input: {
-        workflowId: workflowResult.createWorkflow.id,
-        data: {
-          title: "TypeScript Application",
-          framework: "React + Node.js",
-          priority: "high"
-        }
-      }
-    });
+    return this.graphql<{ createToken: TokenGQL }>(mutation, { input });
+  }
 
-    console.log(chalk.green('✅ Token created:'), tokenResult.createToken.id);
-    console.log(chalk.gray('   Initial place:'), tokenResult.createToken.place);
-    console.log();
-
-    // 5. Execute transitions through GraphQL
-    const fireTransitionMutation = gql`
+  async fireTransition(input: any) {
+    const mutation = `
       mutation FireTransition($input: TransitionFireInput!) {
         fireTransition(input: $input) {
           id
+          workflowId
           place
+          data
+          metadata
+          createdAt
+          updatedAt
           history {
+            timestamp
             transition
             fromPlace
             toPlace
-            timestamp
+            data
           }
         }
       }
     `;
 
-    console.log(chalk.blue('🔄 Executing TypeScript-defined state transitions...'));
-    const transitions = ['start_development', 'submit_pr', 'approve'];
-    let currentToken = tokenResult.createToken;
+    return this.graphql<{ fireTransition: TokenGQL }>(mutation, { input });
+  }
 
-    for (const transitionId of transitions) {
-      console.log(chalk.yellow(`   ➡️  Firing transition: ${transitionId}`));
-      try {
-        const transitionResult = await client.request<FireTransitionResponse>(fireTransitionMutation, {
-          input: {
-            tokenId: currentToken.id,
-            transitionId
+  async getToken(id: string) {
+    const query = `
+      query GetToken($id: String!) {
+        token(id: $id) {
+          id
+          workflowId
+          place
+          data
+          metadata
+          createdAt
+          updatedAt
+          history {
+            timestamp
+            transition
+            fromPlace
+            toPlace
+            data
           }
-        });
-
-        currentToken = transitionResult.fireTransition;
-        console.log(chalk.green(`   ✅ New place: ${currentToken.place}`));
-      } catch (error: any) {
-        console.log(chalk.red(`   ❌ Transition failed: ${error.message}`));
+        }
       }
+    `;
+
+    return this.graphql<{ token: TokenGQL | null }>(query, { id });
+  }
+
+  async listWorkflows() {
+    const query = `
+      query ListWorkflows {
+        workflows {
+          id
+          name
+          places
+          transitions {
+            id
+            fromPlaces
+            toPlace
+            conditions
+          }
+          initialPlace
+          createdAt
+        }
+      }
+    `;
+
+    return this.graphql<{ workflows: WorkflowGQL[] }>(query);
+  }
+}
+
+function logSuccess(message: string) {
+  console.log(`✅ ${message}`);
+}
+
+function logInfo(message: string) {
+  console.log(`ℹ️  ${message}`);
+}
+
+function logError(message: string) {
+  console.log(`❌ ${message}`);
+}
+
+async function main() {
+  console.log('🚀 Circuit Breaker Basic Workflow Demo - TypeScript Client');
+  console.log('==========================================================');
+  console.log();
+
+  const client = new CircuitBreakerClient();
+
+  try {
+    // Create a simple application development workflow
+    logInfo('Creating Application Development Workflow...');
+    
+    const workflowInput = {
+      name: 'Application Development Process',
+      places: ['planning', 'development', 'testing', 'staging', 'production', 'maintenance'],
+      transitions: [
+        {
+          id: 'start_development',
+          fromPlaces: ['planning'],
+          toPlace: 'development',
+          conditions: []
+        },
+        {
+          id: 'submit_for_testing',
+          fromPlaces: ['development'],
+          toPlace: 'testing',
+          conditions: []
+        },
+        {
+          id: 'back_to_development',
+          fromPlaces: ['testing'],
+          toPlace: 'development',
+          conditions: []
+        },
+        {
+          id: 'promote_to_staging',
+          fromPlaces: ['testing'],
+          toPlace: 'staging',
+          conditions: []
+        },
+        {
+          id: 'deploy_to_production',
+          fromPlaces: ['staging'],
+          toPlace: 'production',
+          conditions: []
+        },
+        {
+          id: 'enter_maintenance',
+          fromPlaces: ['production'],
+          toPlace: 'maintenance',
+          conditions: []
+        },
+        {
+          id: 'back_to_planning',
+          fromPlaces: ['maintenance'],
+          toPlace: 'planning',
+          conditions: []
+        }
+      ],
+      initialPlace: 'planning'
+    };
+
+    const workflowResult = await client.createWorkflow(workflowInput);
+    
+    if (workflowResult.errors) {
+      logError(`Failed to create workflow: ${workflowResult.errors.map(e => e.message).join(', ')}`);
+      return;
+    }
+
+    const workflow = workflowResult.data!.createWorkflow;
+    logSuccess(`Created workflow: ${workflow.name} (${workflow.id})`);
+    logInfo(`Places: ${workflow.places.join(' → ')}`);
+    logInfo(`Transitions: ${workflow.transitions.length} defined`);
+    console.log();
+
+    // Create a feature development token
+    logInfo('Creating Feature Development Token...');
+    
+    const tokenInput = {
+      workflowId: workflow.id,
+      initialPlace: 'planning',
+      data: {
+        featureName: 'User Authentication',
+        assignedDeveloper: 'Alice Smith',
+        priority: 'high',
+        estimatedHours: 40,
+        requirements: [
+          'Login/logout functionality',
+          'Password reset capability',
+          'Session management',
+          'Security audit'
+        ]
+      },
+      metadata: {
+        createdBy: 'project-manager',
+        project: 'main-application',
+        sprint: 'sprint-2024-01'
+      }
+    };
+
+    const tokenResult = await client.createToken(tokenInput);
+    
+    if (tokenResult.errors) {
+      logError(`Failed to create token: ${tokenResult.errors.map(e => e.message).join(', ')}`);
+      return;
+    }
+
+    const token = tokenResult.data!.createToken;
+    logSuccess(`Created token: ${token.id}`);
+    logInfo(`Feature: ${token.data.featureName}`);
+    logInfo(`Developer: ${token.data.assignedDeveloper}`);
+    logInfo(`Current place: ${token.place}`);
+    console.log();
+
+    // Simulate development lifecycle
+    const transitions = [
+      { id: 'start_development', description: 'Start Development Phase' },
+      { id: 'submit_for_testing', description: 'Submit for Testing' },
+      { id: 'back_to_development', description: 'Back to Development (Bug Found)' },
+      { id: 'submit_for_testing', description: 'Resubmit for Testing' },
+      { id: 'promote_to_staging', description: 'Promote to Staging' },
+      { id: 'deploy_to_production', description: 'Deploy to Production' }
+    ];
+
+    let currentToken = token;
+    
+    for (const transition of transitions) {
+      logInfo(`Firing transition: ${transition.description}`);
+      
+      const transitionInput = {
+        tokenId: currentToken.id,
+        transitionId: transition.id,
+        data: {
+          timestamp: new Date().toISOString(),
+          performedBy: 'automated-system',
+          notes: `Executed ${transition.description}`
+        }
+      };
+
+      const transitionResult = await client.fireTransition(transitionInput);
+      
+      if (transitionResult.errors) {
+        logError(`Failed to fire transition: ${transitionResult.errors.map(e => e.message).join(', ')}`);
+        continue;
+      }
+
+      currentToken = transitionResult.data!.fireTransition;
+      logSuccess(`Transition completed: ${currentToken.place}`);
+      
+      // Add a small delay to make the demo more realistic
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
 
     console.log();
-
-    // 6. Query token history
-    const getTokenQuery = gql`
-      query GetToken($id: ID!) {
-        token(id: $id) {
-          id
-          place
-          workflowId
-          history {
-            transition
-            fromPlace
-            toPlace
-            timestamp
-          }
-        }
-      }
-    `;
-
-    console.log(chalk.blue('📚 Fetching complete token history...'));
-    const historyResult = await client.request<GetTokenResponse>(getTokenQuery, {
-      id: currentToken.id
-    });
-
-    const token = historyResult.token;
-    console.log(chalk.green('📈 Transition History:'));
-    token.history?.forEach((event: HistoryEvent, index: number) => {
-      console.log(chalk.gray(`   ${index + 1}. ${event.fromPlace} → ${event.toPlace} via ${event.transition}`));
+    logInfo('Development Lifecycle Complete!');
+    logInfo(`Final state: ${currentToken.place}`);
+    
+    // Show history
+    console.log();
+    logInfo('Complete Development History:');
+    currentToken.history.forEach((event, index) => {
+      const timestamp = new Date(event.timestamp).toLocaleTimeString();
+      console.log(`  ${index + 1}. ${event.fromPlace} → ${event.toPlace} via ${event.transition} (${timestamp})`);
     });
 
     console.log();
+    logInfo('Workflow demonstrates:');
+    console.log('  • Complex state transitions with cycles');
+    console.log('  • Rich token data for application features');
+    console.log('  • Complete audit trail of state changes');
+    console.log('  • GraphQL API integration from TypeScript');
+    console.log('  • Production-ready development workflow');
 
-    // 7. Demonstrate architecture benefits
-    console.log(chalk.magenta('🏗️  Architecture Demonstration Complete:'));
-    console.log(chalk.gray('   🦀 Rust Backend:'), 'Generic engine, zero TypeScript knowledge');
-    console.log(chalk.gray('   🌐 GraphQL API:'), 'Language-agnostic workflow definition');
-    console.log(chalk.gray('   📜 TypeScript:'), 'Defines domain logic through GraphQL');
-    console.log(chalk.gray('   🔄 State Management:'), 'Supports cycles, concurrent places');
-    console.log();
-
-    console.log(chalk.green('🎉 TypeScript client demo complete!'));
-    console.log(chalk.blue('The same Rust backend serves any language via GraphQL! 🚀'));
-
-  } catch (error: any) {
-    console.error(chalk.red('❌ Error:'), error.message);
-    console.log();
-    console.log(chalk.yellow('💡 Make sure the Rust server is running:'));
-    console.log(chalk.gray('   cargo run --bin server'));
+  } catch (error) {
+    logError(`Demo failed: ${error}`);
     process.exit(1);
   }
 }
 
-// TypeScript defines its own domain workflow - sent to generic Rust backend via GraphQL
-function createTypeScriptWorkflow(): WorkflowDefinition {
-  return {
-    name: 'TypeScript Application Development',
-    places: [
-      'planning',
-      'development', 
-      'code_review',
-      'testing',
-      'deployed',
-      'maintenance'
-    ],
-    transitions: [
-      {
-        id: 'start_development',
-        fromPlaces: ['planning'],
-        toPlace: 'development',
-        conditions: ['requirements_defined', 'tech_stack_chosen']
-      },
-      {
-        id: 'submit_pr',
-        fromPlaces: ['development'],
-        toPlace: 'code_review',
-        conditions: ['code_complete', 'tests_written']
-      },
-      {
-        id: 'approve',
-        fromPlaces: ['code_review'],
-        toPlace: 'testing',
-        conditions: ['code_approved', 'no_conflicts']
-      },
-      {
-        id: 'reject',
-        fromPlaces: ['code_review'],
-        toPlace: 'development',
-        conditions: ['changes_requested']
-      },
-      {
-        id: 'deploy',
-        fromPlaces: ['testing'],
-        toPlace: 'deployed',
-        conditions: ['all_tests_pass', 'security_scan_clean']
-      },
-      {
-        id: 'rollback',
-        fromPlaces: ['deployed'],
-        toPlace: 'testing',
-        conditions: ['production_issues']
-      },
-      {
-        id: 'maintain',
-        fromPlaces: ['deployed'],
-        toPlace: 'maintenance',
-        conditions: ['stable_release']
-      },
-      {
-        id: 'enhance',
-        fromPlaces: ['maintenance'],
-        toPlace: 'planning',
-        conditions: ['new_requirements'] // Cycle back to planning!
-      }
-    ],
-    initialPlace: 'planning'
-  };
+if (require.main === module) {
+  main().catch(console.error);
 }
 
-// Run the demo
-main().catch(console.error); 
+export { CircuitBreakerClient, type WorkflowGQL, type TokenGQL, type HistoryEventGQL }; 
