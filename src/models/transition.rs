@@ -210,6 +210,9 @@ impl TransitionDefinition {
     /// 
     /// ## Example:
     /// ```
+    /// use circuit_breaker::{TransitionDefinition, models::Rule};
+    /// use serde_json::json;
+    /// 
     /// let transition = TransitionDefinition::with_rules(
     ///     "deploy",
     ///     vec!["tested"],
@@ -332,12 +335,15 @@ impl TransitionDefinition {
     /// 
     /// ## Example
     /// ```rust
-    /// // Only structured rules evaluation
-    /// let can_fire_rules_only = transition.can_fire_with_token(&token);
+    /// use circuit_breaker::RulesEngine;
     /// 
-    /// // Complete evaluation including legacy conditions
-    /// let engine = RulesEngine::new();
-    /// let can_fire_complete = engine.can_transition(&token, &transition);
+    /// // This only evaluates structured rules
+    /// // let result = transition.can_fire_with_token(&token);
+    /// 
+    /// // For complete evaluation including legacy conditions:
+    /// let engine = RulesEngine::with_common_rules();
+    /// // let can_fire = engine.can_transition(&token, &transition);
+    /// // let full_result = engine.evaluate_all_transitions(&token, &workflow);
     /// ```
     pub fn can_fire_with_token(&self, token: &Token) -> bool {
         // Must be in a compatible place AND all structured rules must pass
@@ -374,13 +380,15 @@ impl TransitionDefinition {
     /// 
     /// ## Example
     /// ```rust
+    /// use circuit_breaker::RulesEngine;
+    /// 
     /// // This only evaluates structured rules
-    /// let result = transition.evaluate_with_token(&token);
+    /// // let result = transition.evaluate_with_token(&token);
     /// 
     /// // For complete evaluation including legacy conditions:
     /// let engine = RulesEngine::with_common_rules();
-    /// let can_fire = engine.can_transition(&token, &transition);
-    /// let full_result = engine.evaluate_all_transitions(&token, &workflow);
+    /// // let can_fire = engine.can_transition(&token, &transition);
+    /// // let full_result = engine.evaluate_all_transitions(&token, &workflow);
     /// ```
     pub fn evaluate_with_token(&self, token: &Token) -> TransitionRuleEvaluation {
         let place_compatible = self.can_trigger_from(&token.place);
@@ -430,6 +438,9 @@ impl TransitionDefinition {
     /// 
     /// ## Example:
     /// ```
+    /// use circuit_breaker::{TransitionDefinition, models::Rule};
+    /// use serde_json::json;
+    /// 
     /// let mut transition = TransitionDefinition::new("deploy", vec!["tested"], "production");
     /// transition.add_rule(Rule::field_equals("tests", "test_status", json!("passed")));
     /// transition.add_rule(Rule::field_equals("security", "security_status", json!("approved")));
