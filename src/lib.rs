@@ -58,6 +58,7 @@ pub use models::{
 // These are the GraphQL and storage implementations
 pub use engine::{
     storage::{WorkflowStorage, InMemoryStorage}, // Storage abstraction and implementation
+    rules::{RulesEngine, WorkflowEvaluationResult}, // Rules engine for transition evaluation
     graphql::{
         // GraphQL types for the API
         WorkflowGQL, TokenGQL, TransitionGQL, HistoryEventGQL,
