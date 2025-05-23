@@ -15,14 +15,15 @@ use std::process::Stdio;
 use tokio::process::Command;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use uuid::Uuid;
-use chrono::{Utc, Duration};
+use chrono::Duration;
 use async_trait::async_trait;
+use tracing::{info, debug, warn, error};
 
 use crate::models::{
     FunctionDefinition, FunctionId, FunctionExecution, TriggerEvent, 
-    ExecutionStatus, ContainerConfig, ResourceLimits, ChainExecution,
-    ChainStatus, InputMapping, ChainCondition, EventType, RetryConfig,
-    BackoffStrategy, RetryCondition
+    ContainerConfig, ChainExecution,
+    InputMapping, ChainCondition, RetryConfig,
+    BackoffStrategy
 };
 use crate::{CircuitBreakerError, Result};
 
@@ -132,14 +133,14 @@ impl FunctionEngine {
         let execution_id = execution.id;
         
         // Execute the function (now actually running Docker)
-        println!("🐳 Executing function {} with Docker...", execution_id);
+        info!("🐳 Executing function {} with Docker...", execution_id);
         
         match self.execute_function_impl(function.clone(), execution_id).await {
             Ok(_) => {
-                println!("✅ Function {} completed successfully", execution_id);
+                info!("✅ Function {} completed successfully", execution_id);
             }
             Err(e) => {
-                println!("❌ Function {} failed: {}", execution_id, e);
+                error!("❌ Function {} failed: {}", execution_id, e);
                 // Update execution status to failed
                 if let Ok(Some(mut execution)) = self.storage.get_execution(&execution_id).await {
                     execution.fail(format!("Execution error: {}", e));
@@ -206,7 +207,7 @@ impl FunctionEngine {
                     if execution.succeeded() {
                         // TODO: Re-enable function chaining after fixing lifetime issues
                         // self.process_function_chains(&function, &execution, &output_data).await?;
-                        println!("Function succeeded - chains would be processed here");
+                        info!("Function succeeded - chains would be processed here");
                     }
                 }
             }
@@ -220,7 +221,7 @@ impl FunctionEngine {
                         
                         // Schedule retry execution
                         // self.schedule_retry_execution(function, execution_id, delay).await?;
-                        println!("Would schedule retry for execution {}", execution_id);
+                        info!("Would schedule retry for execution {}", execution_id);
                         return Ok(());
                     }
                 }
@@ -348,7 +349,7 @@ impl FunctionEngine {
                         }
                         
                         if let Err(e) = engine.execute_function_impl(target_function, execution_id).await {
-                            eprintln!("Chained function execution failed: {}", e);
+                            error!("Chained function execution failed: {}", e);
                         }
                     });
                 }
@@ -410,7 +411,7 @@ impl FunctionEngine {
             tokio::time::sleep(delay.to_std().unwrap_or(std::time::Duration::from_secs(30))).await;
             
             if let Err(e) = engine.execute_function_impl(function, execution_id).await {
-                eprintln!("Retry execution failed: {}", e);
+                error!("Retry execution failed: {}", e);
             }
         });
         
@@ -491,7 +492,7 @@ impl FunctionEngine {
         }
 
         // Log the Docker command being executed
-        println!("🔧 Running Docker command: docker {}", docker_cmd.join(" "));
+        debug!("🔧 Running Docker command: docker {}", docker_cmd.join(" "));
 
         // Run setup commands first if any
         for setup_cmd in &config.setup_commands {
@@ -510,7 +511,7 @@ impl FunctionEngine {
             setup_docker_cmd.push(config.image.clone());
             setup_docker_cmd.extend(setup_cmd.clone());
 
-            println!("🔧 Running setup command: docker {}", setup_docker_cmd.join(" "));
+            debug!("🔧 Running setup command: docker {}", setup_docker_cmd.join(" "));
             let _setup_result = self.execute_docker_command(setup_docker_cmd).await?;
         }
 
@@ -525,7 +526,7 @@ impl FunctionEngine {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        println!("📦 Starting Docker container...");
+        info!("📦 Starting Docker container...");
         let mut child = cmd.spawn()
             .map_err(|e| CircuitBreakerError::GraphQL(format!("Failed to start docker: {}", e)))?;
 
@@ -548,7 +549,7 @@ impl FunctionEngine {
                 line = stdout_lines.next_line() => {
                     match line {
                         Ok(Some(line)) => {
-                            println!("📄 STDOUT: {}", line);
+                            info!("📄 STDOUT: {}", line);
                             stdout_output.push_str(&line);
                             stdout_output.push('\n');
                         }
@@ -559,7 +560,7 @@ impl FunctionEngine {
                 line = stderr_lines.next_line() => {
                     match line {
                         Ok(Some(line)) => {
-                            println!("⚠️  STDERR: {}", line);
+                            warn!("⚠️  STDERR: {}", line);
                             stderr_output.push_str(&line);
                             stderr_output.push('\n');
                         }
@@ -576,9 +577,9 @@ impl FunctionEngine {
         let exit_code = exit_status.code().unwrap_or(-1);
         
         if exit_code == 0 {
-            println!("✅ Docker container completed successfully (exit code: {})", exit_code);
+            info!("✅ Docker container completed successfully (exit code: {})", exit_code);
         } else {
-            println!("❌ Docker container failed (exit code: {})", exit_code);
+            error!("❌ Docker container failed (exit code: {})", exit_code);
         }
 
         Ok(ContainerResult {

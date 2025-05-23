@@ -10,6 +10,7 @@
 
 use tokio::sync::broadcast;
 use uuid::Uuid;
+use tracing::debug;
 
 use crate::models::{Token, TriggerEvent, EventType, PlaceId, TransitionId, TokenMetadata};
 use crate::{Result};
@@ -35,7 +36,7 @@ impl EventBus {
         let _ = self.sender.send(event.clone());
         
         // TODO: Process event with function engine when implemented
-        println!("Event published: {:?}", event.event_type);
+        debug!("Event published: {:?}", event.event_type);
         
         Ok(())
     }
