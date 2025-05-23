@@ -41,6 +41,10 @@ pub mod workflow;
 // Contains Token - represents workflow execution instances
 pub mod token;
 
+// Declares the `rule` submodule from `rule.rs`
+// Contains Rule and RuleCondition - the rules engine for token gating
+pub mod rule;
+
 // Re-export main types for convenience
 // This creates shortcuts so users don't need to know the internal structure
 
@@ -60,4 +64,10 @@ pub use workflow::WorkflowDefinition;
 /// - Token: The main workflow execution instance
 /// - HistoryEvent: Records each state transition
 /// - TokenMetadata: Key-value metadata storage
-pub use token::{Token, HistoryEvent, TokenMetadata}; 
+pub use token::{Token, HistoryEvent, TokenMetadata};
+
+/// Re-export rules engine types
+/// - Rule: A single evaluatable condition
+/// - RuleCondition: The actual evaluation logic (field checks, logical operations)
+/// - RuleEvaluationResult: Detailed results for debugging
+pub use rule::{Rule, RuleCondition, RuleEvaluationResult}; 

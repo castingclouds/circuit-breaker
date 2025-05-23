@@ -7,6 +7,7 @@
 //! - Which places a token can come from (source places)
 //! - Which place a token will go to (target place)
 //! - What conditions must be met for the transition to fire
+//! - What rules must be satisfied for the transition to be enabled
 //! 
 //! ## Petri Net Theory
 //! 
@@ -14,6 +15,7 @@
 //! - **Input Places**: Places where tokens must be present for transition to fire
 //! - **Output Place**: Place where tokens will be created after transition fires
 //! - **Conditions**: Additional business logic that must be satisfied
+//! - **Rules**: Structured conditions that can be evaluated against token state
 //! 
 //! ## Rust Learning Notes:
 //! 
@@ -25,6 +27,8 @@
 
 use serde::{Deserialize, Serialize}; // JSON serialization traits
 use super::place::{PlaceId, TransitionId}; // Import from sibling module
+use super::rule::{Rule, RuleEvaluationResult}; // Import rules engine
+use super::token::Token; // Import token for rule evaluation
 
 /// Generic transition definition
 /// 
@@ -37,16 +41,19 @@ use super::place::{PlaceId, TransitionId}; // Import from sibling module
 /// - from_places: ["draft"]
 /// - to_place: "review"
 /// - conditions: ["has_content", "assigned_reviewer"]
+/// - rules: [Rule::field_exists("reviewer", "reviewer")]
 /// 
 /// **Software Deployment**:
 /// - from_places: ["tested"] 
 /// - to_place: "production"
 /// - conditions: ["all_tests_pass", "security_approved"]
+/// - rules: [Rule::and("deployment_ready", "Ready for deployment", vec![...])]
 /// 
 /// **Order Processing**:
 /// - from_places: ["cart"]
 /// - to_place: "payment_pending"
 /// - conditions: ["items_available", "customer_verified"]
+/// - rules: [Rule::field_equals("payment_method", "payment_method", json!("credit_card"))]
 /// 
 /// ## Rust Learning Notes:
 /// 
@@ -71,10 +78,40 @@ pub struct TransitionDefinition {
     /// Examples: "review", "approved", "production"
     pub to_place: PlaceId,
     
-    /// Business logic conditions that must be satisfied
+    /// Legacy business logic conditions (kept for backwards compatibility)
     /// These are domain-specific rules checked by the application
     /// Examples: ["has_content"], ["all_tests_pass", "security_scan_clean"]
     pub conditions: Vec<String>, // Generic condition strings
+    
+    /// Structured rules that can be evaluated against token state
+    /// These provide more sophisticated condition evaluation than simple strings
+    /// Rules can check metadata, data fields, and combine with logical operations
+    pub rules: Vec<Rule>,
+}
+
+/// Results of evaluating all rules for a transition
+/// 
+/// This provides comprehensive information about rule evaluation,
+/// useful for debugging and providing user feedback.
+#[derive(Debug, Clone)]
+pub struct TransitionRuleEvaluation {
+    /// ID of the transition that was evaluated
+    pub transition_id: TransitionId,
+    
+    /// Whether the token is in a compatible place for this transition
+    pub place_compatible: bool,
+    
+    /// Whether all rules passed evaluation
+    pub rules_passed: bool,
+    
+    /// Whether the transition can fire (place compatible AND rules passed)
+    pub can_fire: bool,
+    
+    /// Detailed results for each rule
+    pub rule_results: Vec<RuleEvaluationResult>,
+    
+    /// Overall explanation of the evaluation
+    pub explanation: String,
 }
 
 impl TransitionDefinition {
@@ -119,10 +156,13 @@ impl TransitionDefinition {
             
             // Start with no conditions - can be added later if needed
             conditions: vec![],
+            
+            // Start with no rules - can be added later if needed
+            rules: vec![],
         }
     }
 
-    /// Create a transition with conditions
+    /// Create a transition with conditions (legacy support)
     /// 
     /// This is a more complete constructor that allows specifying conditions
     /// up front instead of adding them later.
@@ -154,6 +194,71 @@ impl TransitionDefinition {
             from_places: from_places.into_iter().map(|s| s.into()).collect(),
             to_place: to_place.into(),
             conditions, // Move the conditions vector directly
+            rules: vec![], // Start with no rules
+        }
+    }
+    
+    /// Create a transition with structured rules
+    /// 
+    /// This is the new preferred way to create transitions with sophisticated
+    /// condition evaluation using the rules engine.
+    /// 
+    /// ## Example:
+    /// ```
+    /// let transition = TransitionDefinition::with_rules(
+    ///     "deploy",
+    ///     vec!["tested"],
+    ///     "production",
+    ///     vec![
+    ///         Rule::and("deployment_ready", "Ready for deployment", vec![
+    ///             Rule::field_equals("tests", "test_status", json!("passed")),
+    ///             Rule::field_equals("security", "security_status", json!("approved")),
+    ///         ])
+    ///     ]
+    /// );
+    /// ```
+    pub fn with_rules<I, F, T>(
+        id: I,
+        from_places: Vec<F>,
+        to_place: T,
+        rules: Vec<Rule>
+    ) -> Self 
+    where
+        I: Into<TransitionId>,
+        F: Into<PlaceId>,
+        T: Into<PlaceId>,
+    {
+        TransitionDefinition {
+            id: id.into(),
+            from_places: from_places.into_iter().map(|s| s.into()).collect(),
+            to_place: to_place.into(),
+            conditions: vec![], // Legacy conditions empty when using rules
+            rules,
+        }
+    }
+    
+    /// Create a transition with both conditions and rules
+    /// 
+    /// This allows for gradual migration from string conditions to structured rules.
+    /// Both types of conditions must pass for the transition to fire.
+    pub fn with_conditions_and_rules<I, F, T>(
+        id: I,
+        from_places: Vec<F>,
+        to_place: T,
+        conditions: Vec<String>,
+        rules: Vec<Rule>
+    ) -> Self 
+    where
+        I: Into<TransitionId>,
+        F: Into<PlaceId>,
+        T: Into<PlaceId>,
+    {
+        TransitionDefinition {
+            id: id.into(),
+            from_places: from_places.into_iter().map(|s| s.into()).collect(),
+            to_place: to_place.into(),
+            conditions,
+            rules,
         }
     }
 
@@ -179,6 +284,128 @@ impl TransitionDefinition {
         // Check if the given place is in our from_places vector
         // Vec.contains() uses PartialEq to compare elements
         self.from_places.contains(place)
+    }
+    
+    /// Check if all rules pass for the given token
+    /// 
+    /// This evaluates all structured rules against the token's metadata and data.
+    /// All rules must pass for the transition to be enabled.
+    /// 
+    /// ## Parameters
+    /// - `token`: The token to evaluate rules against
+    /// 
+    /// ## Returns
+    /// `true` if all rules pass, `false` if any rule fails
+    /// 
+    /// ## Rust Learning Notes:
+    /// 
+    /// ### Iterator all() Method
+    /// The `all()` method tests if all elements satisfy a predicate.
+    /// It short-circuits - stops as soon as any element returns false.
+    pub fn rules_pass(&self, token: &Token) -> bool {
+        // All rules must pass for transition to be enabled
+        self.rules.iter().all(|rule| rule.evaluate(&token.metadata, &token.data))
+    }
+    
+    /// Check if a token can fire this transition
+    /// 
+    /// This combines place compatibility with rule evaluation.
+    /// Both conditions must be met for the transition to fire.
+    /// 
+    /// ## Parameters
+    /// - `token`: The token attempting to fire the transition
+    /// 
+    /// ## Returns
+    /// `true` if the token can fire this transition, `false` otherwise
+    pub fn can_fire_with_token(&self, token: &Token) -> bool {
+        // Must be in a compatible place AND all rules must pass
+        self.can_trigger_from(&token.place) && self.rules_pass(token)
+    }
+    
+    /// Get comprehensive evaluation results for debugging
+    /// 
+    /// This provides detailed information about why a transition can or cannot
+    /// fire, including individual rule results and explanations.
+    /// 
+    /// ## Parameters
+    /// - `token`: The token to evaluate against
+    /// 
+    /// ## Returns
+    /// `TransitionRuleEvaluation` with detailed results
+    /// 
+    /// ## Use Cases
+    /// - Debugging workflow logic
+    /// - Providing user feedback about why actions are unavailable
+    /// - Building UIs that show transition requirements
+    pub fn evaluate_with_token(&self, token: &Token) -> TransitionRuleEvaluation {
+        let place_compatible = self.can_trigger_from(&token.place);
+        
+        // Evaluate each rule individually for detailed feedback
+        let rule_results: Vec<RuleEvaluationResult> = self.rules
+            .iter()
+            .map(|rule| rule.evaluate_detailed(&token.metadata, &token.data))
+            .collect();
+        
+        let rules_passed = rule_results.iter().all(|result| result.passed);
+        let can_fire = place_compatible && rules_passed;
+        
+        // Generate explanation based on results
+        let explanation = if !place_compatible {
+            format!(
+                "Token is in place '{}' but transition requires one of: {:?}",
+                token.place.as_str(),
+                self.from_places.iter().map(|p| p.as_str()).collect::<Vec<_>>()
+            )
+        } else if !rules_passed {
+            let failed_count = rule_results.iter().filter(|r| !r.passed).count();
+            format!(
+                "{} of {} rules failed", 
+                failed_count, 
+                rule_results.len()
+            )
+        } else {
+            "All conditions met - transition can fire".to_string()
+        };
+        
+        TransitionRuleEvaluation {
+            transition_id: self.id.clone(),
+            place_compatible,
+            rules_passed,
+            can_fire,
+            rule_results,
+            explanation,
+        }
+    }
+    
+    /// Add a rule to this transition
+    /// 
+    /// This allows building up transition rules incrementally.
+    /// 
+    /// ## Example:
+    /// ```
+    /// let mut transition = TransitionDefinition::new("deploy", vec!["tested"], "production");
+    /// transition.add_rule(Rule::field_equals("tests", "test_status", json!("passed")));
+    /// transition.add_rule(Rule::field_equals("security", "security_status", json!("approved")));
+    /// ```
+    pub fn add_rule(&mut self, rule: Rule) {
+        self.rules.push(rule);
+    }
+    
+    /// Remove all rules from this transition
+    /// 
+    /// This can be useful for testing or dynamic rule modification.
+    pub fn clear_rules(&mut self) {
+        self.rules.clear();
+    }
+    
+    /// Get the number of rules attached to this transition
+    pub fn rule_count(&self) -> usize {
+        self.rules.len()
+    }
+    
+    /// Check if this transition has any rules
+    pub fn has_rules(&self) -> bool {
+        !self.rules.is_empty()
     }
 }
 
