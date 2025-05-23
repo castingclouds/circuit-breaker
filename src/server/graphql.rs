@@ -13,7 +13,6 @@ use axum::{
     Router, Server,
 };
 use tower_http::cors::CorsLayer;
-use tracing::{info, debug};
 
 use crate::engine::{
     graphql::{Query, Mutation, Subscription, create_schema_with_storage},
@@ -84,9 +83,9 @@ impl GraphQLServer {
 
         let addr = format!("0.0.0.0:{}", self.config.port);
         
-        info!("🚀 GraphQL server running on http://localhost:{}", self.config.port);
-        info!("📊 GraphiQL interface: http://localhost:{}", self.config.port);
-        info!("🔗 GraphQL endpoint: http://localhost:{}/graphql", self.config.port);
+        println!("🚀 GraphQL server running on http://localhost:{}", self.config.port);
+        println!("📊 GraphiQL interface: http://localhost:{}", self.config.port);
+        println!("🔗 GraphQL endpoint: http://localhost:{}/graphql", self.config.port);
         
         // Use axum 0.6 syntax
         Server::bind(&addr.parse()?)
@@ -206,9 +205,9 @@ impl GraphQLServer {
         };
 
         // Store workflows - we'll need to implement this in the storage trait
-        debug!("✅ Added default workflows:");
-        debug!("   📄 Document Review Process");
-        debug!("   🚀 Software Deployment Pipeline");
+        println!("✅ Added default workflows:");
+        println!("   📄 Document Review Process");
+        println!("   🚀 Software Deployment Pipeline");
 
         Ok(())
     }

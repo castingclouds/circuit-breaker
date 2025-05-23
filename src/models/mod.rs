@@ -45,10 +45,6 @@ pub mod token;
 // Contains Rule and RuleCondition - the rules engine for token gating
 pub mod rule;
 
-// Declares the `function` submodule from `function.rs`
-// Contains FunctionDefinition and event-driven execution types
-pub mod function;
-
 // Re-export main types for convenience
 // This creates shortcuts so users don't need to know the internal structure
 
@@ -74,29 +70,4 @@ pub use token::{Token, HistoryEvent, TokenMetadata};
 /// - Rule: A single evaluatable condition
 /// - RuleCondition: The actual evaluation logic (field checks, logical operations)
 /// - RuleEvaluationResult: Detailed results for debugging
-pub use rule::{Rule, RuleCondition, RuleEvaluationResult};
-
-/// Re-export function types
-/// - FunctionDefinition: Docker-based event-driven functions
-/// - FunctionId: Unique identifier for functions
-/// - EventTrigger: Defines what events trigger functions
-/// - ContainerConfig: Docker container configuration
-/// - ContainerMount: File/directory mount configuration
-/// - ResourceLimits: Container resource constraints
-/// - FunctionExecution: Records function execution results
-/// - ExecutionStatus: Function execution state
-/// - TriggerEvent: Event payload that triggers functions
-/// - EventType: Types of events that can occur
-/// - FunctionSchema: JSON Schema for input/output validation
-/// - InputMapping: How to map data between functions in chains
-/// - ChainCondition: Conditions for triggering function chains
-/// - FunctionChain: Function chaining definition
-/// - RetryConfig: Retry configuration for failed executions
-/// - ChainExecution: Chain execution tracking
-/// - ChainStatus: Status of function execution chains
-pub use function::{
-    FunctionDefinition, FunctionId, EventTrigger, ContainerConfig, ContainerMount,
-    ResourceLimits, FunctionExecution, ExecutionStatus, TriggerEvent, EventType,
-    FunctionSchema, InputMapping, ChainCondition, FunctionChain, RetryConfig,
-    BackoffStrategy, RetryCondition, ChainExecution, ChainStatus
-}; 
+pub use rule::{Rule, RuleCondition, RuleEvaluationResult}; 

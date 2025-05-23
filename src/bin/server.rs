@@ -52,7 +52,6 @@
 
 use circuit_breaker::GraphQLServerBuilder; // Import from our library crate
 use tracing_subscriber;                     // Logging framework
-use tracing::info;                          // For structured logging
 
 /// Main entry point for the Circuit Breaker server
 /// 
@@ -90,8 +89,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     // Print startup banner - helps identify server startup in logs
-    info!("🚀 Starting Circuit Breaker Server...");
-    info!("=====================================");
+    println!("🚀 Starting Circuit Breaker Server...");
+    println!("=====================================");
 
     // Build and start the production server
     // 

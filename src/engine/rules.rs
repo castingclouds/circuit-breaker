@@ -46,18 +46,15 @@ use crate::models::{
 /// ## Usage Example:
 /// 
 /// ```rust
-/// use circuit_breaker::{RulesEngine, models::Rule};
-/// use serde_json::json;
-/// 
 /// let mut engine = RulesEngine::new();
 /// 
 /// // Register global rules
 /// engine.register_rule(Rule::field_exists("has_content", "content"));
 /// engine.register_rule(Rule::field_equals("approved", "status", json!("approved")));
 /// 
-/// // Note: You would need actual token and workflow instances for full evaluation
-/// // let available = engine.available_transitions(&token, &workflow);
-/// // let detailed = engine.evaluate_all_transitions(&token, &workflow);
+/// // Evaluate token against workflow
+/// let available = engine.available_transitions(&token, &workflow);
+/// let detailed = engine.evaluate_all_transitions(&token, &workflow);
 /// ```
 /// 
 /// ## Design Philosophy
@@ -107,8 +104,6 @@ impl RulesEngine {
     /// 
     /// ## Example:
     /// ```rust
-    /// use circuit_breaker::RulesEngine;
-    /// 
     /// let engine = RulesEngine::new();
     /// ```
     pub fn new() -> Self {
@@ -132,8 +127,6 @@ impl RulesEngine {
     /// 
     /// ## Example:
     /// ```rust
-    /// use circuit_breaker::RulesEngine;
-    /// 
     /// let engine = RulesEngine::with_common_rules();
     /// // Can now reference "has_content", "status_approved", etc. in transitions
     /// ```
@@ -181,10 +174,6 @@ impl RulesEngine {
     /// 
     /// ## Example:
     /// ```rust
-    /// use circuit_breaker::{RulesEngine, models::Rule};
-    /// use serde_json::json;
-    /// 
-    /// let mut engine = RulesEngine::new();
     /// engine.register_rule(Rule::field_equals("custom_status", "status", json!("custom")));
     /// ```
     pub fn register_rule(&mut self, rule: Rule) {
@@ -249,18 +238,22 @@ impl RulesEngine {
     /// ## Returns
     /// `true` if the token can fire the transition, `false` otherwise
     /// 
+    /// ## Rust Learning Notes:
+    /// 
+    /// ### Short-Circuit Evaluation
+    /// We check place compatibility first because it's cheaper than
+    /// rule evaluation. If the place is wrong, we can return false
+    /// immediately without evaluating complex rules.
+    /// 
     /// ## Example
     /// ```rust
-    /// use circuit_breaker::RulesEngine;
-    /// 
     /// let engine = RulesEngine::with_common_rules();
     /// 
     /// // This is the complete evaluation including all condition types
-    /// // Note: You would need actual token and transition instances for evaluation
-    /// // let can_fire = engine.can_transition(&token, &transition);
+    /// let can_fire = engine.can_transition(&token, &transition);
     /// 
     /// // Compare with partial evaluation (structured rules only)
-    /// // let partial = transition.can_fire_with_token(&token);
+    /// let partial = transition.can_fire_with_token(&token);
     /// // can_fire may be false even if partial is true due to legacy conditions
     /// ```
     pub fn can_transition(&self, token: &Token, transition: &TransitionDefinition) -> bool {

@@ -41,10 +41,9 @@
 //! let mut engine = RulesEngine::with_common_rules();
 //! 
 //! // Authoritative evaluation (includes ALL condition types)
-//! // Note: You would need actual token, transition, and workflow instances
-//! // let can_fire = engine.can_transition(&token, &transition);
-//! // let available = engine.available_transitions(&token, &workflow);
-//! // let detailed = engine.evaluate_all_transitions(&token, &workflow);
+//! let can_fire = engine.can_transition(&token, &transition);
+//! let available = engine.available_transitions(&token, &workflow);
+//! let detailed = engine.evaluate_all_transitions(&token, &workflow);
 //! ```
 //! 
 //! **⚠️ Important:** Always use `RulesEngine` methods for production evaluation.

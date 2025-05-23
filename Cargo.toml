@@ -61,8 +61,4 @@ path = "examples/rust/graphql_client.rs"
 
 [[example]]
 name = "rules_engine_demo"
-path = "examples/rust/rules_engine_demo.rs"
-
-[[example]]
-name = "function_demo"
-path = "examples/rust/function_demo.rs" 
+path = "examples/rust/rules_engine_demo.rs" 

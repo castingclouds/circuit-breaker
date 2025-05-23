@@ -8,7 +8,6 @@ use uuid::Uuid;
 
 use crate::models::{Token, PlaceId, TransitionId, WorkflowDefinition, TransitionDefinition, HistoryEvent};
 use crate::engine::storage::WorkflowStorage;
-use crate::engine::{TokenEvents, EventBus};
 
 // GraphQL types - these are the API representations of our domain models
 
@@ -364,9 +363,6 @@ impl Mutation {
         input: TransitionFireInput,
     ) -> async_graphql::Result<TokenGQL> {
         let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
-        // TODO: Get EventBus from context once it's properly integrated
-        // For now, we'll create a temporary one and suggest architectural improvement
-        let event_bus = EventBus::new();
         
         let token_id = input.token_id.parse::<Uuid>()
             .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
@@ -384,14 +380,13 @@ impl Mutation {
         let target_place = workflow.can_transition(&current_place, &transition_id)
             .ok_or_else(|| async_graphql::Error::new("Invalid transition"))?;
         
-        // Update with any provided data before transition
+        // Fire the transition
+        token.transition_to(target_place.clone(), transition_id);
+        
+        // Update with any provided data
         if let Some(data) = input.data {
             token.data = data;
         }
-        
-        // Fire the transition using the combined method that emits events
-        token.transition_to_with_events(target_place.clone(), transition_id, &event_bus).await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to transition token: {}", e)))?;
         
         // Store the updated token
         let updated = storage.update_token(token).await

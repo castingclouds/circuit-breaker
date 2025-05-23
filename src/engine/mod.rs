@@ -34,15 +34,6 @@
 //! - Supports both structured rules and legacy string conditions
 //! - Enables complex logical expressions (AND, OR, NOT)
 //! 
-//! ### Event System (`events` module)
-//! - Handles workflow events and triggers
-//! - Integrates with function execution engine
-//! 
-//! ### Function Execution (`functions` module)
-//! - Executes Docker-based functions
-//! - Manages function storage and chaining
-//! - Supports container lifecycle management
-//! 
 //! ## Rust Learning Notes:
 //! 
 //! ### Module Organization Pattern
@@ -84,23 +75,6 @@ pub mod storage;
 /// - Legacy condition support
 pub mod rules;
 
-/// Event system for triggering functions
-/// 
-/// Contains:
-/// - EventBus for publishing and subscribing to workflow events
-/// - Event emission from workflow operations
-/// - Integration with function execution engine
-pub mod events;
-
-/// Function execution engine with Docker support
-/// 
-/// Contains:
-/// - FunctionEngine for executing Docker-based functions
-/// - Function storage abstraction and implementations
-/// - Function chaining and input/output mapping
-/// - Container lifecycle management
-pub mod functions;
-
 // Re-export main engine types for clean API access
 // Users can import directly from engine instead of navigating submodules
 
@@ -140,19 +114,4 @@ pub use storage::{WorkflowStorage, InMemoryStorage};
 /// These types enable sophisticated rule-based workflow control:
 /// - RulesEngine: Central engine for evaluating token transitions
 /// - WorkflowEvaluationResult: Detailed evaluation results for all transitions
-pub use rules::{RulesEngine, WorkflowEvaluationResult};
-
-/// Re-export event system types for workflow events
-/// 
-/// These types enable event-driven function execution:
-/// - EventBus: Central bus for publishing and subscribing to events
-/// - TokenEvents: Extension trait for emitting events from token operations
-pub use events::{EventBus, TokenEvents};
-
-/// Re-export function execution types for Docker-based functions
-/// 
-/// These types enable serverless-style function execution:
-/// - FunctionEngine: Main engine for executing Docker functions
-/// - FunctionStorage: Storage abstraction for functions and executions
-/// - InMemoryFunctionStorage: Default in-memory implementation
-pub use functions::{FunctionEngine, FunctionStorage, InMemoryFunctionStorage}; 
+pub use rules::{RulesEngine, WorkflowEvaluationResult}; 
