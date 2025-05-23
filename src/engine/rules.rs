@@ -223,10 +223,13 @@ impl RulesEngine {
     
     /// Evaluate if a token can fire a specific transition
     /// 
-    /// This is the main evaluation method that combines:
+    /// This is the **authoritative method** for complete transition evaluation that combines:
     /// 1. Place compatibility (is token in the right place?)
-    /// 2. Rule evaluation (do all transition rules pass?)
+    /// 2. Structured rule evaluation (do all transition rules pass?)
     /// 3. Legacy condition support (for backwards compatibility)
+    /// 
+    /// **Important**: This is the only method that evaluates legacy string-based conditions.
+    /// The `TransitionDefinition::can_fire_with_token()` method only evaluates structured rules.
     /// 
     /// ## Parameters
     /// - `token`: The token attempting to fire the transition
@@ -241,6 +244,18 @@ impl RulesEngine {
     /// We check place compatibility first because it's cheaper than
     /// rule evaluation. If the place is wrong, we can return false
     /// immediately without evaluating complex rules.
+    /// 
+    /// ## Example
+    /// ```rust
+    /// let engine = RulesEngine::with_common_rules();
+    /// 
+    /// // This is the complete evaluation including all condition types
+    /// let can_fire = engine.can_transition(&token, &transition);
+    /// 
+    /// // Compare with partial evaluation (structured rules only)
+    /// let partial = transition.can_fire_with_token(&token);
+    /// // can_fire may be false even if partial is true due to legacy conditions
+    /// ```
     pub fn can_transition(&self, token: &Token, transition: &TransitionDefinition) -> bool {
         // First check place compatibility (cheap check)
         if !transition.can_trigger_from(&token.place) {

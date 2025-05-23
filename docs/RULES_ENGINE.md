@@ -153,6 +153,79 @@ The rules engine comes with predefined rules for common scenarios:
 3. **Legacy Conditions**: Evaluate string conditions in `TransitionDefinition.conditions`
 4. **Final Decision**: All checks must pass for transition to fire
 
+## Important: Structured Rules vs Complete Evaluation
+
+There's an important distinction between different evaluation methods:
+
+### TransitionDefinition Methods (Partial Evaluation)
+
+These methods only evaluate **structured rules** and place compatibility:
+
+```rust
+// Only evaluates structured rules - NOT legacy conditions
+let can_fire_partial = transition.can_fire_with_token(&token);
+let rules_pass = transition.rules_pass(&token);
+let result = transition.evaluate_with_token(&token);
+```
+
+**What's evaluated:**
+- ✅ Place compatibility (`from_places`)
+- ✅ Structured rules (`rules` field)
+- ❌ Legacy conditions (`conditions` field) - **NOT evaluated**
+
+### RulesEngine Methods (Complete Evaluation)
+
+These methods provide **complete evaluation** including all condition types:
+
+```rust
+// Complete evaluation including legacy conditions
+let engine = RulesEngine::with_common_rules();
+let can_fire_complete = engine.can_transition(&token, &transition);
+let all_results = engine.evaluate_all_transitions(&token, &workflow);
+```
+
+**What's evaluated:**
+- ✅ Place compatibility (`from_places`)
+- ✅ Structured rules (`rules` field)
+- ✅ Legacy conditions (`conditions` field) - **Fully evaluated**
+
+### Why This Distinction Exists
+
+- **Models Layer**: The `TransitionDefinition` (in `src/models/`) is domain-agnostic and doesn't know about global rule registries
+- **Engine Layer**: The `RulesEngine` (in `src/engine/`) has access to global rules needed to resolve legacy string-based conditions
+- **Legacy Support**: String conditions require rule name resolution, which only the engine can provide
+
+### Example: Different Results
+
+```rust
+// Transition with both structured rules and legacy conditions
+let mut transition = TransitionDefinition::with_conditions(
+    "complex_approval",
+    vec!["draft"],
+    "approved",
+    vec!["requires_manager_approval".to_string()] // Legacy condition
+);
+transition.add_rule(Rule::field_exists("has_content", "content"));
+
+// Token that satisfies structured rule but not legacy condition
+let mut token = Token::new("test", PlaceId::from("draft"));
+token.data = json!({"content": "test content"});
+
+// Partial evaluation (structured rules only) - PASSES
+let partial = transition.can_fire_with_token(&token); // true
+
+// Complete evaluation (including legacy) - MAY FAIL
+let engine = RulesEngine::with_common_rules();
+let complete = engine.can_transition(&token, &transition); // false if legacy condition fails
+```
+
+### Best Practices
+
+1. **Use `RulesEngine` methods for authoritative evaluation**
+2. **Use `TransitionDefinition` methods only for debugging structured rules**
+3. **Document which evaluation method your code uses**
+4. **Migrate from legacy conditions to structured rules when possible**
+
 ## Detailed Evaluation Results
 
 The engine provides comprehensive feedback:
