@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Circuit Breaker - State Managed Workflows API</title>
+    <style>
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; }
+        #graphiql { height: 100vh; }
+    </style>
+</head>
+<body>
+    <div id="graphiql">Loading GraphQL Playground...</div>
+    <script
+        crossorigin
+        src="https://unpkg.com/react@17/umd/react.production.min.js"
+    ></script>
+    <script
+        crossorigin
+        src="https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"
+    ></script>
+    <script
+        crossorigin
+        src="https://unpkg.com/@graphiql/react@0.20.4/dist/index.umd.js"
+    ></script>
+    <script>
+        const graphQLFetcher = graphiQLParams =>
+            fetch('/graphql', {
+                method: 'post',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(graphiQLParams),
+            })
+            .then(response => response.json())
+            .catch(() => response.text());
+
+        ReactDOM.render(
+            React.createElement(GraphiQL.GraphiQL, {
+                fetcher: graphQLFetcher,
+                defaultQuery: `# 🚀 Circuit Breaker - State Managed Workflows
+# Unlike DAG-based systems, this supports cycles, concurrent states, and complex state relationships!
+
+# 1. First, let's see what workflows are available
+query GetWorkflows {
+  workflows {
+    id
+    name
+    states
+    initialState
+    transitions {
+      id
+      fromStates
+      toState
+      conditions
+    }
+  }
+}
+
+# 2. Create a token in the document workflow
+mutation CreateDocumentToken {
+  createToken(input: {
+    workflowId: "document_approval_v1"
+    data: {
+      title: "My Important Document"
+      author: "Circuit Breaker User"
+    }
+    metadata: {
+      priority: "high"
+      department: "engineering"
+    }
+  }) {
+    id
+    state
+    workflowId
+    data
+    metadata
+    createdAt
+  }
+}
+
+# 3. Fire a transition to move the token through states
+mutation SubmitDocument {
+  fireTransition(input: {
+    tokenId: "YOUR_TOKEN_ID_HERE"
+    transitionId: "submit"
+    data: {
+      submittedBy: "user@example.com"
+      submissionNotes: "Ready for review"
+    }
+  }) {
+    id
+    state
+    history {
+      timestamp
+      transition
+      fromState
+      toState
+    }
+  }
+}
+
+# 4. Get available transitions for a token
+query GetAvailableTransitions {
+  availableTransitions(tokenId: "YOUR_TOKEN_ID_HERE") {
+    id
+    fromStates
+    toState
+    conditions
+  }
+}
+
+# 5. Show the power of State Managed Workflows - create a deployment token
+mutation CreateDeploymentToken {
+  createToken(input: {
+    workflowId: "deployment_pipeline_v1"
+    data: {
+      version: "v1.2.3"
+      branch: "main"
+      commit: "abc123"
+    }
+  }) {
+    id
+    state
+    workflowId
+  }
+}`,
+            }),
+            document.getElementById('graphiql'),
+        );
+    </script>
+</body>
+</html> 
