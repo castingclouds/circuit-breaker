@@ -37,25 +37,29 @@ use super::token::TokenMetadata;
 /// 
 /// **Simple field check**:
 /// ```
+/// use circuit_breaker::models::{Rule, RuleCondition};
+/// 
 /// Rule {
 ///     id: "has_reviewer".to_string(),
 ///     description: "Document must have an assigned reviewer".to_string(),
 ///     condition: RuleCondition::FieldExists { field: "reviewer".to_string() }
-/// }
+/// };
 /// ```
 /// 
 /// **Complex logical expression**:
 /// ```
+/// use circuit_breaker::models::{Rule, RuleCondition};
+/// 
 /// Rule {
 ///     id: "deployment_ready".to_string(),
 ///     description: "Ready for deployment".to_string(),
 ///     condition: RuleCondition::And {
 ///         rules: vec![
-///             Rule { /* tests pass */ },
-///             Rule { /* security approved */ }
+///             Rule { id: "tests".to_string(), description: "tests pass".to_string(), condition: RuleCondition::FieldExists { field: "test_passed".to_string() } },
+///             Rule { id: "security".to_string(), description: "security approved".to_string(), condition: RuleCondition::FieldExists { field: "security_approved".to_string() } }
 ///         ]
 ///     }
-/// }
+/// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rule {
@@ -439,6 +443,8 @@ impl Rule {
     /// 
     /// ## Example:
     /// ```
+    /// use circuit_breaker::models::Rule;
+    /// 
     /// let rule = Rule::field_exists("has_reviewer", "reviewer");
     /// ```
     pub fn field_exists(id: &str, field: &str) -> Self {
@@ -455,6 +461,8 @@ impl Rule {
     /// 
     /// ## Example:
     /// ```
+    /// use circuit_breaker::models::Rule;
+    /// 
     /// let rule = Rule::field_equals("status_approved", "status", serde_json::json!("approved"));
     /// ```
     pub fn field_equals(id: &str, field: &str, value: serde_json::Value) -> Self {
@@ -472,6 +480,8 @@ impl Rule {
     /// 
     /// ## Example:
     /// ```
+    /// use circuit_breaker::models::Rule;
+    /// 
     /// let rule = Rule::field_greater_than("high_score", "score", 85.0);
     /// ```
     pub fn field_greater_than(id: &str, field: &str, value: f64) -> Self {
@@ -489,6 +499,8 @@ impl Rule {
     /// 
     /// ## Example:
     /// ```
+    /// use circuit_breaker::models::Rule;
+    /// 
     /// let rule = Rule::and("ready_to_deploy", "Ready for deployment", vec![
     ///     Rule::field_equals("tests", "test_status", serde_json::json!("passed")),
     ///     Rule::field_equals("security", "security_status", serde_json::json!("approved")),
@@ -506,6 +518,8 @@ impl Rule {
     /// 
     /// ## Example:
     /// ```
+    /// use circuit_breaker::models::Rule;
+    /// 
     /// let rule = Rule::or("approval_or_override", "Has approval or override", vec![
     ///     Rule::field_equals("approved", "manager_approved", serde_json::json!(true)),
     ///     Rule::field_equals("override", "emergency_override", serde_json::json!(true)),
@@ -523,6 +537,8 @@ impl Rule {
     /// 
     /// ## Example:
     /// ```
+    /// use circuit_breaker::models::Rule;
+    /// 
     /// let rule = Rule::not("not_flagged", "Not flagged for review", 
     ///     Rule::field_equals("flagged", "review_flag", serde_json::json!(true))
     /// );
