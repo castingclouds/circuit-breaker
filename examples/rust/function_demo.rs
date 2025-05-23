@@ -7,7 +7,7 @@ use circuit_breaker::models::{
     TransitionId, Token, TriggerEvent
 };
 use circuit_breaker::engine::{
-    FunctionEngine, InMemoryFunctionStorage, EventBus
+    FunctionEngine, InMemoryFunctionStorage, EventBus, TokenEvents
 };
 use std::collections::HashMap;
 
@@ -54,9 +54,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Emit token created event
     event_bus.emit_token_created(&token).await?;
 
-    // Transition token and emit transition event
-    token.transition_to(PlaceId::from("processing"), TransitionId::from("process"));
-    event_bus.emit_token_transitioned(&token, PlaceId::from("start"), TransitionId::from("process")).await?;
+    // Transition token and emit transition event using the combined method
+    token.transition_to_with_events(
+        PlaceId::from("processing"), 
+        TransitionId::from("process"),
+        &event_bus
+    ).await?;
 
     // Process events with function engine
     println!("\n⚡ Processing Events:");
