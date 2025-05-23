@@ -8,6 +8,71 @@
 //! Petri Net theory to manage state transitions. This file serves as the **library root**
 //! and defines the public API that external crates can use.
 //!
+//! ## Core Components
+//! 
+//! ### Domain Models
+//! - [`Token`]: The main workflow execution token that moves through places
+//! - [`WorkflowDefinition`]: Defines the structure and transitions of a workflow
+//! - [`TransitionDefinition`]: Defines how tokens move between places
+//! - [`PlaceId`] / [`TransitionId`]: Unique identifiers for workflow elements
+//! 
+//! ### Rules Engine
+//! 
+//! #### [`RulesEngine`] - Central Transition Evaluation Engine
+//! 
+//! The **authoritative** engine for evaluating whether tokens can fire transitions.
+//! Provides **complete evaluation** including all condition types:
+//! 
+//! - **Place Compatibility**: Is token in the correct place?
+//! - **Structured Rules**: Do all `rules` in the transition pass?
+//! - **Legacy Conditions**: Do all string-based `conditions` pass?
+//! 
+//! **Key Features:**
+//! - Global rule registry for reusable business logic
+//! - Complex logical expressions (AND, OR, NOT) with arbitrary nesting
+//! - Detailed evaluation feedback for debugging and user interfaces
+//! - Backwards compatibility with legacy string-based conditions
+//! 
+//! **Usage Example:**
+//! ```rust
+//! use circuit_breaker::{RulesEngine, Token, WorkflowDefinition};
+//! 
+//! // Create engine with common predefined rules
+//! let mut engine = RulesEngine::with_common_rules();
+//! 
+//! // Authoritative evaluation (includes ALL condition types)
+//! let can_fire = engine.can_transition(&token, &transition);
+//! let available = engine.available_transitions(&token, &workflow);
+//! let detailed = engine.evaluate_all_transitions(&token, &workflow);
+//! ```
+//! 
+//! **⚠️ Important:** Always use `RulesEngine` methods for production evaluation.
+//! Direct `TransitionDefinition` methods only evaluate structured rules,
+//! not legacy string-based conditions.
+//! 
+//! #### [`WorkflowEvaluationResult`] - Comprehensive Evaluation Results
+//! 
+//! Detailed results for all transitions in a workflow, essential for debugging
+//! and building user interfaces that show transition requirements.
+//! 
+//! **Contains:**
+//! - Workflow and token identification
+//! - Current token place
+//! - Per-transition evaluation results with explanations
+//! - Available vs blocked transition counts
+//! 
+//! **Use Cases:**
+//! - **Debugging**: Understand why specific transitions fail
+//! - **User Feedback**: Show users what conditions are missing  
+//! - **UI Development**: Build interfaces showing transition requirements
+//! - **Workflow Analysis**: Optimize workflow logic and identify bottlenecks
+//! 
+//! ### GraphQL Engine
+//! Provides a language-agnostic API for polyglot workflow management.
+//! 
+//! ### Storage Layer
+//! Abstracts persistence with pluggable storage backends.
+//!
 //! ## Rust Learning Notes:
 //! 
 //! ### Module System
