@@ -296,6 +296,7 @@ impl Mutation {
                 from_places: t.from_places.into_iter().map(PlaceId::from).collect(),
                 to_place: PlaceId::from(t.to_place),
                 conditions: t.conditions,
+                rules: vec![], // Start with empty rules - can be added later via GraphQL
             })
             .collect();
         

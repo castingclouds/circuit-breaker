@@ -6,6 +6,7 @@
     "build": "tsc",
     "start:basic": "tsx basic_workflow.ts",
     "start:demo": "tsx token_demo.ts",
+    "start:rules": "tsx rules_engine_demo.ts",
     "dev": "tsx --watch"
   },
   "dependencies": {

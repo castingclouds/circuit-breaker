@@ -38,6 +38,9 @@ npm run start:basic
 
 # Core token operations  
 npm run start:demo
+
+# Rules engine demonstration
+npm run start:rules
 ```
 
 ## 📁 Client Examples
@@ -70,6 +73,28 @@ Deep dive into token operations via GraphQL, showing TypeScript-specific data ha
 **Run:**
 ```bash
 npm run start:demo
+```
+
+### `rules_engine_demo.ts` - **Advanced Rules Engine**
+
+Demonstrates sophisticated rule evaluation for token transitions with complex logical expressions.
+
+**Key Features:**
+- ✅ **Complex logical rules** with AND, OR, NOT operations  
+- ✅ **Client-side rule evaluation** (with backend fallback)
+- ✅ **Article publishing workflow** with quality gates
+- ✅ **Emergency override scenarios** 
+- ✅ **Detailed rule debugging** and evaluation feedback
+- ✅ **Field-based conditions** (exists, equals, greater than, contains)
+
+**Example Scenarios:**
+- **Ready Article**: All quality criteria met
+- **Incomplete Article**: Missing reviewer and content too short
+- **Emergency Override**: Bypasses normal rules with emergency flag
+
+**Run:**
+```bash
+npm run start:rules
 ```
 
 ## 🏗️ Architecture Comparison
@@ -130,7 +155,14 @@ All languages work with the same **state management paradigm**:
 - ✅ **Complex transitions** with multiple sources
 - ✅ **Mathematical guarantees** via Petri Nets
 
-### 4. **Production Deployment**
+### 4. **Advanced Rules Engine**
+The rules engine provides sophisticated condition evaluation:
+- ✅ **Complex logical expressions**: `(A && B) || C` with arbitrary nesting
+- ✅ **Field-based conditions**: Check metadata/data fields dynamically
+- ✅ **Type-safe evaluation**: Rust backend ensures correctness
+- ✅ **Client-side preview**: TypeScript can evaluate rules locally for UX
+
+### 5. **Production Deployment**
 
 **Simple & Correct:**
 ```
@@ -169,6 +201,7 @@ npm run dev
 # Try different workflows via GraphQL
 npm run start:basic
 npm run start:demo
+npm run start:rules
 ```
 
 ### 3. **Multi-Language Development**
@@ -190,6 +223,7 @@ examples/
 Each language directory will contain **client examples only**:
 - `basic_workflow.*` - Architecture demonstration
 - `token_demo.*` - Core operations demo
+- `rules_engine_demo.*` - Advanced rules evaluation
 - `README.md` - Language-specific setup instructions
 
 ## 💡 Why This Architecture?
@@ -198,14 +232,95 @@ Each language directory will contain **client examples only**:
 - **Single server**: One Rust binary to deploy and scale
 - **Language flexibility**: Any language can be a client via GraphQL
 - **API consistency**: Same interface across all languages
-- **Performance**: Rust server handles the heavy lifting
-- **Simplicity**: No multi-server coordination complexity
+- **Rules flexibility**: Complex business logic without hardcoded conditions
+- **Type safety**: Rust backend prevents rule evaluation errors
+- **Client preview**: Languages can implement local rule evaluation for better UX
 
-### ❌ **What We Avoided:**
-- Multiple GraphQL servers in different languages
-- Complex inter-service communication
-- Language-specific performance bottlenecks
-- Inconsistent APIs across languages
+### ❌ **Anti-patterns avoided:**
+- Multiple language-specific servers
+- Hardcoded business logic in core engine
+- Complex deployment coordination
+- API inconsistencies between languages
+
+## 🤖 Rules Engine Deep Dive
+
+The rules engine enables sophisticated workflow control without hardcoding business logic:
+
+### Rule Types
+```typescript
+// Field existence
+RuleBuilder.fieldExists('has_reviewer', 'reviewer')
+
+// Value equality  
+RuleBuilder.fieldEquals('status_approved', 'status', 'approved')
+
+// Numeric comparisons
+RuleBuilder.fieldGreaterThan('high_priority', 'priority', 5)
+
+// String operations
+RuleBuilder.fieldContains('urgent_tag', 'tags', 'urgent')
+
+// Complex logical expressions
+RuleBuilder.or('publish_ready', 'Ready to publish', [
+  RuleBuilder.and('quality_criteria', 'High quality', [
+    RuleBuilder.fieldExists('has_content', 'content'),
+    RuleBuilder.fieldEquals('status_approved', 'status', 'approved'),
+    RuleBuilder.fieldGreaterThan('word_count_sufficient', 'word_count', 500)
+  ]),
+  RuleBuilder.fieldEquals('emergency_flag', 'emergency', true)
+])
+```
+
+### Integration Benefits
+- **Domain Agnostic**: Rules work with any JSON metadata/data
+- **Debuggable**: Detailed evaluation results show why rules pass/fail
+- **Composable**: Complex expressions built from simple components
+- **Reusable**: Common rules shared across workflows
+- **Type Safe**: Rust backend prevents evaluation errors
+
+## 🔧 Client Development Tips
+
+### 1. **Start Simple**
+```typescript
+// Begin with basic workflows
+const workflow = {
+  places: ['draft', 'review', 'published'],
+  transitions: [
+    { id: 'submit', fromPlaces: ['draft'], toPlace: 'review' },
+    { id: 'publish', fromPlaces: ['review'], toPlace: 'published' }
+  ]
+};
+```
+
+### 2. **Add Rules Gradually**
+```typescript
+// Add rules as business logic becomes clear
+transition.rules = [
+  RuleBuilder.fieldExists('has_content', 'content'),
+  RuleBuilder.fieldGreaterThan('quality_score', 'score', 8)
+];
+```
+
+### 3. **Use Client-Side Preview**
+```typescript
+// Implement local rule evaluation for immediate UI feedback
+const canTransition = clientEngine.canTransition(token, transition);
+// Then validate on server for authoritative result
+```
+
+### 4. **Leverage Type Safety**
+```typescript
+// Define strong types for your domain
+interface ArticleData {
+  title: string;
+  content: string;
+  wordCount: number;
+  tags: string[];
+}
+
+// Use with token data
+const token: Token & { data: ArticleData } = ...;
+```
 
 ---
 

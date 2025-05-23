@@ -28,6 +28,12 @@
 //! - Can be extended for persistent storage (database, NATS, etc.)
 //! - Manages workflow definitions and token state
 //! 
+//! ### Rules Engine (`rules` module)
+//! - Evaluates transition rules against token state
+//! - Provides sophisticated condition evaluation for workflow gating
+//! - Supports both structured rules and legacy string conditions
+//! - Enables complex logical expressions (AND, OR, NOT)
+//! 
 //! ## Rust Learning Notes:
 //! 
 //! ### Module Organization Pattern
@@ -59,6 +65,15 @@ pub mod graphql;
 /// - In-memory storage implementation
 /// - Storage operations for workflows and tokens
 pub mod storage;
+
+/// Rules engine for transition evaluation
+/// 
+/// Contains:
+/// - RulesEngine for evaluating token transitions
+/// - Global rule registry and management
+/// - Detailed evaluation results and feedback
+/// - Legacy condition support
+pub mod rules;
 
 // Re-export main engine types for clean API access
 // Users can import directly from engine instead of navigating submodules
@@ -92,4 +107,11 @@ pub use graphql::{
 /// These types enable storage abstraction:
 /// - WorkflowStorage: Trait defining storage operations
 /// - InMemoryStorage: Default in-memory implementation
-pub use storage::{WorkflowStorage, InMemoryStorage}; 
+pub use storage::{WorkflowStorage, InMemoryStorage};
+
+/// Re-export rules engine types for transition evaluation
+/// 
+/// These types enable sophisticated rule-based workflow control:
+/// - RulesEngine: Central engine for evaluating token transitions
+/// - WorkflowEvaluationResult: Detailed evaluation results for all transitions
+pub use rules::{RulesEngine, WorkflowEvaluationResult}; 
