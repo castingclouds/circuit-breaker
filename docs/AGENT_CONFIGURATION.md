@@ -277,7 +277,7 @@ pub struct AgentRetryConfig {
 ### Example Configuration
 
 ```rust
-// Document review workflow with AI agent
+// Document review workflow with AI agent using Anthropic
 let review_transition = TransitionDefinition {
     id: TransitionId::from("ai_review"),
     from_places: vec![PlaceId::from("submitted")],
@@ -307,6 +307,113 @@ let review_transition = TransitionDefinition {
     }),
 };
 ```
+
+## Places AI Agent
+
+### Overview
+
+Places AI Agent extends the agent capabilities by allowing AI agents to be automatically executed when tokens are present in specific places within a workflow. This feature builds on the existing agent-enabled transitions but adds the ability to run agents directly against tokens in a place, regardless of transition state.
+
+When configuring a Places AI Agent, you'll need both:
+1. The agent configuration (including LLM settings) from an existing AgentDefinition
+2. The place-specific configuration that defines when and how to run the agent
+
+### Configuration
+
+```rust
+pub struct PlaceAgentConfig {
+    pub place_id: PlaceId,                         // Place to monitor
+    pub agent_id: AgentId,                         // Agent to run
+    pub llm_config: Option<LLMConfig>,             // Override default LLM settings
+    pub trigger_conditions: Vec<Rule>,             // Optional conditions for triggering
+    pub input_mapping: HashMap<String, String>,    // Map token data to agent input
+    pub output_mapping: HashMap<String, String>,   // Map agent output to token
+    pub auto_transition: Option<TransitionId>,     // Optional transition to fire after completion
+    pub schedule: Option<PlaceAgentSchedule>,      // Optional scheduling parameters
+    pub retry_config: Option<AgentRetryConfig>,    // Retry configuration
+}
+
+pub struct PlaceAgentSchedule {
+    pub initial_delay_seconds: Option<u64>,        // Delay before first execution
+    pub interval_seconds: Option<u64>,             // Periodic execution interval
+    pub max_executions: Option<u32>,               // Maximum number of executions
+}
+```
+
+### Execution Flow
+
+1. **Token Placed** → Token enters or exists in monitored place
+2. **Condition Check** → Evaluate trigger conditions (if any)
+3. **Scheduling** → Apply scheduling constraints (if configured)
+4. **Input Mapping** → Extract data from token using input_mapping
+5. **Agent Execution** → Run agent with mapped input data
+6. **Streaming** → Broadcast real-time updates to subscribers
+7. **Output Mapping** → Apply agent output to token using output_mapping
+8. **Auto Transition** → Optionally trigger a transition after completion
+
+### Example Configuration
+
+```rust
+// Places AI Agent for content classification using Anthropic
+let classification_agent = PlaceAgentConfig {
+    place_id: PlaceId::from("pending_classification"),
+    agent_id: AgentId::from("content-classifier"),
+    llm_config: Some(LLMConfig {
+        temperature: 0.1,                        // Very low temperature for consistent classification
+        max_tokens: 200,                         // Limit response size for classification
+        top_p: 0.9,
+        frequency_penalty: 0.0,
+        presence_penalty: 0.0,
+        stop_sequences: vec!["CLASSIFICATION COMPLETE".to_string()],
+    }),
+    trigger_conditions: vec![
+        Rule::field_exists("data", "content"),
+        Rule::field_equals("metadata.status", "unclassified"),
+    ],
+    input_mapping: hashmap! {
+        "content" => "data.content",
+        "content_type" => "metadata.type",
+    },
+    output_mapping: hashmap! {
+        "data.classification" => "category",
+        "data.confidence" => "confidence_score",
+        "metadata.classifier" => "agent_id",
+        "metadata.classified_at" => "timestamp",
+    },
+    auto_transition: Some(TransitionId::from("move_to_categorized")),
+    schedule: Some(PlaceAgentSchedule {
+        initial_delay_seconds: Some(5),
+        interval_seconds: None,
+        max_executions: Some(1),
+    }),
+    retry_config: Some(AgentRetryConfig {
+        max_attempts: 2,
+        backoff_seconds: 15,
+        retry_on_errors: vec!["timeout".to_string(), "rate_limit".to_string()],
+    }),
+};
+```
+
+### Use Cases
+
+#### 1. Background Processing
+Run agents on tokens in specific places without requiring user-initiated transitions.
+
+#### 2. Periodic Analysis
+Schedule agents to periodically analyze or update tokens that remain in a place for extended periods.
+
+#### 3. Cascading Agent Workflows
+Create chains of agent processing by using auto-transitions to move tokens between agent-enabled places.
+
+#### 4. Conditional Processing
+Apply complex business rules to determine when agents should be triggered in a place.
+
+#### 5. LLM Parameter Optimization
+Override default LLM settings for specific places to optimize for different tasks:
+- Lower temperature (0.1-0.2) for classification/analysis tasks with Anthropic
+- Higher temperature (0.7-1.0) for creative content generation
+- Custom stop sequences for place-specific completions
+- Model selection per task (claude-3-haiku for speed, claude-3-5-sonnet for quality)
 
 ## Streaming Architecture
 

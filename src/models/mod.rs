@@ -49,6 +49,10 @@ pub mod rule;
 // Contains FunctionDefinition and event-driven execution types
 pub mod function;
 
+// Declares the `agent` submodule from `agent.rs`
+// Contains AgentDefinition and AI agent execution types
+pub mod agent;
+
 // Re-export main types for convenience
 // This creates shortcuts so users don't need to know the internal structure
 
@@ -99,4 +103,27 @@ pub use function::{
     ResourceLimits, FunctionExecution, ExecutionStatus, TriggerEvent, EventType,
     FunctionSchema, InputMapping, ChainCondition, FunctionChain, RetryConfig,
     BackoffStrategy, RetryCondition, ChainExecution, ChainStatus
-}; 
+};
+
+/// Re-export agent types
+/// - AgentId: Unique identifier for AI agents
+/// - AgentDefinition: Complete agent configuration with LLM settings
+/// - LLMProvider: AI provider configuration (OpenAI, Anthropic, etc.)
+/// - LLMConfig: LLM generation parameters
+/// - AgentPrompts: System and user prompt templates
+/// - AgentTransitionConfig: Agent execution in workflow transitions
+/// - PlaceAgentConfig: Agent execution for tokens in specific places
+/// - PlaceAgentSchedule: Scheduling configuration for place agents
+/// - AgentRetryConfig: Retry configuration for agent failures
+/// - AgentExecution: Records of agent execution
+/// - AgentExecutionStatus: Status of agent executions
+/// - AgentStreamEvent: Real-time streaming events from agent execution
+/// - Conversation: Agent conversation records
+/// - ConversationMessage: Individual messages in conversations
+/// - MessageRole: Role of messages (system, user, assistant, tool)
+pub use agent::{
+    AgentId, AgentDefinition, LLMProvider, LLMConfig, AgentPrompts,
+    AgentTransitionConfig, PlaceAgentConfig, PlaceAgentSchedule, AgentRetryConfig,
+    AgentExecution, AgentExecutionStatus, AgentStreamEvent, Conversation,
+    ConversationMessage, MessageRole
+};

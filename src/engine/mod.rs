@@ -101,6 +101,15 @@ pub mod events;
 /// - Container lifecycle management
 pub mod functions;
 
+/// Agent execution engine for AI agent integration
+/// 
+/// Contains:
+/// - AgentEngine for executing AI agents in workflows
+/// - AgentStorage abstraction for agent data persistence
+/// - Places AI Agent support for token-based agent execution
+/// - LLM provider integration and streaming responses
+pub mod agents;
+
 // Re-export main engine types for clean API access
 // Users can import directly from engine instead of navigating submodules
 
@@ -155,4 +164,14 @@ pub use events::{EventBus, TokenEvents};
 /// - FunctionEngine: Main engine for executing Docker functions
 /// - FunctionStorage: Storage abstraction for functions and executions
 /// - InMemoryFunctionStorage: Default in-memory implementation
-pub use functions::{FunctionEngine, FunctionStorage, InMemoryFunctionStorage}; 
+pub use functions::{FunctionEngine, FunctionStorage, InMemoryFunctionStorage};
+
+/// Re-export agent execution types for AI agent integration
+/// 
+/// These types enable AI agent execution in workflows:
+/// - AgentEngine: Main engine for executing AI agents
+/// - AgentStorage: Storage abstraction for agent data
+/// - InMemoryAgentStorage: Default in-memory implementation
+/// - AgentEngineConfig: Configuration for agent engine
+/// - ExecutionStats: Agent execution statistics
+pub use agents::{AgentEngine, AgentStorage, InMemoryAgentStorage, AgentEngineConfig, ExecutionStats};

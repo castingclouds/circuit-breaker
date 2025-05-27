@@ -181,6 +181,14 @@ pub enum CircuitBreakerError {
     #[error("Workflow not found: {id}")]
     WorkflowNotFound { id: String },
     
+    /// Error when a resource cannot be found
+    #[error("Not found: {0}")]
+    NotFound(String),
+    
+    /// Error when invalid input is provided
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+    
     /// Storage-related errors
     /// The `#[from]` attribute enables automatic conversion from `async_nats::Error`
     /// This means you can use `?` operator to convert these errors automatically

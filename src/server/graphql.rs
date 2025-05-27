@@ -16,8 +16,10 @@ use tower_http::cors::CorsLayer;
 use tracing::{info, debug};
 
 use crate::engine::{
-    graphql::{Query, Mutation, Subscription, create_schema_with_storage},
+    graphql::{Query, Mutation, Subscription, create_schema_with_storage, create_schema_with_agents},
     storage::{InMemoryStorage, WorkflowStorage},
+    agents::{AgentEngine, AgentStorage, InMemoryAgentStorage, AgentEngineConfig},
+    rules::RulesEngine,
 };
 use crate::models::{
     WorkflowDefinition, PlaceId, TransitionId, TransitionDefinition
@@ -45,6 +47,8 @@ impl Default for GraphQLServerConfig {
 pub struct GraphQLServer {
     config: GraphQLServerConfig,
     storage: Box<dyn WorkflowStorage>,
+    agent_storage: Option<std::sync::Arc<dyn AgentStorage>>,
+    agent_engine: Option<AgentEngine>,
 }
 
 impl GraphQLServer {
@@ -52,6 +56,8 @@ impl GraphQLServer {
         Self {
             config: GraphQLServerConfig::default(),
             storage: Box::new(InMemoryStorage::default()),
+            agent_storage: None,
+            agent_engine: None,
         }
     }
 
@@ -65,11 +71,39 @@ impl GraphQLServer {
         self
     }
 
+    pub fn with_agents(mut self) -> Self {
+        // Create a single shared agent storage instance
+        let agent_storage = std::sync::Arc::new(InMemoryAgentStorage::default());
+        let rules_engine = std::sync::Arc::new(RulesEngine::new());
+        
+        // Create agent engine with shared storage
+        let agent_engine = AgentEngine::new(
+            agent_storage.clone(),
+            rules_engine,
+            AgentEngineConfig::default(),
+        );
+        
+        // Convert the shared Arc<dyn AgentStorage> to Box<dyn AgentStorage> for GraphQL context
+        // We need to clone the storage to avoid the Arc wrapper in the GraphQL context
+        let shared_storage = agent_storage.clone();
+        
+        self.agent_storage = Some(shared_storage as std::sync::Arc<dyn AgentStorage>);
+        self.agent_engine = Some(agent_engine);
+        self
+    }
+
     pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Add default workflows
-        self.add_default_workflows()?;
+        self.add_default_workflows().await?;
         
-        let schema = create_schema_with_storage(self.storage);
+        let schema = if let (Some(agent_storage), Some(agent_engine)) = (self.agent_storage, self.agent_engine) {
+            info!("🤖 Starting server with AI agent support");
+            create_schema_with_agents(self.storage, agent_storage, agent_engine)
+        } else {
+            info!("📋 Starting server with basic workflow support");
+            create_schema_with_storage(self.storage)
+        };
+        
         let app_state = Arc::new(RwLock::new(schema));
 
         let mut app = Router::new()
@@ -95,7 +129,7 @@ impl GraphQLServer {
         Ok(())
     }
 
-    fn add_default_workflows(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    async fn add_default_workflows(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Document Review Workflow
         let _document_workflow = WorkflowDefinition {
             id: "document_review".to_string(),
@@ -241,6 +275,11 @@ impl GraphQLServerBuilder {
         let mut config = self.server.config.clone();
         config.port = port;
         self.server = self.server.with_config(config);
+        self
+    }
+
+    pub fn with_agents(mut self) -> Self {
+        self.server = self.server.with_agents();
         self
     }
 

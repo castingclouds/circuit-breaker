@@ -11,9 +11,13 @@
     "demo:token": "tsx token_demo.ts",
     "demo:rules": "tsx rules_engine_demo.ts",
     "demo:graphql": "tsx graphql_client.ts",
+    "demo:agents": "tsx places_ai_agent_demo.ts",
+    "demo:agents-simple": "tsx places_ai_agent_demo_simple.ts",
     "type-check": "tsc --noEmit"
   },
-  "dependencies": {},
+  "dependencies": {
+    "dotenv": "^16.3.1"
+  },
   "devDependencies": {
     "@types/node": "^20.10.0",
     "tsx": "^4.6.0",
