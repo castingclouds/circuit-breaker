@@ -45,6 +45,7 @@ tracing-subscriber = "0.3"
 
 # Configuration
 config = "0.14"
+dotenv = "0.15"
 
 # Examples - Client examples only (no servers)
 [[example]]
@@ -65,4 +66,8 @@ path = "examples/rust/rules_engine_demo.rs"
 
 [[example]]
 name = "function_demo"
-path = "examples/rust/function_demo.rs" 
+path = "examples/rust/function_demo.rs"
+
+[[example]]
+name = "places_ai_agent_demo"
+path = "examples/rust/places_ai_agent_demo.rs"

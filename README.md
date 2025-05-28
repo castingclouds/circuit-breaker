@@ -118,6 +118,48 @@ token.transition_to(StateId::from("review"), TransitionId::from("submit"));
 - **Web**: Axum for high-performance HTTP
 - **Storage**: Pluggable backends (NATS KV, PostgreSQL, etc.)
 
+## ⚙️ Environment Configuration
+
+### Option 1: Automated Setup (Recommended)
+
+```bash
+# Run the setup script for automatic configuration
+./setup.sh
+```
+
+The setup script will:
+- ✅ Check Rust and Node.js installations
+- ✅ Copy `.env.example` to `.env`
+- ✅ Build the project and install dependencies
+- ✅ Run tests to verify setup
+- ✅ Create helpful run scripts
+
+### Option 2: Manual Setup
+
+```bash
+# 1. Copy environment template
+cp .env.example .env
+
+# 2. Edit .env and add your primary API key:
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# Optional: Add alternative providers (uncomment in .env if needed):
+# OPENAI_API_KEY=your_openai_api_key_here
+# GOOGLE_API_KEY=your_google_api_key_here
+
+# 3. Build the project
+cargo build
+```
+
+### Get API Keys
+
+- **Anthropic** (Primary): https://console.anthropic.com/
+- **OpenAI** (Alternative): https://platform.openai.com/api-keys
+- **Google Gemini** (Alternative): https://makersuite.google.com/app/apikey
+- **Ollama** (Local): Self-hosted (no API key needed)
+
+**Note**: Only Anthropic API key is required by default. Other providers are available as alternatives. API keys are only needed for AI Agent features - basic workflow functionality works without them.
+
 ## 🚀 Quick Start
 
 ### 1. Start the Main Server

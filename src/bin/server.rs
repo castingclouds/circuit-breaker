@@ -53,6 +53,8 @@
 use circuit_breaker::GraphQLServerBuilder; // Import from our library crate
 use tracing_subscriber;                     // Logging framework
 use tracing::info;                          // For structured logging
+use dotenv::dotenv;                         // Environment variable loading
+use std::env;                               // Environment variable access
 
 /// Main entry point for the Circuit Breaker server
 /// 
@@ -84,6 +86,15 @@ use tracing::info;                          // For structured logging
 /// - Much cleaner than explicit match statements for error handling
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load environment variables from .env file
+    // This will load variables for API keys, configuration, etc.
+    // In production, these would typically be set by the deployment system
+    if let Err(e) = dotenv() {
+        // Only warn if .env file is missing - it's optional
+        eprintln!("Warning: Could not load .env file: {}", e);
+        eprintln!("Environment variables must be set manually or via system configuration");
+    }
+
     // Initialize structured logging for the application
     // This sets up tracing/logging that will show debug info, errors, etc.
     // In production, you might configure different log levels or outputs
@@ -92,6 +103,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Print startup banner - helps identify server startup in logs
     info!("🚀 Starting Circuit Breaker Server...");
     info!("=====================================");
+    
+    // Log environment configuration
+    let environment = env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string());
+    let log_level = env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+    let server_host = env::var("SERVER_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let server_port = env::var("SERVER_PORT")
+        .unwrap_or_else(|_| "4000".to_string())
+        .parse::<u16>()
+        .unwrap_or(4000);
+    
+    info!("Environment: {}", environment);
+    info!("Log Level: {}", log_level);
+    info!("Server: {}:{}", server_host, server_port);
+    
+    // Log agent provider configuration (without exposing API keys)
+    if env::var("OPENAI_API_KEY").is_ok() {
+        info!("✅ OpenAI API key configured");
+    }
+    if env::var("ANTHROPIC_API_KEY").is_ok() {
+        info!("✅ Anthropic API key configured");
+    }
+    if env::var("GOOGLE_API_KEY").is_ok() {
+        info!("✅ Google API key configured");
+    }
+    if env::var("OLLAMA_BASE_URL").is_ok() {
+        info!("✅ Ollama configuration found");
+    }
 
     // Build and start the production server
     // 
@@ -116,7 +154,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // - `.await` waits for the Future to complete
     // - `?` propagates any errors that occur
     GraphQLServerBuilder::new()     // Create a new server builder
-        .with_port(4000)            // Configure to listen on port 4000
+        .with_port(server_port)     // Configure to listen on configured port
+        .with_agents()              // Enable AI agent functionality
         .build_and_run()            // Build the server and start running it
         .await?;                    // Wait for the server to start (or fail)
 
