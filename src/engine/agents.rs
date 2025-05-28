@@ -378,9 +378,9 @@ impl AgentEngine {
                     "temperature": config.temperature
                 }))
             }
-            LLMProvider::Anthropic { model, api_key } => {
+            LLMProvider::Anthropic { model, api_key, base_url } => {
                 // Make real Anthropic API call
-                self.call_anthropic_api(model, api_key, config, input).await
+                self.call_anthropic_api(model, api_key, base_url.as_deref(), config, input).await
             }
             LLMProvider::Google { model, .. } => {
                 // Simulate Google API call
@@ -458,6 +458,7 @@ impl AgentEngine {
         &self,
         model: &str,
         api_key: &str,
+        base_url: Option<&str>,
         config: &LLMConfig,
         input: &Value,
     ) -> Result<Value> {
@@ -481,9 +482,15 @@ impl AgentEngine {
             }]
         });
         
+        // Construct the API endpoint URL
+        let api_url = base_url
+            .unwrap_or("https://api.anthropic.com/v1")
+            .trim_end_matches('/');
+        let messages_url = format!("{}/messages", api_url);
+        
         // Make the API call
         let response = client
-            .post("https://api.anthropic.com/v1/messages")
+            .post(&messages_url)
             .header("Content-Type", "application/json")
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")

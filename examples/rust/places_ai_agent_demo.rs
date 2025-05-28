@@ -232,6 +232,7 @@ fn create_classification_agent() -> AgentDefinition {
         llm_provider: LLMProvider::Anthropic {
             api_key: env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| "demo-key".to_string()),
             model: env::var("ANTHROPIC_DEFAULT_MODEL").unwrap_or_else(|_| "claude-3-5-sonnet-20241022".to_string()),
+            base_url: env::var("ANTHROPIC_BASE_URL").ok(),
         },
         // Alternative providers (uncomment to use):
         // OpenAI:
@@ -281,6 +282,7 @@ fn create_review_agent() -> AgentDefinition {
         llm_provider: LLMProvider::Anthropic {
             api_key: env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| "demo-key".to_string()),
             model: env::var("ANTHROPIC_DEFAULT_MODEL").unwrap_or_else(|_| "claude-3-5-sonnet-20241022".to_string()),
+            base_url: env::var("ANTHROPIC_BASE_URL").ok(),
         },
         // Alternative providers (uncomment to use):
         // OpenAI:

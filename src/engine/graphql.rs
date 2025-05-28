@@ -357,10 +357,10 @@ impl From<&LLMProvider> for LLMProviderGQL {
                 model: model.clone(),
                 base_url: base_url.clone(),
             },
-            LLMProvider::Anthropic { model, .. } => LLMProviderGQL {
+            LLMProvider::Anthropic { model, base_url, .. } => LLMProviderGQL {
                 provider_type: "anthropic".to_string(),
                 model: model.clone(),
-                base_url: None,
+                base_url: base_url.clone(),
             },
             LLMProvider::Google { model, .. } => LLMProviderGQL {
                 provider_type: "google".to_string(),
@@ -788,6 +788,7 @@ impl Mutation {
             "anthropic" => LLMProvider::Anthropic {
                 api_key: input.llm_provider.api_key,
                 model: input.llm_provider.model,
+                base_url: input.llm_provider.base_url,
             },
             "google" => LLMProvider::Google {
                 api_key: input.llm_provider.api_key,

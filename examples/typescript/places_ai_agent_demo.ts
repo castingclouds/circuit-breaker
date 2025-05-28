@@ -515,6 +515,7 @@ async function runDemo() {
         providerType: 'anthropic',
         model: process.env.ANTHROPIC_DEFAULT_MODEL || 'claude-3-5-sonnet-20241022',
         apiKey: process.env.ANTHROPIC_API_KEY || 'demo-key',
+        ...(process.env.ANTHROPIC_BASE_URL && { baseUrl: process.env.ANTHROPIC_BASE_URL }),
       },
       // Alternative providers (uncomment to use):
       // OpenAI:
@@ -563,6 +564,7 @@ async function runDemo() {
         providerType: 'anthropic',
         model: process.env.ANTHROPIC_DEFAULT_MODEL || 'claude-3-5-sonnet-20241022',
         apiKey: process.env.ANTHROPIC_API_KEY || 'demo-key',
+        ...(process.env.ANTHROPIC_BASE_URL && { baseUrl: process.env.ANTHROPIC_BASE_URL }),
       },
       // Alternative providers (uncomment to use):
       // OpenAI:

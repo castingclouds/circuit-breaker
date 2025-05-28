@@ -259,6 +259,7 @@ class SimplePlacesAIClient {
   }
 }
 
+// Demo functions
 async function runSimpleDemo() {
   console.log('🚀 Simple Places AI Agent Demo (TypeScript)');
   console.log('===========================================');
@@ -281,6 +282,57 @@ async function runSimpleDemo() {
     
     const workflows = await client.listWorkflows();
     console.log(`✅ Connected! Found ${workflows.length} existing workflows\n`);
+
+    // Test Anthropic agent creation
+    console.log('🤖 Testing Anthropic agent creation...');
+    const testAgentResult = await client.request(`
+      mutation CreateAgent($input: AgentDefinitionInput!) {
+        createAgent(input: $input) {
+          id
+          name
+          description
+          llmProvider {
+            providerType
+            model
+          }
+        }
+      }
+    `, {
+      input: {
+        name: "Simple Test Agent",
+        description: "Test agent for Anthropic integration",
+        llmProvider: {
+          providerType: "anthropic",
+          model: process.env.ANTHROPIC_DEFAULT_MODEL || "claude-3-sonnet-20240229",
+          apiKey: process.env.ANTHROPIC_API_KEY || "demo-key",
+          ...(process.env.ANTHROPIC_BASE_URL && { baseUrl: process.env.ANTHROPIC_BASE_URL })
+        },
+        llmConfig: {
+          temperature: 0.7,
+          maxTokens: 100,
+          topP: 0.9,
+          frequencyPenalty: 0.0,
+          presencePenalty: 0.0,
+          stopSequences: []
+        },
+        prompts: {
+          system: "You are a helpful assistant.",
+          userTemplate: "Please respond to: {input}",
+          contextInstructions: "Be concise and helpful."
+        },
+        capabilities: ["text_generation"],
+        tools: []
+      }
+    });
+
+    if (testAgentResult.errors) {
+      console.error('❌ Failed to create test agent:', testAgentResult.errors[0].message);
+      console.log('Continuing with workflow demo...\n');
+    } else {
+      console.log(`✅ Created test agent: ${testAgentResult.data.createAgent.id}`);
+      console.log(`   Provider: ${testAgentResult.data.createAgent.llmProvider.providerType}`);
+      console.log(`   Model: ${testAgentResult.data.createAgent.llmProvider.model}\n`);
+    }
 
     // Create a demo workflow for AI agent processing
     console.log('📋 Creating AI-enabled document workflow...');
