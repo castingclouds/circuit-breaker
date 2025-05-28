@@ -151,7 +151,7 @@ cat > run-ts-demo.sh << 'EOF'
 echo "🤖 Running TypeScript Places AI Agent Demo (Anthropic)..."
 echo "Make sure you've configured ANTHROPIC_API_KEY in .env file!"
 echo ""
-cd examples/typescript && npm run demo:agents
+cd examples/typescript && npm run demo:agents-simple
 EOF
 chmod +x run-ts-demo.sh
 fi
