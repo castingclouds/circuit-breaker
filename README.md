@@ -161,7 +161,6 @@ cargo build
 **Note**: Only Anthropic API key is required by default. Other providers are available as alternatives. API keys are only needed for AI Agent features - basic workflow functionality works without them.
 
 ## 🚀 Quick Start
-</edits>
 
 ### 1. Start the Main Server
 
