@@ -42,6 +42,7 @@ pub enum LLMProvider {
     Anthropic {
         api_key: String,
         model: String,
+        base_url: Option<String>,
     },
     Google {
         api_key: String,
