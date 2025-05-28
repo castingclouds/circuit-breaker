@@ -83,8 +83,8 @@ impl GraphQLServer {
             AgentEngineConfig::default(),
         );
         
-        // Convert the shared Arc<dyn AgentStorage> to Box<dyn AgentStorage> for GraphQL context
-        // We need to clone the storage to avoid the Arc wrapper in the GraphQL context
+        // Clone the shared Arc<dyn AgentStorage> and assign it to self.agent_storage
+        // This ensures the storage is shared across the application
         let shared_storage = agent_storage.clone();
         
         self.agent_storage = Some(shared_storage as std::sync::Arc<dyn AgentStorage>);
