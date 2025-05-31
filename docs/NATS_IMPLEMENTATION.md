@@ -876,16 +876,23 @@ impl Rule {
 - [x] Schema creation functions for NATS integration
 - [x] Backward compatibility with existing GraphQL operations
 
-### Phase 3: Component Integration 🔄 **PARTIALLY COMPLETED**
-- [x] NATS storage backend integration
+### Phase 3: Component Integration ✅ **COMPLETED**
+- [x] NATS storage backend integration with GraphQL server
 - [x] Event-driven token lifecycle management
 - [x] Real-time transition event publishing
+- [x] Global stream configuration with wildcard patterns
+- [x] Proper retention policy configuration (Limits vs Interest)
+- [x] Server-side NATS connection testing and validation
+- [x] Environment-based storage backend selection
+- [x] Client-server architecture with NATS backend
+
+### Phase 4: Advanced Features 🔄 **IN PROGRESS**
+- [x] Global stream architecture with subject wildcards
+- [x] Stream retention policy optimization
+- [x] Real-time workflow and token persistence
 - [ ] Agent execution with NATS tokens
 - [ ] Function runner event triggers
 - [ ] Rules engine NATS-aware rules
-- [ ] Cross-component event coordination
-
-### Phase 4: Advanced Features 📋 **PLANNED**
 - [ ] Token search and indexing optimization
 - [ ] Workflow analytics and monitoring dashboards
 - [ ] Performance optimization and caching
@@ -928,10 +935,20 @@ impl Rule {
 
 1. **NATS Server with JetStream**: Ensure NATS server is running with JetStream enabled:
    ```bash
-   nats-server --jetstream
+   # Local installation
+   nats-server --jetstream --http_port 8222
+   
+   # Docker (recommended)
+   docker run -p 4222:4222 -p 8222:8222 nats:alpine --jetstream --http_port 8222
    ```
 
-2. **Dependencies**: The NATS integration is included in the main Circuit Breaker crate with the `async-nats` dependency.
+2. **Environment Configuration**: Set storage backend environment variables:
+   ```bash
+   export STORAGE_BACKEND=nats
+   export NATS_URL=nats://localhost:4222
+   ```
+
+3. **Dependencies**: The NATS integration is included in the main Circuit Breaker crate with the `async-nats` dependency.
 
 ### Basic Usage
 
@@ -1023,19 +1040,27 @@ mutation {
 A complete working example is available in the repository:
 
 ```bash
-# Ensure NATS server is running
-nats-server --jetstream
+# 1. Ensure NATS server is running
+docker run -p 4222:4222 -p 8222:8222 nats:alpine --jetstream --http_port 8222
 
-# Run the NATS demo
+# 2. Configure environment (or run setup)
+export STORAGE_BACKEND=nats
+export NATS_URL=nats://localhost:4222
+
+# 3. Start Circuit Breaker server with NATS
+cargo run --bin server
+
+# 4. In another terminal, run the demo
 cargo run --example nats_demo
 ```
 
 The demo will:
-1. Start a Circuit Breaker server with NATS storage
-2. Create a sample workflow
-3. Create workflow instances with NATS tracking
-4. Perform transitions with event publishing
+1. Connect to a Circuit Breaker server running with NATS storage
+2. Create a sample workflow with NATS persistence
+3. Create workflow instances with NATS tracking and metadata
+4. Perform transitions with real-time event publishing
 5. Query tokens using NATS-optimized operations
+6. Demonstrate NATS-specific GraphQL queries and mutations
 
 ### Migration from In-Memory Storage
 
@@ -1155,5 +1180,192 @@ pub async fn get_tenant_workflows(&self, tenant_id: &Uuid) -> Result<Vec<Uuid>> 
 - **Tenant Isolation**: UUID-based access control prevents cross-tenant access
 - **Audit Trails**: Immutable workflow IDs in all log entries
 - **API Security**: GraphQL resolvers can validate UUID format before processing
+
+## Implementation Insights and Troubleshooting
+
+### Key Implementation Learnings
+
+During the development of the NATS integration, several critical insights emerged that are essential for successful deployment:
+
+#### 1. Stream Retention Policy Configuration
+
+**Issue**: The most critical configuration decision is the NATS stream retention policy.
+
+**Solution**: Use `RetentionPolicy::Limits` instead of `RetentionPolicy::Interest` for workflow data:
+
+```rust
+let stream_config = stream::Config {
+    name: "CIRCUIT_BREAKER_GLOBAL".to_string(),
+    subjects: vec![
+        "cb.workflows.*.definition".to_string(),
+        "cb.workflows.*.places.*.tokens".to_string(),
+        "cb.workflows.*.events.*".to_string(),
+    ],
+    retention: stream::RetentionPolicy::Limits, // Critical!
+    discard: stream::DiscardPolicy::Old,
+    storage: stream::StorageType::File,
+    // ... other config
+};
+```
+
+**Why This Matters**:
+- `Interest` retention discards messages when consumers disconnect
+- `Limits` retention keeps messages based on time/size/count limits
+- Workflow data needs persistence beyond consumer lifetime
+
+#### 2. Global Stream Architecture vs Per-Workflow Streams
+
+**Evolution**: Started with per-workflow streams, evolved to global stream with wildcards.
+
+**Final Architecture**:
+- **Single Global Stream**: `CIRCUIT_BREAKER_GLOBAL`
+- **Wildcard Subjects**: `cb.workflows.*.definition`, `cb.workflows.*.places.*.tokens`
+- **Benefits**: Simplified management, better scalability, easier monitoring
+
+**Subject Hierarchy**:
+```
+cb.workflows.{workflow_id}.definition          // Workflow definitions
+cb.workflows.{workflow_id}.places.{place}.tokens // Tokens by place
+cb.workflows.{workflow_id}.events.transitions   // Transition events
+cb.workflows.{workflow_id}.events.lifecycle     // Lifecycle events
+```
+
+#### 3. Consumer Configuration for Immediate Retrieval
+
+**Challenge**: Retrieving recently published messages immediately.
+
+**Solution**: Use `DeliverPolicy::All` for workflow retrieval:
+
+```rust
+let consumer_config = consumer::pull::Config {
+    durable_name: None, // Ephemeral for immediate retrieval
+    filter_subject: format!("cb.workflows.{}.definition", workflow_id),
+    deliver_policy: consumer::DeliverPolicy::All,
+    ..Default::default()
+};
+```
+
+#### 4. Server-Side vs Client-Side Architecture
+
+**Key Insight**: NATS integration should be server-side only:
+
+- **Server**: Handles NATS connection, stream management, storage operations
+- **Client**: Pure GraphQL operations, storage-agnostic
+- **Benefits**: Clean separation, easier deployment, better security
+
+#### 5. Environment-Based Configuration
+
+**Implementation**: Storage backend selection via environment variables:
+
+```bash
+export STORAGE_BACKEND=nats     # or "memory"
+export NATS_URL=nats://localhost:4222
+```
+
+**Server Logic**:
+```rust
+match storage_type.as_str() {
+    "nats" => {
+        // Test connection, configure NATS storage
+        let schema = create_schema_with_nats(nats_storage);
+    },
+    "memory" | _ => {
+        // Use in-memory storage
+        let schema = create_schema_with_storage(memory_storage);
+    }
+}
+```
+
+### Common Issues and Solutions
+
+#### Issue 1: "Workflow not found" After Creation
+
+**Symptoms**:
+- Workflow creation succeeds (GraphQL returns workflow data)
+- Immediate retrieval fails with "Workflow not found"
+- NATS publish logs show success but retrieval finds 0 messages
+
+**Root Cause**: Stream retention policy `Interest` discarding messages immediately.
+
+**Solution**: Change retention policy to `Limits` and restart NATS server or recreate streams.
+
+**Debug Steps**:
+1. Check stream info: `Messages: 0` indicates retention issue
+2. Look for sequence mismatch: `First sequence > Last sequence`
+3. Verify retention policy in stream configuration
+
+#### Issue 2: Subject Overlap Errors
+
+**Symptoms**: `subjects overlap with an existing stream, error code 10065`
+
+**Root Cause**: Attempting to create streams with overlapping subject patterns.
+
+**Solution**: 
+- Use consistent subject hierarchy across all streams
+- Delete conflicting streams before recreating
+- Use global stream approach to avoid conflicts
+
+#### Issue 3: Schema Not Including NATS Mutations
+
+**Symptoms**: NATS-specific GraphQL mutations (`createWorkflowInstance`, `transitionTokenWithNats`) return errors.
+
+**Root Cause**: Server using `create_schema_with_storage` instead of `create_schema_with_nats`.
+
+**Solution**: Ensure proper schema creation based on storage backend:
+
+```rust
+let schema = match (nats_storage, agent_storage) {
+    (Some(nats), Some(agents)) => create_schema_with_nats_and_agents(nats, agents),
+    (Some(nats), None) => create_schema_with_nats(nats),
+    (None, Some(agents)) => create_schema_with_agents(storage, agents),
+    (None, None) => create_schema_with_storage(storage),
+};
+```
+
+### Performance Considerations
+
+#### Stream Management
+- **Global streams** scale better than per-workflow streams
+- **Subject wildcards** enable efficient filtering
+- **File storage** provides persistence across restarts
+
+#### Consumer Patterns
+- Use **ephemeral consumers** for one-time retrieval
+- Use **durable consumers** for continuous event processing
+- **Batch processing** for bulk operations
+
+#### Message Size Optimization
+- Workflow definitions: ~500-1000 bytes
+- Token messages: ~200-500 bytes  
+- Transition events: ~100-300 bytes
+
+### Production Deployment Checklist
+
+- [ ] NATS server running with JetStream enabled
+- [ ] Proper retention policies configured (`Limits`, not `Interest`)
+- [ ] Environment variables set (`STORAGE_BACKEND=nats`)
+- [ ] Connection testing and error handling implemented
+- [ ] Monitoring and alerting for NATS connectivity
+- [ ] Backup and disaster recovery procedures
+- [ ] Resource limits and scaling policies defined
+
+### Monitoring and Observability
+
+**Key Metrics to Monitor**:
+- Stream message count and growth rate
+- Consumer lag and processing time
+- Connection health and reconnections
+- Error rates for workflow/token operations
+
+**Debug Logging**:
+The implementation includes extensive debug logging for troubleshooting:
+```
+🔧 Publishing workflow to NATS subject: ...
+✅ NATS publish ACK received: Stream: ..., Sequence: ...
+📊 Stream info: Messages: X, First sequence: Y, Last sequence: Z
+📨 Received NATS message N for workflow ...
+```
+
+This comprehensive logging helps diagnose issues in production environments.
 
 This NATS implementation provides a robust, scalable foundation for distributed workflow processing while maintaining the flexibility and power of the Circuit Breaker architecture. The event-driven nature of NATS JetStream aligns perfectly with the agent and function execution patterns, creating a cohesive system for complex workflow automation.

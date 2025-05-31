@@ -52,9 +52,10 @@
 
 use circuit_breaker::GraphQLServerBuilder; // Import from our library crate
 use tracing_subscriber;                     // Logging framework
-use tracing::info;                          // For structured logging
+use tracing::{info, error};                 // For structured logging
 use dotenv::dotenv;                         // Environment variable loading
 use std::env;                               // Environment variable access
+use async_nats;                             // For NATS connection testing
 
 /// Main entry point for the Circuit Breaker server
 /// 
@@ -117,6 +118,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Log Level: {}", log_level);
     info!("Server: {}:{}", server_host, server_port);
     
+    // Log storage configuration
+    let storage_type = env::var("STORAGE_BACKEND").unwrap_or_else(|_| "memory".to_string());
+    let nats_url = env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
+    
+    info!("Storage: {}", storage_type);
+    if storage_type == "nats" {
+        info!("NATS URL: {}", nats_url);
+    }
+    
     // Log agent provider configuration (without exposing API keys)
     if env::var("OPENAI_API_KEY").is_ok() {
         info!("✅ OpenAI API key configured");
@@ -153,10 +163,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // - `.build_and_run()` returns a Future
     // - `.await` waits for the Future to complete
     // - `?` propagates any errors that occur
-    GraphQLServerBuilder::new()     // Create a new server builder
+    
+    let mut builder = GraphQLServerBuilder::new()     // Create a new server builder
         .with_port(server_port)     // Configure to listen on configured port
-        .with_agents()              // Enable AI agent functionality
-        .build_and_run()            // Build the server and start running it
+        .with_agents();             // Enable AI agent functionality
+
+    // Configure storage backend based on environment variable
+    match storage_type.as_str() {
+        "nats" => {
+            info!("🔧 Initializing NATS storage backend...");
+            info!("📡 Testing NATS connection to: {}", nats_url);
+            
+            // Test basic NATS connectivity first
+            match async_nats::connect(&nats_url).await {
+                Ok(client) => {
+                    info!("✅ Successfully connected to NATS server");
+                    
+                    // Test JetStream availability
+                    let _jetstream = async_nats::jetstream::new(client);
+                    info!("✅ JetStream context created successfully");
+                    info!("📊 NATS connection ready for workflow storage");
+                },
+                Err(e) => {
+                    error!("❌ Failed to connect to NATS server at {}: {}", nats_url, e);
+                    error!("💡 Make sure NATS server is running:");
+                    error!("   nats-server --jetstream");
+                    error!("   Or using Docker: docker run -p 4222:4222 nats:alpine --jetstream");
+                    return Err(e.into());
+                }
+            }
+            
+            // Now configure the storage backend
+            info!("🔧 Configuring NATS storage backend...");
+            builder = builder.with_nats(&nats_url).await
+                .map_err(|e| {
+                    error!("❌ Failed to initialize NATS storage: {}", e);
+                    e
+                })?;
+            info!("✅ NATS storage backend successfully configured");
+            info!("🎯 Circuit Breaker will use NATS JetStream for persistent storage");
+        },
+        "memory" | _ => {
+            info!("🔧 Configuring in-memory storage backend");
+            info!("⚠️  Note: Data will not persist between server restarts");
+            info!("✅ In-memory storage backend configured");
+        }
+    }
+
+    builder.build_and_run()         // Build the server and start running it
         .await?;                    // Wait for the server to start (or fail)
 
     // If we reach here, the server started successfully

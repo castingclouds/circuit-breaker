@@ -1,18 +1,7 @@
-// NATS Integration Demo using Circuit Breaker Server Engine
-// This demonstrates using NATS-enhanced storage through the GraphQL API
+// NATS Integration Demo - GraphQL Client
+// This demonstrates using GraphQL API with NATS storage backend
+// Assumes Circuit Breaker server is running with NATS storage
 
-use circuit_breaker::{
-    NATSStorage, NATSStorageConfig,
-    create_schema_with_nats
-};
-use axum::{
-    extract::Extension,
-    response::{Html, IntoResponse},
-    routing::{get, post},
-    Router,
-};
-use async_graphql::http::GraphQLPlaygroundConfig;
-use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use reqwest;
 use serde_json::json;
 use std::time::Duration;
@@ -20,96 +9,28 @@ use tokio::time::sleep;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🚀 Circuit Breaker NATS Integration Demo");
-    println!("=========================================");
+    println!("🚀 Circuit Breaker NATS Integration Demo (Client)");
+    println!("==================================================");
+    println!("This demo assumes the Circuit Breaker server is running with NATS storage");
+    println!("Start the server with NATS storage before running this demo\n");
 
-    // Start the demo server with NATS storage
-    let _server_task = start_nats_server().await?;
-    
-    // Give the server time to start
+    // Give user time to read the message
     sleep(Duration::from_secs(2)).await;
-    
-    // Run the demo workflow
+
+    // Run the NATS workflow demonstration
     run_nats_workflow_demo().await?;
     
     println!("\n✅ NATS integration demo completed successfully!");
     
-    // Note: In a real application, you'd want to gracefully shutdown the server
-    // For this demo, we'll just let it run
-    
     Ok(())
 }
 
-/// Start the Circuit Breaker server with NATS storage
-async fn start_nats_server() -> Result<tokio::task::JoinHandle<()>, Box<dyn std::error::Error>> {
-    println!("🔧 Starting Circuit Breaker server with NATS storage...");
-    
-    let task = tokio::spawn(async move {
-        // Create NATS storage configuration
-        let nats_config = NATSStorageConfig {
-            nats_urls: vec!["nats://localhost:4222".to_string()],
-            default_max_messages: 100_000,
-            default_max_bytes: 512 * 1024 * 1024, // 512MB
-            default_max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
-            consumer_timeout: Duration::from_secs(30),
-            max_deliver: 3,
-            connection_timeout: Duration::from_secs(10),
-            reconnect_buffer_size: 4 * 1024 * 1024, // 4MB
-        };
-        
-        // Create NATS storage
-        let nats_storage = match NATSStorage::new(nats_config).await {
-            Ok(storage) => storage,
-            Err(e) => {
-                eprintln!("❌ Failed to create NATS storage: {}", e);
-                eprintln!("💡 Make sure NATS server is running on localhost:4222");
-                eprintln!("   You can start NATS with: nats-server --jetstream");
-                return;
-            }
-        };
-        
-        println!("✅ Connected to NATS JetStream");
-        
-        // Create GraphQL schema with NATS storage
-        let schema = create_schema_with_nats(std::sync::Arc::new(nats_storage));
-        
-        // GraphQL handler functions
-        async fn graphql_handler(
-            schema: Extension<circuit_breaker::CircuitBreakerSchema>,
-            req: GraphQLRequest,
-        ) -> GraphQLResponse {
-            schema.execute(req.into_inner()).await.into()
-        }
-
-        async fn graphql_playground() -> impl IntoResponse {
-            Html(async_graphql::http::playground_source(
-                GraphQLPlaygroundConfig::new("/graphql")
-            ))
-        }
-
-        // Start the GraphQL server
-        let app = Router::new()
-            .route("/graphql", post(graphql_handler))
-            .route("/", get(graphql_playground))
-            .layer(Extension(schema));
-        
-        println!("🌐 GraphQL server starting on http://localhost:8080/graphql");
-        
-        axum::Server::bind(&"127.0.0.1:8080".parse().unwrap())
-            .serve(app.into_make_service())
-            .await
-            .unwrap();
-    });
-    
-    Ok(task)
-}
-
-/// Run the NATS workflow demonstration
+/// Run the NATS workflow demonstration via GraphQL API
 async fn run_nats_workflow_demo() -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n📋 Creating workflow with NATS storage...");
+    println!("📋 Creating workflow with NATS storage backend...");
     
     let client = reqwest::Client::new();
-    let graphql_url = "http://localhost:8080/graphql";
+    let graphql_url = "http://localhost:4000/graphql"; // Default server URL
     
     // Step 1: Create a workflow definition
     let workflow_query = json!({
@@ -131,7 +52,7 @@ async fn run_nats_workflow_demo() -> Result<(), Box<dyn std::error::Error>> {
         "variables": {
             "input": {
                 "name": "NATS Document Review Process",
-                "description": "A document review workflow using NATS streaming",
+                "description": "A document review workflow using NATS streaming backend",
                 "places": ["draft", "review", "approved", "published", "rejected"],
                 "initialPlace": "draft",
                 "transitions": [
@@ -178,6 +99,7 @@ async fn run_nats_workflow_demo() -> Result<(), Box<dyn std::error::Error>> {
     
     if let Some(errors) = workflow_result.get("errors") {
         println!("❌ Failed to create workflow: {}", errors);
+        println!("💡 Make sure the Circuit Breaker server is running on localhost:4000");
         return Ok(());
     }
     
@@ -185,6 +107,10 @@ async fn run_nats_workflow_demo() -> Result<(), Box<dyn std::error::Error>> {
     let workflow_id = workflow_data["id"].as_str().unwrap();
     
     println!("✅ Created workflow: {} (ID: {})", workflow_data["name"], workflow_id);
+    
+    // Brief delay to ensure workflow is fully persisted in NATS
+    println!("⏳ Waiting for NATS persistence...");
+    sleep(Duration::from_millis(500)).await;
     
     // Step 2: Create workflow instances using NATS-enhanced mutations
     println!("\n📄 Creating workflow instances with NATS tracking...");
@@ -456,7 +382,7 @@ async fn run_nats_workflow_demo() -> Result<(), Box<dyn std::error::Error>> {
     }
     
     println!("\n🎉 NATS Integration Demo Features Demonstrated:");
-    println!("   ✅ NATS JetStream storage backend");
+    println!("   ✅ NATS JetStream storage backend (server-side)");
     println!("   ✅ Automatic stream creation per workflow");
     println!("   ✅ Enhanced token tracking with NATS metadata");
     println!("   ✅ Event-driven transition recording");

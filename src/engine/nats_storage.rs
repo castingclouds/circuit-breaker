@@ -139,44 +139,57 @@ impl WorkflowStreamManager {
         Self { jetstream, config }
     }
 
-    /// Ensure all necessary streams exist for a workflow
-    pub async fn ensure_workflow_streams(&self, workflow_id: &str) -> Result<()> {
-        let stream_name = format!("WORKFLOW_{}", workflow_id.to_uppercase());
+    /// Ensure global stream exists for all workflows
+    pub async fn ensure_global_stream(&self) -> Result<()> {
+        let stream_name = "CIRCUIT_BREAKER_GLOBAL";
         let subjects = vec![
-            format!("workflows.{}.definition", workflow_id),
-            format!("workflows.{}.places.*.tokens", workflow_id),
-            format!("workflows.{}.events.transitions", workflow_id),
-            format!("workflows.{}.events.lifecycle", workflow_id),
+            "cb.workflows.*.definition".to_string(),
+            "cb.workflows.*.places.*.tokens".to_string(),
+            "cb.workflows.*.events.transitions".to_string(),
+            "cb.workflows.*.events.lifecycle".to_string(),
         ];
 
-        // Check if stream already exists
-        if let Ok(_) = self.jetstream.get_stream(&stream_name).await {
-            return Ok(());
+        // Check if stream already exists and has correct configuration
+        if let Ok(mut stream) = self.jetstream.get_stream(stream_name).await {
+            let info = stream.info().await.map_err(|e| anyhow::anyhow!("Failed to get stream info: {}", e))?;
+            
+            // Check if retention policy is correct
+            if matches!(info.config.retention, stream::RetentionPolicy::Interest) {
+                println!("🔧 Deleting stream with incorrect retention policy...");
+                self.jetstream.delete_stream(stream_name).await
+                    .map_err(|e| anyhow::anyhow!("Failed to delete stream: {}", e))?;
+                println!("✅ Deleted old stream with Interest retention policy");
+            } else {
+                println!("✅ Stream already exists with correct configuration");
+                return Ok(());
+            }
         }
 
         // Create new stream configuration
         let stream_config = stream::Config {
-            name: stream_name.clone(),
+            name: stream_name.to_string(),
             subjects,
             max_messages: self.config.default_max_messages,
             max_bytes: self.config.default_max_bytes,
             max_age: self.config.default_max_age,
             storage: stream::StorageType::File,
             num_replicas: 1,
-            retention: stream::RetentionPolicy::Interest,
+            retention: stream::RetentionPolicy::Limits,
             discard: stream::DiscardPolicy::Old,
             duplicate_window: Duration::from_secs(120),
             ..Default::default()
         };
 
+        println!("🔧 Creating new stream with Limits retention policy...");
         self.jetstream.create_stream(stream_config).await
             .map_err(|e| anyhow::anyhow!("Failed to create NATS stream: {}", e))?;
+        println!("✅ Created stream with correct retention policy");
         Ok(())
     }
 
-    /// Get stream name for a workflow
-    pub fn stream_name(&self, workflow_id: &str) -> String {
-        format!("WORKFLOW_{}", workflow_id.to_uppercase())
+    /// Get global stream name
+    pub fn stream_name(&self) -> String {
+        "CIRCUIT_BREAKER_GLOBAL".to_string()
     }
 }
 
@@ -207,23 +220,23 @@ impl NATSStorage {
         WorkflowStreamManager::new(self.jetstream.clone(), self.config.clone())
     }
 
-    /// Ensure stream exists for workflow (with caching)
-    async fn ensure_stream(&self, workflow_id: &str) -> Result<()> {
+    /// Ensure global stream exists (with caching)
+    async fn ensure_stream(&self) -> Result<()> {
         // Check cache first
         {
             let cache = self.stream_cache.read().unwrap();
-            if cache.contains_key(workflow_id) {
+            if cache.contains_key("global") {
                 return Ok(());
             }
         }
 
         // Create stream if not cached
-        self.stream_manager().ensure_workflow_streams(workflow_id).await?;
+        self.stream_manager().ensure_global_stream().await?;
 
         // Update cache
         {
             let mut cache = self.stream_cache.write().unwrap();
-            cache.insert(workflow_id.to_string(), true);
+            cache.insert("global".to_string(), true);
         }
 
         Ok(())
@@ -231,9 +244,9 @@ impl NATSStorage {
 
     /// Publish workflow definition to NATS
     async fn publish_workflow(&self, definition: &WorkflowDefinition) -> Result<()> {
-        self.ensure_stream(&definition.id).await?;
+        self.ensure_stream().await?;
 
-        let subject = format!("workflows.{}.definition", definition.id);
+        let subject = format!("cb.workflows.{}.definition", definition.id);
         let payload = serde_json::to_vec(definition)?;
 
         println!("🔧 Publishing workflow to NATS subject: {}", subject);
@@ -258,14 +271,14 @@ impl NATSStorage {
 
     /// Get workflow definition from NATS
     async fn get_workflow_from_nats(&self, workflow_id: &str) -> Result<Option<WorkflowDefinition>> {
-        let stream_name = self.stream_manager().stream_name(workflow_id);
+        let stream_name = self.stream_manager().stream_name();
         
         println!("🔍 [STACK TRACE] get_workflow_from_nats called for workflow: {}", workflow_id);
         println!("🔍 [BACKTRACE] Call stack: {:?}", std::backtrace::Backtrace::capture());
         println!("🔍 Looking for workflow {} in NATS stream: {}", workflow_id, stream_name);
         
         // Try to get the stream
-        let stream = match self.jetstream.get_stream(&stream_name).await {
+        let mut stream = match self.jetstream.get_stream(&stream_name).await {
             Ok(stream) => {
                 println!("✅ Found NATS stream: {}", stream_name);
                 stream
@@ -277,13 +290,13 @@ impl NATSStorage {
         };
 
         // Create consumer for workflow definition
-        let filter_subject = format!("workflows.{}.definition", workflow_id);
+        let filter_subject = format!("cb.workflows.{}.definition", workflow_id);
         println!("🔍 Creating consumer for subject: {}", filter_subject);
         
         let consumer_config = consumer::pull::Config {
             durable_name: None, // Use ephemeral consumer for immediate retrieval
             filter_subject: filter_subject.clone(),
-            deliver_policy: consumer::DeliverPolicy::LastPerSubject,
+            deliver_policy: consumer::DeliverPolicy::All,
             ..Default::default()
         };
 
@@ -294,6 +307,18 @@ impl NATSStorage {
         
         // Add a small delay to allow for message propagation
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        
+        // Debug: Check stream info
+        match stream.info().await {
+            Ok(info) => {
+                println!("📊 Stream info:");
+                println!("   💾 Messages: {}", info.state.messages);
+                println!("   📝 Subjects: {:?}", info.config.subjects);
+                println!("   🔢 First sequence: {}", info.state.first_sequence);
+                println!("   🔢 Last sequence: {}", info.state.last_sequence);
+            },
+            Err(e) => println!("❌ Failed to get stream info: {}", e),
+        }
         
         // Try to get all messages first to see what's in the stream
         println!("🔍 Attempting to fetch messages from stream...");
@@ -337,7 +362,7 @@ impl NATSStorage {
 
     /// Publish token to appropriate NATS subject
     async fn publish_token(&self, token: &Token) -> Result<()> {
-        self.ensure_stream(&token.workflow_id).await?;
+        self.ensure_stream().await?;
 
         let subject = token.nats_subject_for_place();
         let mut token_with_nats = token.clone();
@@ -370,7 +395,7 @@ impl NATSStorage {
 
     /// Get token from a specific workflow
     async fn get_token_from_workflow(&self, token_id: &Uuid, workflow_id: &str) -> Result<Option<Token>> {
-        let stream_name = self.stream_manager().stream_name(workflow_id);
+        let stream_name = self.stream_manager().stream_name();
         
         let stream = match self.jetstream.get_stream(&stream_name).await {
             Ok(stream) => stream,
@@ -380,7 +405,7 @@ impl NATSStorage {
         // Create consumer for all token places in this workflow
         let consumer_config = consumer::pull::Config {
             durable_name: Some(format!("token_search_consumer_{}_{}", workflow_id, token_id)),
-            filter_subject: format!("workflows.{}.places.*.tokens", workflow_id),
+            filter_subject: format!("cb.workflows.{}.places.*.tokens", workflow_id),
             ..Default::default()
         };
 
@@ -415,7 +440,7 @@ impl NATSStorage {
 
     /// List tokens in a specific workflow
     async fn list_tokens_in_workflow(&self, workflow_id: &str) -> Result<Vec<Token>> {
-        let stream_name = self.stream_manager().stream_name(workflow_id);
+        let stream_name = self.stream_manager().stream_name();
         
         let stream = match self.jetstream.get_stream(&stream_name).await {
             Ok(stream) => stream,
@@ -424,7 +449,7 @@ impl NATSStorage {
 
         let consumer_config = consumer::pull::Config {
             durable_name: Some(format!("token_list_consumer_{}", workflow_id)),
-            filter_subject: format!("workflows.{}.places.*.tokens", workflow_id),
+            filter_subject: format!("cb.workflows.{}.places.*.tokens", workflow_id),
             ..Default::default()
         };
 
@@ -461,7 +486,7 @@ impl NATSStorage {
 
     /// Create token with NATS transition event
     pub async fn create_token_with_event(&self, mut token: Token, triggered_by: Option<String>) -> Result<Token> {
-        self.ensure_stream(&token.workflow_id).await?;
+        self.ensure_stream().await?;
 
         let now = Utc::now();
         let sequence = 0; // Will be set by NATS
@@ -483,7 +508,7 @@ impl NATSStorage {
         token.add_transition_record(creation_record);
         
         // Publish creation event
-        let event_subject = format!("workflows.{}.events.lifecycle", token.workflow_id);
+        let event_subject = format!("cb.workflows.{}.events.lifecycle", token.workflow_id);
         let event_payload = serde_json::json!({
             "event_type": "token_created",
             "token_id": token.id,
@@ -523,7 +548,7 @@ impl NATSStorage {
         );
 
         // Publish transition event
-        let event_subject = format!("workflows.{}.events.transitions", token.workflow_id);
+        let event_subject = format!("cb.workflows.{}.events.transitions", token.workflow_id);
         let event_payload = serde_json::json!({
             "event_type": "token_transitioned",
             "token_id": token.id,
@@ -599,7 +624,7 @@ impl WorkflowStorage for NATSStorage {
 impl NATSStorage {
     /// Get tokens currently in a specific place
     pub async fn get_tokens_in_place(&self, workflow_id: &str, place_id: &str) -> Result<Vec<Token>> {
-        let stream_name = self.stream_manager().stream_name(workflow_id);
+        let stream_name = self.stream_manager().stream_name();
         
         let stream = match self.jetstream.get_stream(&stream_name).await {
             Ok(stream) => stream,
@@ -608,7 +633,7 @@ impl NATSStorage {
 
         let consumer_config = consumer::pull::Config {
             durable_name: Some(format!("place_tokens_consumer_{}_{}", workflow_id, place_id)),
-            filter_subject: format!("workflows.{}.places.{}.tokens", workflow_id, place_id),
+            filter_subject: format!("cb.workflows.{}.places.{}.tokens", workflow_id, place_id),
             ..Default::default()
         };
 
@@ -631,13 +656,13 @@ impl NATSStorage {
 
     /// Subscribe to token events for real-time updates
     pub async fn subscribe_to_token_events(&self, workflow_id: &str) -> Result<consumer::pull::Stream> {
-        let stream_name = self.stream_manager().stream_name(workflow_id);
+        let stream_name = self.stream_manager().stream_name();
         let stream = self.jetstream.get_stream(&stream_name).await
             .map_err(|e| anyhow::anyhow!("Failed to get NATS stream: {}", e))?;
 
         let consumer_config = consumer::pull::Config {
             durable_name: Some(format!("events_subscriber_{}", workflow_id)),
-            filter_subject: format!("workflows.{}.events.*", workflow_id),
+            filter_subject: format!("cb.workflows.{}.events.*", workflow_id),
             deliver_policy: consumer::DeliverPolicy::New,
             ..Default::default()
         };
