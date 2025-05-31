@@ -110,6 +110,15 @@ pub mod functions;
 /// - LLM provider integration and streaming responses
 pub mod agents;
 
+/// NATS storage implementation for distributed workflows
+/// 
+/// Contains:
+/// - NATSStorage for JetStream-based workflow and token persistence
+/// - WorkflowStreamManager for automatic stream creation and management
+/// - Real-time event streaming for token transitions
+/// - Subject hierarchy management for efficient querying
+pub mod nats_storage;
+
 // Re-export main engine types for clean API access
 // Users can import directly from engine instead of navigating submodules
 
@@ -126,15 +135,26 @@ pub use graphql::{
     TransitionGQL,            // Transition definition for GraphQL responses
     HistoryEventGQL,          // History event for GraphQL responses
     
+    // NATS-specific GraphQL types
+    NATSTokenGQL,             // Enhanced token with NATS metadata
+    TransitionRecordGQL,      // NATS transition tracking
+    
     // Input types for GraphQL mutations
     WorkflowDefinitionInput,  // Input for creating workflows
     TokenCreateInput,         // Input for creating tokens
     TransitionFireInput,      // Input for firing transitions
     
+    // NATS-specific input types
+    CreateWorkflowInstanceInput,    // Input for creating workflow instances with NATS
+    TransitionTokenWithNATSInput,   // Input for NATS-tracked transitions
+    TokensInPlaceInput,            // Input for querying tokens in specific places
+    
     // Schema building and management
     CircuitBreakerSchema,     // Complete GraphQL schema type
     create_schema,            // Function to create schema with default storage
-    create_schema_with_storage // Function to create schema with custom storage
+    create_schema_with_storage, // Function to create schema with custom storage
+    create_schema_with_nats,  // Function to create schema with NATS storage
+    create_schema_with_nats_and_agents // Function to create schema with NATS and agents
 };
 
 /// Re-export storage types for persistence layer
@@ -175,3 +195,12 @@ pub use functions::{FunctionEngine, FunctionStorage, InMemoryFunctionStorage};
 /// - AgentEngineConfig: Configuration for agent engine
 /// - ExecutionStats: Agent execution statistics
 pub use agents::{AgentEngine, AgentStorage, InMemoryAgentStorage, AgentEngineConfig, ExecutionStats};
+
+/// Re-export NATS storage types for distributed workflows
+/// 
+/// These types enable NATS JetStream-based distributed storage:
+/// - NATSStorage: JetStream-based implementation of WorkflowStorage
+/// - NATSStorageWrapper: Wrapper for using Arc<NATSStorage> as WorkflowStorage
+/// - NATSStorageConfig: Configuration for NATS storage
+/// - WorkflowStreamManager: Automatic stream creation and management
+pub use nats_storage::{NATSStorage, NATSStorageWrapper, NATSStorageConfig, WorkflowStreamManager};

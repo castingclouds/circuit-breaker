@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::models::{Token, PlaceId, TransitionId, WorkflowDefinition, TransitionDefinition, HistoryEvent,
     AgentId, AgentDefinition, LLMProvider, LLMConfig, AgentPrompts, PlaceAgentConfig, 
-    PlaceAgentSchedule, AgentRetryConfig, AgentExecution, AgentExecutionStatus, AgentStreamEvent};
+    PlaceAgentSchedule, AgentRetryConfig, AgentExecution, AgentExecutionStatus};
 use crate::engine::storage::WorkflowStorage;
 use crate::engine::{TokenEvents, EventBus, AgentStorage, AgentEngine};
 
@@ -54,6 +54,33 @@ pub struct HistoryEventGQL {
     pub from_place: String,
     pub to_place: String,
     pub data: Option<serde_json::Value>,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct TransitionRecordGQL {
+    pub from_place: String,
+    pub to_place: String,
+    pub transition_id: String,
+    pub timestamp: String,
+    pub triggered_by: Option<String>,
+    pub nats_sequence: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct NATSTokenGQL {
+    pub id: ID,
+    pub workflow_id: String,
+    pub place: String,
+    pub data: serde_json::Value,
+    pub metadata: serde_json::Value,
+    pub created_at: String,
+    pub updated_at: String,
+    pub history: Vec<HistoryEventGQL>,
+    pub nats_sequence: Option<String>,
+    pub nats_timestamp: Option<String>,
+    pub nats_subject: Option<String>,
+    pub transition_history: Vec<TransitionRecordGQL>,
 }
 
 // Agent-related GraphQL types
@@ -290,6 +317,30 @@ pub struct TriggerPlaceAgentsInput {
     pub token_id: String,
 }
 
+// NATS-specific input types
+#[derive(InputObject, Debug)]
+pub struct CreateWorkflowInstanceInput {
+    pub workflow_id: String,
+    pub initial_data: Option<serde_json::Value>,
+    pub metadata: Option<serde_json::Value>,
+    pub triggered_by: Option<String>,
+}
+
+#[derive(InputObject, Debug)]
+pub struct TransitionTokenWithNATSInput {
+    pub token_id: String,
+    pub transition_id: String,
+    pub new_place: String,
+    pub triggered_by: Option<String>,
+    pub data: Option<serde_json::Value>,
+}
+
+#[derive(InputObject, Debug)]
+pub struct TokensInPlaceInput {
+    pub workflow_id: String,
+    pub place_id: String,
+}
+
 // Enums
 #[derive(Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommunicationPattern {
@@ -515,6 +566,39 @@ impl From<&HistoryEvent> for HistoryEventGQL {
     }
 }
 
+impl From<&crate::models::TransitionRecord> for TransitionRecordGQL {
+    fn from(record: &crate::models::TransitionRecord) -> Self {
+        TransitionRecordGQL {
+            from_place: record.from_place.as_str().to_string(),
+            to_place: record.to_place.as_str().to_string(),
+            transition_id: record.transition_id.as_str().to_string(),
+            timestamp: record.timestamp.to_rfc3339(),
+            triggered_by: record.triggered_by.clone(),
+            nats_sequence: record.nats_sequence.map(|s| s.to_string()),
+            metadata: record.metadata.clone(),
+        }
+    }
+}
+
+impl From<&Token> for NATSTokenGQL {
+    fn from(token: &Token) -> Self {
+        NATSTokenGQL {
+            id: ID(token.id.to_string()),
+            workflow_id: token.workflow_id.clone(),
+            place: token.place.as_str().to_string(),
+            data: token.data.clone(),
+            metadata: serde_json::to_value(&token.metadata).unwrap_or_default(),
+            created_at: token.created_at.to_rfc3339(),
+            updated_at: token.updated_at.to_rfc3339(),
+            history: token.history.iter().map(|h| h.into()).collect(),
+            nats_sequence: token.nats_sequence.map(|s| s.to_string()),
+            nats_timestamp: token.nats_timestamp.map(|t| t.to_rfc3339()),
+            nats_subject: token.nats_subject.clone(),
+            transition_history: token.transition_history.iter().map(|r| r.into()).collect(),
+        }
+    }
+}
+
 // GraphQL Query root
 pub struct Query;
 
@@ -640,6 +724,75 @@ impl Query {
             Err(e) => Err(async_graphql::Error::new(format!("Failed to get token executions: {}", e))),
         }
     }
+
+    /// NATS-specific queries for enhanced token operations
+    
+    /// Get token with NATS metadata by ID
+    async fn nats_token(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<NATSTokenGQL>> {
+        let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
+        let token_id = id.parse::<Uuid>()
+            .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
+        
+        match storage.get_token(&token_id).await {
+            Ok(Some(token)) => Ok(Some(NATSTokenGQL::from(&token))),
+            Ok(None) => Ok(None),
+            Err(e) => Err(async_graphql::Error::new(format!("Failed to get NATS token: {}", e))),
+        }
+    }
+
+    /// Get tokens currently in a specific place (NATS-specific)
+    async fn tokens_in_place(&self, ctx: &Context<'_>, workflow_id: String, place_id: String) -> async_graphql::Result<Vec<NATSTokenGQL>> {
+        // Try to get NATS storage for more efficient place-based queries
+        if let Ok(nats_storage) = ctx.data::<std::sync::Arc<crate::engine::nats_storage::NATSStorage>>() {
+            match nats_storage.get_tokens_in_place(&workflow_id, &place_id).await {
+                Ok(tokens) => Ok(tokens.iter().map(NATSTokenGQL::from).collect()),
+                Err(e) => Err(async_graphql::Error::new(format!("Failed to get tokens in place: {}", e))),
+            }
+        } else {
+            // Fallback to regular storage with filtering
+            let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
+            match storage.list_tokens(Some(&workflow_id)).await {
+                Ok(tokens) => {
+                    let filtered: Vec<NATSTokenGQL> = tokens
+                        .iter()
+                        .filter(|token| token.place.as_str() == place_id)
+                        .map(NATSTokenGQL::from)
+                        .collect();
+                    Ok(filtered)
+                },
+                Err(e) => Err(async_graphql::Error::new(format!("Failed to get tokens in place: {}", e))),
+            }
+        }
+    }
+
+    /// Find token by ID with workflow context (more efficient for NATS)
+    async fn find_token(&self, ctx: &Context<'_>, workflow_id: String, token_id: String) -> async_graphql::Result<Option<NATSTokenGQL>> {
+        let token_uuid = token_id.parse::<Uuid>()
+            .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
+
+        // Try NATS storage first for more efficient lookup
+        if let Ok(nats_storage) = ctx.data::<std::sync::Arc<crate::engine::nats_storage::NATSStorage>>() {
+            match nats_storage.find_token(&workflow_id, &token_uuid).await {
+                Ok(Some(token)) => Ok(Some(NATSTokenGQL::from(&token))),
+                Ok(None) => Ok(None),
+                Err(e) => Err(async_graphql::Error::new(format!("Failed to find token: {}", e))),
+            }
+        } else {
+            // Fallback to regular storage
+            let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
+            match storage.get_token(&token_uuid).await {
+                Ok(Some(token)) => {
+                    if token.workflow_id == workflow_id {
+                        Ok(Some(NATSTokenGQL::from(&token)))
+                    } else {
+                        Ok(None)
+                    }
+                },
+                Ok(None) => Ok(None),
+                Err(e) => Err(async_graphql::Error::new(format!("Failed to find token: {}", e))),
+            }
+        }
+    }
 }
 
 // GraphQL Mutation root
@@ -656,7 +809,7 @@ impl Mutation {
         let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
         
         // Convert input to internal types
-        let workflow_id = format!("workflow_{}", Uuid::new_v4());
+        let workflow_id = Uuid::new_v4().to_string();
         let places: Vec<PlaceId> = input.places.into_iter().map(PlaceId::from).collect();
         let transitions: Vec<TransitionDefinition> = input.transitions
             .into_iter()
@@ -929,6 +1082,106 @@ impl Mutation {
         
         Ok(executions.iter().map(AgentExecutionGQL::from).collect())
     }
+
+    /// NATS-specific mutations for enhanced token operations
+    
+    /// Create a workflow instance with NATS event tracking
+    async fn create_workflow_instance(
+        &self,
+        ctx: &Context<'_>,
+        input: CreateWorkflowInstanceInput,
+    ) -> async_graphql::Result<NATSTokenGQL> {
+        let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
+        
+        // Get the workflow definition to find initial place
+        let workflow = storage.get_workflow(&input.workflow_id).await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to get workflow: {}", e)))?
+            .ok_or_else(|| async_graphql::Error::new("Workflow not found"))?;
+        
+        // Create new token
+        let mut token = Token::new(&input.workflow_id, workflow.initial_place.clone());
+        
+        // Set initial data if provided
+        if let Some(data) = input.initial_data {
+            token.data = data;
+        }
+        
+        // Set metadata if provided
+        if let Some(metadata) = input.metadata {
+            if let serde_json::Value::Object(map) = metadata {
+                for (key, value) in map {
+                    token.set_metadata(key, value);
+                }
+            }
+        }
+        
+        // Try to use NATS storage for enhanced functionality
+        if let Ok(nats_storage) = ctx.data::<std::sync::Arc<crate::engine::nats_storage::NATSStorage>>() {
+            let created_token = nats_storage.create_token_with_event(token, input.triggered_by).await
+                .map_err(|e| async_graphql::Error::new(format!("Failed to create NATS token: {}", e)))?;
+            Ok(NATSTokenGQL::from(&created_token))
+        } else {
+            // Fallback to regular storage
+            let created_token = storage.create_token(token).await
+                .map_err(|e| async_graphql::Error::new(format!("Failed to create token: {}", e)))?;
+            Ok(NATSTokenGQL::from(&created_token))
+        }
+    }
+
+    /// Transition token with NATS event publishing
+    async fn transition_token_with_nats(
+        &self,
+        ctx: &Context<'_>,
+        input: TransitionTokenWithNATSInput,
+    ) -> async_graphql::Result<NATSTokenGQL> {
+        let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
+        
+        // Parse token ID
+        let token_id = input.token_id.parse::<Uuid>()
+            .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
+        
+        // Get the token
+        let mut token = storage.get_token(&token_id).await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to get token: {}", e)))?
+            .ok_or_else(|| async_graphql::Error::new("Token not found"))?;
+        
+        // Get the workflow to validate transition
+        let workflow = storage.get_workflow(&token.workflow_id).await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to get workflow: {}", e)))?
+            .ok_or_else(|| async_graphql::Error::new("Workflow not found"))?;
+        
+        let transition_id = TransitionId::from(input.transition_id);
+        let new_place = PlaceId::from(input.new_place);
+        let current_place = token.place.clone();
+        
+        // Validate transition
+        if !workflow.can_transition(&current_place, &transition_id).map(|p| *p == new_place).unwrap_or(false) {
+            return Err(async_graphql::Error::new("Invalid transition"));
+        }
+        
+        // Update token data if provided
+        if let Some(data) = input.data {
+            token.data = data;
+        }
+        
+        // Try to use NATS storage for enhanced functionality
+        if let Ok(nats_storage) = ctx.data::<std::sync::Arc<crate::engine::nats_storage::NATSStorage>>() {
+            let transitioned_token = nats_storage.transition_token_with_event(
+                token,
+                new_place,
+                transition_id,
+                input.triggered_by,
+            ).await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to transition NATS token: {}", e)))?;
+            Ok(NATSTokenGQL::from(&transitioned_token))
+        } else {
+            // Fallback to regular transition
+            token.transition_to(new_place, transition_id);
+            let updated_token = storage.update_token(token).await
+                .map_err(|e| async_graphql::Error::new(format!("Failed to update token: {}", e)))?;
+            Ok(NATSTokenGQL::from(&updated_token))
+        }
+    }
 }
 
 // GraphQL Subscription root (for real-time updates)
@@ -983,6 +1236,42 @@ pub fn create_schema_with_agents(
 ) -> CircuitBreakerSchema {
     Schema::build(Query, Mutation, Subscription)
         .data(workflow_storage)
+        .data(agent_storage)
+        .data(agent_engine)
+        .finish()
+}
+
+/// Create schema with NATS storage backend
+/// This provides enhanced GraphQL functionality with NATS-specific resolvers
+pub fn create_schema_with_nats(
+    nats_storage: std::sync::Arc<crate::engine::nats_storage::NATSStorage>,
+) -> CircuitBreakerSchema {
+    // Use NATS storage as the primary WorkflowStorage implementation
+    let storage_boxed: Box<dyn WorkflowStorage> = Box::new(
+        crate::engine::nats_storage::NATSStorageWrapper::new(nats_storage.clone())
+    );
+    
+    Schema::build(Query, Mutation, Subscription)
+        .data(storage_boxed)
+        .data(nats_storage)
+        .finish()
+}
+
+/// Create schema with NATS storage, agent storage, and agent engine
+/// This provides the full Circuit Breaker functionality with NATS streaming
+pub fn create_schema_with_nats_and_agents(
+    nats_storage: std::sync::Arc<crate::engine::nats_storage::NATSStorage>,
+    agent_storage: std::sync::Arc<dyn AgentStorage>,
+    agent_engine: AgentEngine,
+) -> CircuitBreakerSchema {
+    // Use NATS storage as the primary WorkflowStorage implementation
+    let storage_boxed: Box<dyn WorkflowStorage> = Box::new(
+        crate::engine::nats_storage::NATSStorageWrapper::new(nats_storage.clone())
+    );
+    
+    Schema::build(Query, Mutation, Subscription)
+        .data(storage_boxed)
+        .data(nats_storage)
         .data(agent_storage)
         .data(agent_engine)
         .finish()

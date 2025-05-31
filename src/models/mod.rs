@@ -72,7 +72,8 @@ pub use workflow::WorkflowDefinition;
 /// - Token: The main workflow execution instance
 /// - HistoryEvent: Records each state transition
 /// - TokenMetadata: Key-value metadata storage
-pub use token::{Token, HistoryEvent, TokenMetadata};
+/// - TransitionRecord: NATS-specific transition tracking
+pub use token::{Token, HistoryEvent, TokenMetadata, TransitionRecord};
 
 /// Re-export rules engine types
 /// - Rule: A single evaluatable condition
