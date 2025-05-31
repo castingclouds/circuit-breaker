@@ -38,6 +38,7 @@ use chrono::Utc;
 use serde_json;
 use uuid::Uuid;
 use futures::StreamExt;
+use tokio::time::{sleep, timeout};
 
 use crate::models::{Token, WorkflowDefinition, TransitionRecord};
 use crate::engine::storage::WorkflowStorage;
@@ -125,7 +126,7 @@ pub struct NATSStorage {
     client: Client,
     jetstream: Context,
     config: NATSStorageConfig,
-    stream_cache: std::sync::RwLock<HashMap<String, bool>>,
+    stream_cache: std::sync::Mutex<HashMap<String, bool>>,
 }
 
 /// Stream manager for workflow-specific streams
@@ -144,7 +145,7 @@ impl WorkflowStreamManager {
         let stream_name = "CIRCUIT_BREAKER_GLOBAL";
         let subjects = vec![
             "cb.workflows.*.definition".to_string(),
-            "cb.workflows.*.places.*.tokens".to_string(),
+            "cb.workflows.*.places.*.tokens.*".to_string(),
             "cb.workflows.*.events.transitions".to_string(),
             "cb.workflows.*.events.lifecycle".to_string(),
         ];
@@ -159,6 +160,13 @@ impl WorkflowStreamManager {
                 self.jetstream.delete_stream(stream_name).await
                     .map_err(|e| anyhow::anyhow!("Failed to delete stream: {}", e))?;
                 println!("✅ Deleted old stream with Interest retention policy");
+            } else if info.config.subjects != subjects {
+                println!("🔧 Deleting stream with outdated subject configuration...");
+                println!("   Current subjects: {:?}", info.config.subjects);
+                println!("   Required subjects: {:?}", subjects);
+                self.jetstream.delete_stream(stream_name).await
+                    .map_err(|e| anyhow::anyhow!("Failed to delete stream: {}", e))?;
+                println!("✅ Deleted old stream with outdated subject configuration");
             } else {
                 println!("✅ Stream already exists with correct configuration");
                 return Ok(());
@@ -206,7 +214,7 @@ impl NATSStorage {
             client,
             jetstream,
             config,
-            stream_cache: std::sync::RwLock::new(HashMap::new()),
+            stream_cache: std::sync::Mutex::new(HashMap::new()),
         })
     }
 
@@ -223,8 +231,9 @@ impl NATSStorage {
     /// Ensure global stream exists (with caching)
     async fn ensure_stream(&self) -> Result<()> {
         // Check cache first
+        // Check if we've already ensured this stream exists
         {
-            let cache = self.stream_cache.read().unwrap();
+            let cache = self.stream_cache.lock().unwrap();
             if cache.contains_key("global") {
                 return Ok(());
             }
@@ -234,8 +243,9 @@ impl NATSStorage {
         self.stream_manager().ensure_global_stream().await?;
 
         // Update cache
+        // Mark stream as created
         {
-            let mut cache = self.stream_cache.write().unwrap();
+            let mut cache = self.stream_cache.lock().unwrap();
             cache.insert("global".to_string(), true);
         }
 
@@ -296,7 +306,8 @@ impl NATSStorage {
         let consumer_config = consumer::pull::Config {
             durable_name: None, // Use ephemeral consumer for immediate retrieval
             filter_subject: filter_subject.clone(),
-            deliver_policy: consumer::DeliverPolicy::All,
+            deliver_policy: consumer::DeliverPolicy::LastPerSubject,
+            ack_policy: consumer::AckPolicy::None, // Read-only access for workflow queries
             ..Default::default()
         };
 
@@ -345,7 +356,7 @@ impl NATSStorage {
                 let payload_str = String::from_utf8_lossy(&message.payload);
                 println!("❌ Payload preview: {}", &payload_str[..std::cmp::min(100, payload_str.len())]);
             }
-            message.ack().await.map_err(|e| anyhow::anyhow!("Failed to ack NATS message: {}", e))?;
+            // No acknowledgment needed with AckPolicy::None
         }
         
         println!("📊 Total messages processed: {}", message_count);
@@ -361,24 +372,26 @@ impl NATSStorage {
 
 
     /// Publish token to appropriate NATS subject
-    async fn publish_token(&self, token: &Token) -> Result<()> {
+    async fn publish_token(&self, token: &Token) -> Result<u64> {
         self.ensure_stream().await?;
 
         let subject = token.nats_subject_for_place();
-        let mut token_with_nats = token.clone();
-        
-        // Set NATS metadata
-        let now = Utc::now();
-        token_with_nats.set_nats_metadata(0, now, subject.clone()); // Sequence will be set by NATS
-        
-        let payload = serde_json::to_vec(&token_with_nats)?;
+        let payload = serde_json::to_vec(token)?;
 
-        let _ack = self.jetstream
-            .publish(subject, payload.into())
+        // Publish and wait for acknowledgment with sequence number
+        let ack = self.jetstream
+            .publish(subject.clone(), payload.into())
             .await
             .map_err(|e| anyhow::anyhow!("Failed to publish token to NATS: {}", e))?;
 
-        Ok(())
+        // Wait for the acknowledgment and get the sequence number
+        let pub_ack = ack.await
+            .map_err(|e| anyhow::anyhow!("Failed to get publish acknowledgment: {}", e))?;
+
+        // Small delay to ensure message is available for consumers
+        sleep(Duration::from_millis(50)).await;
+
+        Ok(pub_ack.sequence)
     }
 
     /// Get token from NATS by ID
@@ -393,8 +406,31 @@ impl NATSStorage {
         self.search_token_across_workflows(token_id).await
     }
 
-    /// Get token from a specific workflow
+    /// Get token from a specific workflow with retry logic
     async fn get_token_from_workflow(&self, token_id: &Uuid, workflow_id: &str) -> Result<Option<Token>> {
+        // Use the same proven approach as get_tokens_in_place, but search for specific token
+        let workflow_def = match self.get_workflow_from_nats(workflow_id).await? {
+            Some(workflow) => workflow,
+            None => return Ok(None),
+        };
+
+        // Search through each place using the same logic as get_tokens_in_place
+        for place in &workflow_def.places {
+            let tokens_in_place = self.get_tokens_in_place(workflow_id, place.as_str()).await?;
+            
+            // Look for our specific token in this place
+            for token in tokens_in_place {
+                if token.id == *token_id {
+                    return Ok(Some(token));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Search for token across all workflows - now efficient with unique subjects
+    async fn search_token_across_workflows(&self, token_id: &Uuid) -> Result<Option<Token>> {
         let stream_name = self.stream_manager().stream_name();
         
         let stream = match self.jetstream.get_stream(&stream_name).await {
@@ -402,40 +438,60 @@ impl NATSStorage {
             Err(_) => return Ok(None),
         };
 
-        // Create consumer for all token places in this workflow
+        // Create consumer for the specific token subject pattern
+        // Each token has unique subject: cb.workflows.*.places.*.tokens.{token_id}
         let consumer_config = consumer::pull::Config {
-            durable_name: Some(format!("token_search_consumer_{}_{}", workflow_id, token_id)),
-            filter_subject: format!("cb.workflows.{}.places.*.tokens", workflow_id),
+            durable_name: None, // Use ephemeral consumer
+            filter_subject: format!("cb.workflows.*.places.*.tokens.{}", token_id),
+            deliver_policy: consumer::DeliverPolicy::All, // Get all versions of this token
+            ack_policy: consumer::AckPolicy::None, // Read-only access
+            max_deliver: self.config.max_deliver,
+            ack_wait: Duration::from_secs(30),
             ..Default::default()
         };
 
-        let consumer = stream.create_consumer(consumer_config).await
-            .map_err(|e| anyhow::anyhow!("Failed to create token search consumer: {}", e))?;
-        
-        // Search through messages to find our token
-        let mut batch = consumer.batch().max_messages(1000).messages().await
-            .map_err(|e| anyhow::anyhow!("Failed to get token search batch: {}", e))?;
-        
-        while let Some(message) = batch.next().await {
-            let message = message.map_err(|e| anyhow::anyhow!("Failed to receive token message: {}", e))?;
-            if let Ok(token) = serde_json::from_slice::<Token>(&message.payload) {
-                if token.id == *token_id {
-                    message.ack().await.map_err(|e| anyhow::anyhow!("Failed to ack token message: {}", e))?;
-                    return Ok(Some(token));
+        let consumer = match stream.create_consumer(consumer_config).await {
+            Ok(consumer) => consumer,
+            Err(_) => return Ok(None),
+        };
+
+        // Find the most recent version of the token across all places
+        let search_future = async {
+            let mut batch = consumer
+                .batch()
+                .max_messages(100) // Get all versions of this token
+                .max_bytes(1024 * 1024) // 1MB limit
+                .expires(Duration::from_secs(2))
+                .messages()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to get token batch: {}", e))?;
+            
+            let mut latest_token: Option<Token> = None;
+            let mut latest_timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0).unwrap();
+            
+            while let Some(message) = batch.next().await {
+                let message = message.map_err(|e| anyhow::anyhow!("Failed to receive token message: {}", e))?;
+                
+                if let Ok(token) = serde_json::from_slice::<Token>(&message.payload) {
+                    if token.id == *token_id {
+                        // Use NATS timestamp if available, otherwise updated_at
+                        let token_timestamp = token.nats_timestamp.unwrap_or(token.updated_at);
+                        if token_timestamp > latest_timestamp {
+                            latest_timestamp = token_timestamp;
+                            latest_token = Some(token);
+                        }
+                    }
                 }
             }
-            message.ack().await.map_err(|e| anyhow::anyhow!("Failed to ack token message: {}", e))?;
+            
+            Ok::<Option<Token>, anyhow::Error>(latest_token)
+        };
+        
+        match timeout(Duration::from_secs(5), search_future).await {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(_)) => Ok(None),
+            Err(_) => Ok(None),
         }
-
-        Ok(None)
-    }
-
-    /// Search for token across all workflows (inefficient, use sparingly)
-    async fn search_token_across_workflows(&self, _token_id: &Uuid) -> Result<Option<Token>> {
-        // This would require iterating through all streams
-        // For now, return None as this operation is very expensive
-        // In production, you'd want to maintain a separate index
-        Ok(None)
     }
 
     /// List tokens in a specific workflow
@@ -448,8 +504,10 @@ impl NATSStorage {
         };
 
         let consumer_config = consumer::pull::Config {
-            durable_name: Some(format!("token_list_consumer_{}", workflow_id)),
-            filter_subject: format!("cb.workflows.{}.places.*.tokens", workflow_id),
+            durable_name: None, // Use ephemeral consumer
+            filter_subject: format!("cb.workflows.{}.places.*.tokens.*", workflow_id),
+            deliver_policy: consumer::DeliverPolicy::LastPerSubject,
+            ack_policy: consumer::AckPolicy::None, // Read-only access for token listing
             ..Default::default()
         };
 
@@ -464,7 +522,7 @@ impl NATSStorage {
             if let Ok(token) = serde_json::from_slice::<Token>(&message.payload) {
                 tokens.push(token);
             }
-            message.ack().await.map_err(|e| anyhow::anyhow!("Failed to ack workflow token message: {}", e))?;
+            // No acknowledgment needed with AckPolicy::None
         }
 
         Ok(tokens)
@@ -489,9 +547,11 @@ impl NATSStorage {
         self.ensure_stream().await?;
 
         let now = Utc::now();
-        let sequence = 0; // Will be set by NATS
         
-        // Add creation event to transition history
+        // Publish the initial token and get the sequence number
+        let sequence = self.publish_token(&token).await?;
+        
+        // Add creation event to transition history with actual sequence
         let creation_record = TransitionRecord {
             from_place: token.place.clone(), // Same place since it's creation
             to_place: token.place.clone(),
@@ -501,11 +561,18 @@ impl NATSStorage {
             nats_sequence: Some(sequence),
             metadata: Some(serde_json::json!({
                 "event_type": "token_created",
-                "workflow_id": token.workflow_id
+                "workflow_id": token.workflow_id,
+                "nats_sequence": sequence
             })),
         };
 
         token.add_transition_record(creation_record);
+        
+        // Update token with NATS metadata
+        token.set_nats_metadata(sequence, now, token.nats_subject_for_place());
+        
+        // Publish the complete token with metadata and history
+        let _final_sequence = self.publish_token(&token).await?;
         
         // Publish creation event
         let event_subject = format!("cb.workflows.{}.events.lifecycle", token.workflow_id);
@@ -515,16 +582,18 @@ impl NATSStorage {
             "workflow_id": token.workflow_id,
             "place": token.place.as_str(),
             "timestamp": now,
-            "triggered_by": triggered_by
+            "triggered_by": triggered_by,
+            "nats_sequence": sequence
         });
 
-        self.jetstream
+        let event_ack = self.jetstream
             .publish(event_subject, serde_json::to_vec(&event_payload)?.into())
             .await
             .map_err(|e| anyhow::anyhow!("Failed to publish creation event: {}", e))?;
 
-        // Publish the token itself
-        self.publish_token(&token).await?;
+        // Wait for event acknowledgment
+        let _event_pub_ack = event_ack.await
+            .map_err(|e| anyhow::anyhow!("Failed to get event publish acknowledgment: {}", e))?;
 
         Ok(token)
     }
@@ -538,6 +607,7 @@ impl NATSStorage {
         triggered_by: Option<String>,
     ) -> Result<Token> {
         let old_place = token.place.clone();
+        let now = Utc::now();
         
         // Perform the transition with NATS tracking
         token.transition_to_with_nats(
@@ -547,7 +617,21 @@ impl NATSStorage {
             None, // Sequence will be set by NATS
         );
 
-        // Publish transition event
+        // Publish the token to its new place and get sequence
+        let sequence = self.publish_token(&token).await?;
+        
+        // Update the token's NATS metadata with the actual sequence
+        token.set_nats_metadata(sequence, now, token.nats_subject_for_place());
+
+        // Ensure the transition record has the correct sequence
+        if let Some(last_record) = token.transition_history.last_mut() {
+            last_record.nats_sequence = Some(sequence);
+        }
+
+        // Re-publish the token with complete metadata and transition history
+        let _final_sequence = self.publish_token(&token).await?;
+
+        // Publish transition event with sequence information
         let event_subject = format!("cb.workflows.{}.events.transitions", token.workflow_id);
         let event_payload = serde_json::json!({
             "event_type": "token_transitioned",
@@ -556,17 +640,15 @@ impl NATSStorage {
             "from_place": old_place.as_str(),
             "to_place": new_place.as_str(),
             "transition_id": transition_id.as_str(),
-            "timestamp": Utc::now(),
-            "triggered_by": triggered_by
+            "timestamp": now,
+            "triggered_by": triggered_by,
+            "nats_sequence": sequence
         });
 
-        self.jetstream
+        let _event_ack = self.jetstream
             .publish(event_subject, serde_json::to_vec(&event_payload)?.into())
             .await
             .map_err(|e| anyhow::anyhow!("Failed to publish transition event: {}", e))?;
-
-        // Republish the token to its new place
-        self.publish_token(&token).await?;
 
         Ok(token)
     }
@@ -622,7 +704,7 @@ impl WorkflowStorage for NATSStorage {
 
 /// Utility functions for NATS token operations
 impl NATSStorage {
-    /// Get tokens currently in a specific place
+    /// Get tokens currently in a specific place with retry logic
     pub async fn get_tokens_in_place(&self, workflow_id: &str, place_id: &str) -> Result<Vec<Token>> {
         let stream_name = self.stream_manager().stream_name();
         
@@ -631,27 +713,68 @@ impl NATSStorage {
             Err(_) => return Ok(vec![]),
         };
 
-        let consumer_config = consumer::pull::Config {
-            durable_name: Some(format!("place_tokens_consumer_{}_{}", workflow_id, place_id)),
-            filter_subject: format!("cb.workflows.{}.places.{}.tokens", workflow_id, place_id),
-            ..Default::default()
-        };
-
-        let consumer = stream.create_consumer(consumer_config).await
-            .map_err(|e| anyhow::anyhow!("Failed to create place tokens consumer: {}", e))?;
-        let mut tokens = Vec::new();
-        let mut batch = consumer.batch().max_messages(1000).messages().await
-            .map_err(|e| anyhow::anyhow!("Failed to get place tokens batch: {}", e))?;
-        
-        while let Some(message) = batch.next().await {
-            let message = message.map_err(|e| anyhow::anyhow!("Failed to receive place token message: {}", e))?;
-            if let Ok(token) = serde_json::from_slice::<Token>(&message.payload) {
-                tokens.push(token);
+        // Try with retry logic for timing issues
+        for attempt in 0..2 {
+            if attempt > 0 {
+                sleep(Duration::from_millis(100)).await;
             }
-            message.ack().await.map_err(|e| anyhow::anyhow!("Failed to ack place token message: {}", e))?;
+
+            let consumer_config = consumer::pull::Config {
+                durable_name: None, // Use ephemeral consumer
+                filter_subject: format!("cb.workflows.{}.places.{}.tokens.*", workflow_id, place_id),
+                deliver_policy: consumer::DeliverPolicy::LastPerSubject,
+                ack_policy: consumer::AckPolicy::None, // Read-only access for place queries
+                max_deliver: self.config.max_deliver,
+                ack_wait: Duration::from_secs(30),
+                ..Default::default()
+            };
+
+            let consumer = match stream.create_consumer(consumer_config).await {
+                Ok(consumer) => consumer,
+                Err(e) => {
+                    eprintln!("Failed to create place consumer on attempt {}: {}", attempt + 1, e);
+                    continue;
+                }
+            };
+            
+            let mut tokens = Vec::new();
+            
+            // Use timeout to prevent hanging
+            let fetch_future = async {
+                let mut batch = consumer
+                    .batch()
+                    .max_messages(1000)
+                    .max_bytes(1024 * 1024) // 1MB limit
+                    .expires(Duration::from_secs(2))
+                    .messages()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to get place batch: {}", e))?;
+                
+                while let Some(message) = batch.next().await {
+                    let message = message.map_err(|e| anyhow::anyhow!("Failed to receive place message: {}", e))?;
+                    if let Ok(token) = serde_json::from_slice::<Token>(&message.payload) {
+                        tokens.push(token);
+                        // No acknowledgment needed with AckPolicy::None
+                    }
+                    // Invalid messages are ignored without acknowledgment
+                }
+                
+                Ok::<Vec<Token>, anyhow::Error>(tokens)
+            };
+
+            match timeout(Duration::from_secs(3), fetch_future).await {
+                Ok(Ok(tokens)) => return Ok(tokens),
+                Ok(Err(e)) => {
+                    eprintln!("Fetch error on attempt {}: {}", attempt + 1, e);
+                },
+                Err(_) => {
+                    eprintln!("Fetch timeout on attempt {}", attempt + 1);
+                }
+            }
         }
 
-        Ok(tokens)
+        // Return empty if all attempts failed
+        Ok(vec![])
     }
 
     /// Subscribe to token events for real-time updates

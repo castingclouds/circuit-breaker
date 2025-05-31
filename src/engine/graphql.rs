@@ -655,8 +655,31 @@ impl Query {
         let token_uuid = token_id.parse::<Uuid>()
             .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
         
-        let token = storage.get_token(&token_uuid).await?
-            .ok_or_else(|| async_graphql::Error::new("Token not found"))?;
+        // Get the token with retry logic for timing issues
+        let mut token = None;
+        for attempt in 0..3 {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(100 * (2_u64.pow(attempt)))).await;
+            }
+            
+            match storage.get_token(&token_uuid).await {
+                Ok(Some(found_token)) => {
+                    token = Some(found_token);
+                    break;
+                },
+                Ok(None) => {
+                    if attempt == 2 {
+                        return Err(async_graphql::Error::new("Token not found after retries"));
+                    }
+                    continue;
+                },
+                Err(e) => {
+                    return Err(async_graphql::Error::new(format!("Failed to get token: {}", e)));
+                }
+            }
+        }
+        
+        let token = token.unwrap();
         
         let workflow = storage.get_workflow(&token.workflow_id).await?
             .ok_or_else(|| async_graphql::Error::new("Workflow not found"))?;
@@ -892,8 +915,31 @@ impl Mutation {
         let token_id = input.token_id.parse::<Uuid>()
             .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
         
-        let mut token = storage.get_token(&token_id).await?
-            .ok_or_else(|| async_graphql::Error::new("Token not found"))?;
+        // Get the token with retry logic for timing issues
+        let mut token = None;
+        for attempt in 0..3 {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(100 * (2_u64.pow(attempt)))).await;
+            }
+            
+            match storage.get_token(&token_id).await {
+                Ok(Some(found_token)) => {
+                    token = Some(found_token);
+                    break;
+                },
+                Ok(None) => {
+                    if attempt == 2 {
+                        return Err(async_graphql::Error::new("Token not found after retries"));
+                    }
+                    continue;
+                },
+                Err(e) => {
+                    return Err(async_graphql::Error::new(format!("Failed to get token: {}", e)));
+                }
+            }
+        }
+        
+        let mut token = token.unwrap();
         
         let workflow = storage.get_workflow(&token.workflow_id).await?
             .ok_or_else(|| async_graphql::Error::new("Workflow not found"))?;
@@ -1074,8 +1120,31 @@ impl Mutation {
         let token_id = input.token_id.parse::<Uuid>()
             .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
         
-        let token = workflow_storage.get_token(&token_id).await?
-            .ok_or_else(|| async_graphql::Error::new("Token not found"))?;
+        // Get the token with retry logic for timing issues
+        let mut token = None;
+        for attempt in 0..3 {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(100 * (2_u64.pow(attempt)))).await;
+            }
+            
+            match workflow_storage.get_token(&token_id).await {
+                Ok(Some(found_token)) => {
+                    token = Some(found_token);
+                    break;
+                },
+                Ok(None) => {
+                    if attempt == 2 {
+                        return Err(async_graphql::Error::new("Token not found after retries"));
+                    }
+                    continue;
+                },
+                Err(e) => {
+                    return Err(async_graphql::Error::new(format!("Failed to get token: {}", e)));
+                }
+            }
+        }
+        
+        let token = token.unwrap();
         
         let executions = agent_engine.execute_place_agents(&token).await
             .map_err(|e| async_graphql::Error::new(format!("Failed to execute place agents: {}", e)))?;
@@ -1134,38 +1203,57 @@ impl Mutation {
         ctx: &Context<'_>,
         input: TransitionTokenWithNATSInput,
     ) -> async_graphql::Result<NATSTokenGQL> {
-        let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
-        
         // Parse token ID
         let token_id = input.token_id.parse::<Uuid>()
             .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
         
-        // Get the token
-        let mut token = storage.get_token(&token_id).await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to get token: {}", e)))?
-            .ok_or_else(|| async_graphql::Error::new("Token not found"))?;
-        
-        // Get the workflow to validate transition
-        let workflow = storage.get_workflow(&token.workflow_id).await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to get workflow: {}", e)))?
-            .ok_or_else(|| async_graphql::Error::new("Workflow not found"))?;
-        
-        let transition_id = TransitionId::from(input.transition_id);
-        let new_place = PlaceId::from(input.new_place);
-        let current_place = token.place.clone();
-        
-        // Validate transition
-        if !workflow.can_transition(&current_place, &transition_id).map(|p| *p == new_place).unwrap_or(false) {
-            return Err(async_graphql::Error::new("Invalid transition"));
-        }
-        
-        // Update token data if provided
-        if let Some(data) = input.data {
-            token.data = data;
-        }
-        
-        // Try to use NATS storage for enhanced functionality
+        // Try to use NATS storage directly first for consistent behavior
         if let Ok(nats_storage) = ctx.data::<std::sync::Arc<crate::engine::nats_storage::NATSStorage>>() {
+            // Get token directly from NATS storage with retry logic
+            let mut token = None;
+            for attempt in 0..3 {
+                if attempt > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100 * (2_u64.pow(attempt)))).await;
+                }
+                
+                match nats_storage.get_token(&token_id).await {
+                    Ok(Some(found_token)) => {
+                        token = Some(found_token);
+                        break;
+                    },
+                    Ok(None) => {
+                        if attempt == 2 {
+                            return Err(async_graphql::Error::new("Token not found after retries"));
+                        }
+                        continue;
+                    },
+                    Err(e) => {
+                        return Err(async_graphql::Error::new(format!("Failed to get token: {}", e)));
+                    }
+                }
+            }
+            
+            let mut token = token.unwrap();
+            
+            // Get the workflow to validate transition
+            let workflow = nats_storage.get_workflow(&token.workflow_id).await
+                .map_err(|e| async_graphql::Error::new(format!("Failed to get workflow: {}", e)))?
+                .ok_or_else(|| async_graphql::Error::new("Workflow not found"))?;
+            
+            let transition_id = TransitionId::from(input.transition_id);
+            let new_place = PlaceId::from(input.new_place);
+            let current_place = token.place.clone();
+            
+            // Validate transition
+            if !workflow.can_transition(&current_place, &transition_id).map(|p| *p == new_place).unwrap_or(false) {
+                return Err(async_graphql::Error::new("Invalid transition"));
+            }
+            
+            // Update token data if provided
+            if let Some(data) = input.data {
+                token.data = data;
+            }
+            
             let transitioned_token = nats_storage.transition_token_with_event(
                 token,
                 new_place,
@@ -1175,7 +1263,55 @@ impl Mutation {
             .map_err(|e| async_graphql::Error::new(format!("Failed to transition NATS token: {}", e)))?;
             Ok(NATSTokenGQL::from(&transitioned_token))
         } else {
-            // Fallback to regular transition
+            // Fallback to wrapper storage
+            let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
+            
+            // Get the token with retry logic for timing issues
+            let mut token = None;
+            for attempt in 0..3 {
+                if attempt > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100 * (2_u64.pow(attempt)))).await;
+                }
+                
+                match storage.get_token(&token_id).await {
+                    Ok(Some(found_token)) => {
+                        token = Some(found_token);
+                        break;
+                    },
+                    Ok(None) => {
+                        if attempt == 2 {
+                            return Err(async_graphql::Error::new("Token not found after retries"));
+                        }
+                        continue;
+                    },
+                    Err(e) => {
+                        return Err(async_graphql::Error::new(format!("Failed to get token: {}", e)));
+                    }
+                }
+            }
+            
+            let mut token = token.unwrap();
+            
+            // Get the workflow to validate transition
+            let workflow = storage.get_workflow(&token.workflow_id).await
+                .map_err(|e| async_graphql::Error::new(format!("Failed to get workflow: {}", e)))?
+                .ok_or_else(|| async_graphql::Error::new("Workflow not found"))?;
+            
+            let transition_id = TransitionId::from(input.transition_id);
+            let new_place = PlaceId::from(input.new_place);
+            let current_place = token.place.clone();
+            
+            // Validate transition
+            if !workflow.can_transition(&current_place, &transition_id).map(|p| *p == new_place).unwrap_or(false) {
+                return Err(async_graphql::Error::new("Invalid transition"));
+            }
+            
+            // Update token data if provided
+            if let Some(data) = input.data {
+                token.data = data;
+            }
+            
+            // Regular transition
             token.transition_to(new_place, transition_id);
             let updated_token = storage.update_token(token).await
                 .map_err(|e| async_graphql::Error::new(format!("Failed to update token: {}", e)))?;

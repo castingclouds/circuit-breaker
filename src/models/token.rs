@@ -379,7 +379,7 @@ impl Token {
     
     /// Get NATS subject for this token's current place
     pub fn nats_subject_for_place(&self) -> String {
-        format!("cb.workflows.{}.places.{}.tokens", self.workflow_id, self.place.as_str())
+        format!("cb.workflows.{}.places.{}.tokens.{}", self.workflow_id, self.place.as_str(), self.id)
     }
     
     /// Add a transition record for NATS tracking

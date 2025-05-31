@@ -76,3 +76,11 @@ path = "examples/rust/places_ai_agent_demo.rs"
 [[example]]
 name = "nats_demo"
 path = "examples/rust/nats_demo.rs"
+
+[[example]]
+name = "nats_timing_test"
+path = "examples/nats_timing_test.rs"
+
+[[example]]
+name = "nats_debug_token_search"
+path = "examples/nats_debug_token_search.rs"
