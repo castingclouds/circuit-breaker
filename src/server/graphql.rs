@@ -16,8 +16,9 @@ use tower_http::cors::CorsLayer;
 use tracing::{info, debug};
 
 use crate::engine::{
-    graphql::{Query, Mutation, Subscription, create_schema_with_storage, create_schema_with_agents},
+    graphql::{Query, Mutation, Subscription, create_schema_with_storage, create_schema_with_agents, create_schema_with_nats, create_schema_with_nats_and_agents},
     storage::{InMemoryStorage, WorkflowStorage},
+    nats_storage::{NATSStorage, NATSStorageConfig, NATSStorageWrapper},
     agents::{AgentEngine, AgentStorage, InMemoryAgentStorage, AgentEngineConfig},
     rules::RulesEngine,
 };
@@ -49,6 +50,7 @@ pub struct GraphQLServer {
     storage: Box<dyn WorkflowStorage>,
     agent_storage: Option<std::sync::Arc<dyn AgentStorage>>,
     agent_engine: Option<AgentEngine>,
+    nats_storage: Option<std::sync::Arc<NATSStorage>>,
 }
 
 impl GraphQLServer {
@@ -58,6 +60,7 @@ impl GraphQLServer {
             storage: Box::new(InMemoryStorage::default()),
             agent_storage: None,
             agent_engine: None,
+            nats_storage: None,
         }
     }
 
@@ -92,16 +95,32 @@ impl GraphQLServer {
         self
     }
 
+    pub fn with_nats_storage(mut self, nats_storage: std::sync::Arc<NATSStorage>) -> Self {
+        self.nats_storage = Some(nats_storage);
+        self
+    }
+
     pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Add default workflows
         self.add_default_workflows().await?;
         
-        let schema = if let (Some(agent_storage), Some(agent_engine)) = (self.agent_storage, self.agent_engine) {
-            info!("🤖 Starting server with AI agent support");
-            create_schema_with_agents(self.storage, agent_storage, agent_engine)
-        } else {
-            info!("📋 Starting server with basic workflow support");
-            create_schema_with_storage(self.storage)
+        let schema = match (self.nats_storage, self.agent_storage, self.agent_engine) {
+            (Some(nats_storage), Some(agent_storage), Some(agent_engine)) => {
+                info!("🤖 Starting server with NATS storage and AI agent support");
+                create_schema_with_nats_and_agents(nats_storage, agent_storage, agent_engine)
+            },
+            (Some(nats_storage), _, _) => {
+                info!("📡 Starting server with NATS storage support");
+                create_schema_with_nats(nats_storage)
+            },
+            (None, Some(agent_storage), Some(agent_engine)) => {
+                info!("🤖 Starting server with AI agent support");
+                create_schema_with_agents(self.storage, agent_storage, agent_engine)
+            },
+            (None, _, _) => {
+                info!("📋 Starting server with basic workflow support");
+                create_schema_with_storage(self.storage)
+            }
         };
         
         let app_state = Arc::new(RwLock::new(schema));
@@ -281,6 +300,20 @@ impl GraphQLServerBuilder {
     pub fn with_agents(mut self) -> Self {
         self.server = self.server.with_agents();
         self
+    }
+
+    pub async fn with_nats(mut self, nats_url: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let nats_config = NATSStorageConfig {
+            nats_urls: vec![nats_url.to_string()],
+            ..Default::default()
+        };
+        
+        let nats_storage = std::sync::Arc::new(NATSStorage::new(nats_config).await?);
+        let storage_wrapper = NATSStorageWrapper::new(nats_storage.clone());
+        
+        self.server = self.server.with_storage(Box::new(storage_wrapper));
+        self.server = self.server.with_nats_storage(nats_storage);
+        Ok(self)
     }
 
     pub async fn build_and_run(self) -> Result<(), Box<dyn std::error::Error>> {

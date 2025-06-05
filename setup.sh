@@ -94,6 +94,64 @@ else
     print_success ".env file already exists"
 fi
 
+# Step 3.5: Configure storage backend
+print_status "Configuring storage backend..."
+echo ""
+echo "Storage options:"
+echo "  1. In-memory (default) - Fast, no persistence"
+echo "  2. NATS JetStream - Distributed, persistent"
+echo ""
+read -p "Select storage backend [1-2] (default: 1): " STORAGE_CHOICE
+
+case "${STORAGE_CHOICE:-1}" in
+    2)
+        print_status "Configuring NATS storage..."
+        
+        # Check if NATS is running
+        if curl -s http://localhost:8222/varz > /dev/null 2>&1; then
+            print_success "NATS server detected on localhost:8222"
+        else
+            print_warning "NATS server not detected. You'll need to start it manually:"
+            echo "  nats-server --jetstream --http_port 8222"
+            echo "  Or with Docker: docker run -p 4222:4222 -p 8222:8222 nats:alpine --jetstream --http_port 8222"
+        fi
+        
+        # Set environment variables for NATS
+        export STORAGE_BACKEND=nats
+        export NATS_URL=nats://localhost:4222
+        
+        # Add to .env file for persistence
+        if ! grep -q "STORAGE_BACKEND" .env; then
+            echo "" >> .env
+            echo "# Storage Configuration" >> .env
+            echo "STORAGE_BACKEND=nats" >> .env
+            echo "NATS_URL=nats://localhost:4222" >> .env
+        else
+            sed -i '' 's/STORAGE_BACKEND=.*/STORAGE_BACKEND=nats/' .env
+            if ! grep -q "NATS_URL" .env; then
+                echo "NATS_URL=nats://localhost:4222" >> .env
+            fi
+        fi
+        
+        print_success "NATS storage configured and saved to .env"
+        echo "  STORAGE_BACKEND=nats"
+        echo "  NATS_URL=nats://localhost:4222"
+        ;;
+    1|*)
+        print_success "In-memory storage configured (default)"
+        export STORAGE_BACKEND=memory
+        
+        # Add to .env file for persistence
+        if ! grep -q "STORAGE_BACKEND" .env; then
+            echo "" >> .env
+            echo "# Storage Configuration" >> .env
+            echo "STORAGE_BACKEND=memory" >> .env
+        else
+            sed -i '' 's/STORAGE_BACKEND=.*/STORAGE_BACKEND=memory/' .env
+        fi
+        ;;
+esac
+
 # Step 4: Build Rust project
 print_status "Building Rust project..."
 if cargo build; then
@@ -123,59 +181,40 @@ else
     print_warning "Some tests failed, but setup can continue"
 fi
 
-# Step 7: Create helpful aliases/scripts
-print_status "Creating helpful run scripts..."
-
 # Make setup script executable
 chmod +x setup.sh
-
-cat > run-server.sh << 'EOF'
-#!/bin/bash
-echo "🚀 Starting Circuit Breaker Server..."
-cargo run --bin server
-EOF
-chmod +x run-server.sh
-
-cat > run-demo.sh << 'EOF'
-#!/bin/bash
-echo "🤖 Running Places AI Agent Demo (Anthropic)..."
-echo "Make sure you've configured ANTHROPIC_API_KEY in .env file!"
-echo ""
-cargo run --example places_ai_agent_demo
-EOF
-chmod +x run-demo.sh
-
-if [ "$HAS_NODE" = true ]; then
-cat > run-ts-demo.sh << 'EOF'
-#!/bin/bash
-echo "🤖 Running TypeScript Places AI Agent Demo (Anthropic)..."
-echo "Make sure you've configured ANTHROPIC_API_KEY in .env file!"
-echo ""
-cd examples/typescript && npm run demo:agents-simple
-EOF
-chmod +x run-ts-demo.sh
-fi
-
-print_success "Created helper scripts:"
-print_success "  ./run-server.sh    - Start the GraphQL server"
-print_success "  ./run-demo.sh      - Run Rust agent demo"
-if [ "$HAS_NODE" = true ]; then
-    print_success "  ./run-ts-demo.sh   - Run TypeScript agent demo"
-fi
 
 echo ""
 echo "🎉 Setup completed successfully!"
 echo ""
 echo "Next steps:"
 echo "1. Configure ANTHROPIC_API_KEY in .env file (if using AI agents)"
-echo "2. Start the server: ./run-server.sh"
-echo "3. In another terminal, run demos: ./run-demo.sh"
+if [ "${STORAGE_BACKEND}" = "nats" ]; then
+    echo "2. Start NATS server: nats-server --jetstream --http_port 8222"
+    echo "3. Start Circuit Breaker: cargo run --bin server"
+    echo "4. Run NATS demo: cargo run --example nats_demo"
+else
+    echo "2. Start the server: cargo run --bin server"
+    echo "3. In another terminal, run demos: cargo run --example places_ai_agent_demo"
+fi
+echo ""
+echo "Storage Backend: ${STORAGE_BACKEND:-memory}"
+if [ "${STORAGE_BACKEND}" = "nats" ]; then
+    echo "NATS URL: ${NATS_URL:-nats://localhost:4222}"
+fi
 echo ""
 echo "Documentation:"
 echo "  README.md                       - Project overview"
 echo "  docs/AGENT_CONFIGURATION.md    - AI agent configuration"
 echo "  docs/FUNCTION_RUNNER.md        - Function execution"
 echo "  docs/RULES_ENGINE.md           - Rules and conditions"
+echo "  docs/NATS_IMPLEMENTATION.md    - NATS integration details"
+echo ""
+echo "Storage Options:"
+echo "  • Memory: Fast, ephemeral storage (good for development)"
+echo "  • NATS: Distributed, persistent storage (good for production)"
+echo ""
+echo "To switch storage backends later, run ./setup.sh again"
 echo ""
 echo "GraphQL Playground will be available at: http://localhost:4000"
 echo ""

@@ -117,21 +117,28 @@ pub use models::{
     WorkflowDefinition, // Defines the workflow structure
     TransitionDefinition, // Defines how states connect
     HistoryEvent,       // Records state transition history
-    TokenMetadata       // Key-value metadata storage
+    TokenMetadata,      // Key-value metadata storage
+    TransitionRecord    // NATS-specific transition tracking
 };
 
 // Re-export engine types for convenience
 // These are the GraphQL and storage implementations
 pub use engine::{
     storage::{WorkflowStorage, InMemoryStorage}, // Storage abstraction and implementation
+    nats_storage::{NATSStorage, NATSStorageWrapper, NATSStorageConfig, WorkflowStreamManager}, // NATS storage implementation
     rules::{RulesEngine, WorkflowEvaluationResult}, // Rules engine for transition evaluation
     graphql::{
         // GraphQL types for the API
         WorkflowGQL, TokenGQL, TransitionGQL, HistoryEventGQL,
+        // NATS-specific GraphQL types
+        NATSTokenGQL, TransitionRecordGQL,
         // Input types for GraphQL mutations
         WorkflowDefinitionInput, TokenCreateInput, TransitionFireInput,
+        // NATS-specific input types
+        CreateWorkflowInstanceInput, TransitionTokenWithNATSInput, TokensInPlaceInput,
         // Schema creation functions
-        CircuitBreakerSchema, create_schema, create_schema_with_storage
+        CircuitBreakerSchema, create_schema, create_schema_with_storage,
+        create_schema_with_nats, create_schema_with_nats_and_agents
     }
 };
 
@@ -190,10 +197,9 @@ pub enum CircuitBreakerError {
     InvalidInput(String),
     
     /// Storage-related errors
-    /// The `#[from]` attribute enables automatic conversion from `async_nats::Error`
-    /// This means you can use `?` operator to convert these errors automatically
+    /// Using anyhow::Error for flexible error handling with NATS and other storage backends
     #[error("Storage error: {0}")]
-    Storage(#[from] async_nats::Error),
+    Storage(#[from] anyhow::Error),
     
     /// JSON serialization/deserialization errors
     /// Also uses `#[from]` for automatic conversion

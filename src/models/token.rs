@@ -28,6 +28,34 @@ use uuid::Uuid;                  // UUID generation and handling
 
 use super::place::{PlaceId, TransitionId}; // Import from sibling module
 
+/// NATS-specific transition record for detailed transition tracking
+/// 
+/// This struct extends the basic HistoryEvent with NATS-specific metadata
+/// for distributed workflow tracking and debugging.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransitionRecord {
+    /// The place the token was in before the transition
+    pub from_place: PlaceId,
+    
+    /// The place the token moved to after the transition
+    pub to_place: PlaceId,
+    
+    /// Which transition was fired to cause this state change
+    pub transition_id: TransitionId,
+    
+    /// When this transition occurred (UTC timestamp)
+    pub timestamp: DateTime<Utc>,
+    
+    /// What triggered this transition (agent, function, manual, etc.)
+    pub triggered_by: Option<String>,
+    
+    /// NATS sequence number when this transition was recorded
+    pub nats_sequence: Option<u64>,
+    
+    /// Additional transition-specific metadata
+    pub metadata: Option<serde_json::Value>,
+}
+
 /// Generic token metadata - key-value store for any additional data
 /// 
 /// ## Rust Learning Notes:
@@ -130,6 +158,29 @@ pub struct Token {
     /// Complete history of all state transitions
     /// This provides full audit trail of the token's journey
     pub history: Vec<HistoryEvent>,
+    
+    /// NATS-specific fields for streaming support
+    /// These fields are optional to maintain backward compatibility
+    
+    /// NATS stream sequence number for this token message
+    /// Used for ordering and deduplication in NATS streams
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nats_sequence: Option<u64>,
+    
+    /// NATS timestamp when the message was stored
+    /// Provides NATS-level timestamping for distributed consistency
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nats_timestamp: Option<DateTime<Utc>>,
+    
+    /// NATS subject where this token is currently stored
+    /// Format: workflows.{workflow_id}.places.{place_id}.tokens
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nats_subject: Option<String>,
+    
+    /// Transition history specifically for NATS tracking
+    /// Contains additional NATS-specific metadata for each transition
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub transition_history: Vec<TransitionRecord>,
 }
 
 impl Token {
@@ -175,6 +226,12 @@ impl Token {
             
             // Start with empty history - no transitions yet
             history: vec![], // vec![] is a macro to create an empty vector
+            
+            // Initialize NATS fields as None/empty for backward compatibility
+            nats_sequence: None,
+            nats_timestamp: None,
+            nats_subject: None,
+            transition_history: vec![],
         }
     }
 
@@ -308,6 +365,94 @@ impl Token {
     pub fn last_transition(&self) -> Option<&HistoryEvent> {
         // Vec.last() returns Option<&T> for the last element
         self.history.last()
+    }
+
+    /// NATS-specific methods for streaming support
+    
+    /// Set NATS metadata for this token
+    pub fn set_nats_metadata(&mut self, sequence: u64, timestamp: DateTime<Utc>, subject: String) {
+        self.nats_sequence = Some(sequence);
+        self.nats_timestamp = Some(timestamp);
+        self.nats_subject = Some(subject);
+        self.updated_at = Utc::now();
+    }
+    
+    /// Get NATS subject for this token's current place
+    pub fn nats_subject_for_place(&self) -> String {
+        format!("cb.workflows.{}.places.{}.tokens.{}", self.workflow_id, self.place.as_str(), self.id)
+    }
+    
+    /// Add a transition record for NATS tracking
+    pub fn add_transition_record(&mut self, record: TransitionRecord) {
+        self.transition_history.push(record);
+        self.updated_at = Utc::now();
+    }
+    
+    /// Create a transition record from a regular transition
+    pub fn create_transition_record(
+        &self,
+        from: PlaceId,
+        to: PlaceId,
+        transition_id: TransitionId,
+        triggered_by: Option<String>,
+        nats_sequence: Option<u64>,
+    ) -> TransitionRecord {
+        TransitionRecord {
+            from_place: from,
+            to_place: to,
+            transition_id,
+            timestamp: Utc::now(),
+            triggered_by,
+            nats_sequence,
+            metadata: None,
+        }
+    }
+    
+    /// Enhanced transition method that includes NATS tracking
+    pub fn transition_to_with_nats(
+        &mut self, 
+        new_place: PlaceId, 
+        transition_id: TransitionId,
+        triggered_by: Option<String>,
+        nats_sequence: Option<u64>,
+    ) {
+        let old_place = self.place.clone();
+        
+        // Create both regular history event and NATS transition record
+        let history_event = HistoryEvent {
+            timestamp: Utc::now(),
+            transition: transition_id.clone(),
+            from: old_place.clone(),
+            to: new_place.clone(),
+            data: None,
+        };
+        
+        let transition_record = self.create_transition_record(
+            old_place,
+            new_place.clone(),
+            transition_id,
+            triggered_by,
+            nats_sequence,
+        );
+        
+        // Update token state
+        self.history.push(history_event);
+        self.transition_history.push(transition_record);
+        self.place = new_place;
+        self.updated_at = Utc::now();
+        
+        // Update NATS subject for new place
+        self.nats_subject = Some(self.nats_subject_for_place());
+    }
+    
+    /// Check if this token has NATS metadata
+    pub fn has_nats_metadata(&self) -> bool {
+        self.nats_sequence.is_some() && self.nats_timestamp.is_some()
+    }
+    
+    /// Get the most recent transition record
+    pub fn last_transition_record(&self) -> Option<&TransitionRecord> {
+        self.transition_history.last()
     }
 }
 

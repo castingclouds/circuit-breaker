@@ -18,6 +18,12 @@ These TypeScript examples prove that the **Rust backend is truly generic**:
 
 In the main project directory:
 ```bash
+# Option 1: In-memory storage (default)
+cargo run --bin server
+
+# Option 2: NATS storage (for distributed workflows)
+export STORAGE_BACKEND=nats
+export NATS_URL=nats://localhost:4222
 cargo run --bin server
 ```
 
@@ -47,6 +53,9 @@ npm run demo:rules
 
 # Advanced GraphQL client features
 npm run demo:graphql
+
+# NATS integration demonstration
+npm run demo:nats
 
 # Or run the default function demo
 npm run demo
@@ -156,6 +165,35 @@ Shows direct GraphQL operations, performance testing, and advanced client featur
 **Run:**
 ```bash
 npm run demo:graphql
+```
+
+### `nats_demo.ts` - **NATS Integration Demo**
+
+Demonstrates NATS JetStream storage backend integration with TypeScript clients.
+
+**Key Features:**
+- ✅ **NATS-enhanced GraphQL mutations** (`createWorkflowInstance`, `transitionTokenWithNats`)
+- ✅ **Real-time token tracking** with NATS sequence numbers and subjects
+- ✅ **Event-driven transitions** with NATS event publishing
+- ✅ **Place-based token queries** optimized for NATS streams
+- ✅ **Transition history** with NATS metadata tracking
+- ✅ **TypeScript client library** for NATS-specific operations
+- ✅ **Distributed storage backend** demonstration
+
+**Prerequisites:**
+```bash
+# Start NATS server with JetStream
+docker run -p 4222:4222 -p 8222:8222 nats:alpine --jetstream --http_port 8222
+
+# Start Circuit Breaker server with NATS storage
+export STORAGE_BACKEND=nats
+export NATS_URL=nats://localhost:4222
+cargo run --bin server
+```
+
+**Run:**
+```bash
+npm run demo:nats
 ```
 
 ## 🏗️ Architecture Comparison

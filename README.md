@@ -113,10 +113,12 @@ token.transition_to(StateId::from("review"), TransitionId::from("submit"));
 - **Type Safety**: Compile-time workflow validation
 
 ### Infrastructure
-- **Message Bus**: NATS JetStream for distributed state
+- **Message Bus/Eventing**: NATS JetStream for distributed workflows and token persistence
 - **API**: GraphQL (async-graphql) for polyglot clients
 - **Web**: Axum for high-performance HTTP
 - **Storage**: Pluggable backends (NATS KV, PostgreSQL, etc.)
+
+**NATS Required**: The distributed workflow features require a NATS server with JetStream enabled. See [NATS Setup](#nats-server-setup-docker-with-rancher-desktop) below for quick Docker setup.
 
 ## ⚙️ Environment Configuration
 
@@ -159,6 +161,84 @@ cargo build
 - **Ollama** (Local): Self-hosted (no API key needed)
 
 **Note**: Only Anthropic API key is required by default. Other providers are available as alternatives. API keys are only needed for AI Agent features - basic workflow functionality works without them.
+
+### NATS Server Setup (Docker with Rancher Desktop)
+
+For the NATS JetStream integration, you'll need a NATS server running. The easiest way is using Docker with Rancher Desktop:
+
+#### Option 1: Quick Start (Single Container)
+```bash
+# Start NATS with JetStream enabled
+docker run -d \
+  --name nats-jetstream \
+  -p 4222:4222 \
+  -p 8222:8222 \
+  nats:latest \
+  -js \
+  -m 8222
+
+# Verify NATS is running
+docker logs nats-jetstream
+```
+
+#### Option 2: Production Setup (Docker Compose)
+Create a `docker-compose.nats.yml` file:
+
+```yaml
+version: '3.8'
+services:
+  nats:
+    image: nats:latest
+    container_name: nats-jetstream
+    ports:
+      - "4222:4222"    # NATS client port
+      - "8222:8222"    # NATS monitoring port
+      - "6222:6222"    # NATS cluster port
+    command: ["-js", "-m", "8222", "-D"]
+    volumes:
+      - nats-storage:/data
+    restart: unless-stopped
+
+volumes:
+  nats-storage:
+```
+
+```bash
+# Start NATS with persistence
+docker-compose -f docker-compose.nats.yml up -d
+
+# Check NATS status
+curl http://localhost:8222/varz
+```
+
+#### Environment Configuration
+Add to your `.env` file:
+
+```bash
+# NATS Configuration
+NATS_URL=nats://localhost:4222
+NATS_CLUSTER_NAME=circuit-breaker-cluster
+NATS_ENABLE_JETSTREAM=true
+```
+
+#### Verify Setup
+```bash
+# Install NATS CLI (optional but helpful)
+# macOS with Homebrew:
+brew install nats-io/nats-tools/nats
+
+# Test connection
+nats --server=localhost:4222 server info
+
+# List JetStream streams (should be empty initially)
+nats --server=localhost:4222 stream list
+```
+
+**Rancher Desktop Notes:**
+- Ensure Rancher Desktop is running with Docker (containerd) enabled
+- Ports 4222 and 8222 will be accessible from your host machine
+- Data persists in Docker volumes between container restarts
+- Use `docker ps` to verify the container is running
 
 ## 🚀 Quick Start
 
@@ -623,6 +703,7 @@ Each language directory will contain **client examples only**:
 
 - **[API Reference](docs/api.md)** - Complete GraphQL schema documentation
 - **[Architecture Guide](docs/architecture.md)** - Deep dive into Petri Net workflow engine
+- **[NATS Implementation](docs/NATS_IMPLEMENTATION.md)** - NATS JetStream integration for distributed workflows
 - **[Migration Guide](docs/migration.md)** - Moving from DAG-based systems
 - **[Performance Tuning](docs/performance.md)** - Optimization and scaling strategies
 
@@ -657,7 +738,9 @@ open http://localhost:4000/graphql
 - [x] Comprehensive client examples and documentation
 
 ### Phase 2: Distributed Infrastructure (🚧 In Progress)
-- [ ] NATS JetStream integration for persistence
+- [x] NATS JetStream integration for persistence
+- [x] Dynamic workflow stream creation
+- [x] Token transitions via NATS messaging
 - [ ] Horizontal scaling across multiple nodes
 - [ ] Real-time subscriptions and event streaming
 - [ ] Performance benchmarking and optimization

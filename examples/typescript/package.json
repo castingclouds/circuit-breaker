@@ -13,6 +13,7 @@
     "demo:graphql": "tsx graphql_client.ts",
     "demo:agents": "tsx places_ai_agent_demo.ts",
     "demo:agents-simple": "tsx places_ai_agent_demo_simple.ts",
+    "demo:nats": "tsx nats_demo.ts",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
