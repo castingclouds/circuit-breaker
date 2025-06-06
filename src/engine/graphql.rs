@@ -89,7 +89,7 @@ pub struct AgentDefinitionGQL {
     pub id: String,
     pub name: String,
     pub description: String,
-    pub llm_provider: LLMProviderGQL,
+    pub llm_provider: AgentLLMProviderGQL,
     pub llm_config: LLMConfigGQL,
     pub prompts: AgentPromptsGQL,
     pub capabilities: Vec<String>,
@@ -99,7 +99,7 @@ pub struct AgentDefinitionGQL {
 }
 
 #[derive(SimpleObject, Debug, Clone)]
-pub struct LLMProviderGQL {
+pub struct AgentLLMProviderGQL {
     pub provider_type: String,
     pub model: String,
     pub base_url: Option<String>,
@@ -198,6 +198,132 @@ pub struct AgentGQL {
     pub status: AgentStatus,
 }
 
+// LLM Router GraphQL Types
+#[derive(SimpleObject, Debug, Clone)]
+pub struct LLMProviderGQL {
+    pub id: ID,
+    pub provider_type: String,
+    pub name: String,
+    pub base_url: String,
+    pub models: Vec<LLMModelGQL>,
+    pub health_status: LLMProviderHealthGQL,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct LLMModelGQL {
+    pub id: String,
+    pub name: String,
+    pub max_tokens: i32,
+    pub context_window: i32,
+    pub cost_per_input_token: f64,
+    pub cost_per_output_token: f64,
+    pub supports_streaming: bool,
+    pub supports_function_calling: bool,
+    pub capabilities: Vec<String>,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct LLMProviderHealthGQL {
+    pub is_healthy: bool,
+    pub last_check: String,
+    pub error_rate: f64,
+    pub average_latency_ms: i32,
+    pub consecutive_failures: i32,
+    pub last_error: Option<String>,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct LLMRequestGQL {
+    pub id: ID,
+    pub model: String,
+    pub messages: Vec<ChatMessageGQL>,
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<i32>,
+    pub stream: bool,
+    pub user: Option<String>,
+    pub project_id: Option<String>,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct ChatMessageGQL {
+    pub role: String,
+    pub content: String,
+    pub name: Option<String>,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct LLMResponseGQL {
+    pub id: String,
+    pub model: String,
+    pub choices: Vec<LLMChoiceGQL>,
+    pub usage: TokenUsageGQL,
+    pub provider: String,
+    pub routing_info: RoutingInfoGQL,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct LLMChoiceGQL {
+    pub index: i32,
+    pub message: ChatMessageGQL,
+    pub finish_reason: Option<String>,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct TokenUsageGQL {
+    pub prompt_tokens: i32,
+    pub completion_tokens: i32,
+    pub total_tokens: i32,
+    pub estimated_cost: f64,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct RoutingInfoGQL {
+    pub selected_provider: String,
+    pub routing_strategy: String,
+    pub latency_ms: i32,
+    pub retry_count: i32,
+    pub fallback_used: bool,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct CostInfoGQL {
+    pub request_id: ID,
+    pub provider: String,
+    pub model: String,
+    pub input_tokens: i32,
+    pub output_tokens: i32,
+    pub cost_usd: f64,
+    pub timestamp: String,
+    pub user_id: Option<String>,
+    pub project_id: Option<String>,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct BudgetStatusGQL {
+    pub budget_id: String,
+    pub limit: f64,
+    pub used: f64,
+    pub percentage_used: f64,
+    pub is_exhausted: bool,
+    pub is_warning: bool,
+    pub remaining: f64,
+    pub message: String,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct CostAnalyticsGQL {
+    pub total_cost: f64,
+    pub total_tokens: i32,
+    pub average_cost_per_token: f64,
+    pub provider_breakdown: serde_json::Value,
+    pub model_breakdown: serde_json::Value,
+    pub daily_costs: serde_json::Value,
+    pub period_start: String,
+    pub period_end: String,
+}
+
 // Input types for mutations
 #[derive(InputObject, Debug)]
 pub struct WorkflowDefinitionInput {
@@ -216,6 +342,68 @@ pub struct TransitionDefinitionInput {
     pub to_place: String,
     pub conditions: Vec<String>,
     pub description: Option<String>,
+}
+
+// LLM Router Input Types
+#[derive(InputObject, Debug)]
+pub struct LLMChatCompletionInput {
+    pub model: String,
+    pub messages: Vec<ChatMessageInput>,
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<i32>,
+    pub top_p: Option<f64>,
+    pub frequency_penalty: Option<f64>,
+    pub presence_penalty: Option<f64>,
+    pub stop: Option<Vec<String>>,
+    pub stream: Option<bool>,
+    pub user: Option<String>,
+    pub project_id: Option<String>,
+}
+
+#[derive(InputObject, Debug)]
+pub struct ChatMessageInput {
+    pub role: String,
+    pub content: String,
+    pub name: Option<String>,
+}
+
+#[derive(InputObject, Debug)]
+pub struct LLMProviderConfigInput {
+    pub provider_type: String,
+    pub name: String,
+    pub base_url: String,
+    pub api_key_id: String,
+    pub models: Vec<LLMModelInput>,
+}
+
+#[derive(InputObject, Debug)]
+pub struct LLMModelInput {
+    pub id: String,
+    pub name: String,
+    pub max_tokens: i32,
+    pub context_window: i32,
+    pub cost_per_input_token: f64,
+    pub cost_per_output_token: f64,
+    pub supports_streaming: bool,
+    pub supports_function_calling: bool,
+    pub capabilities: Vec<String>,
+}
+
+#[derive(InputObject, Debug)]
+pub struct BudgetInput {
+    pub user_id: Option<String>,
+    pub project_id: Option<String>,
+    pub limit: f64,
+    pub period: String,
+    pub warning_threshold: f64,
+}
+
+#[derive(InputObject, Debug)]
+pub struct CostAnalyticsInput {
+    pub user_id: Option<String>,
+    pub project_id: Option<String>,
+    pub start_date: String,
+    pub end_date: String,
 }
 
 #[derive(InputObject, Debug)]
@@ -253,7 +441,7 @@ pub struct AgentCreateInput {
 pub struct AgentDefinitionInput {
     pub name: String,
     pub description: String,
-    pub llm_provider: LLMProviderInput,
+    pub llm_provider: AgentLLMProviderInput,
     pub llm_config: LLMConfigInput,
     pub prompts: AgentPromptsInput,
     pub capabilities: Vec<String>,
@@ -261,7 +449,7 @@ pub struct AgentDefinitionInput {
 }
 
 #[derive(InputObject, Debug)]
-pub struct LLMProviderInput {
+pub struct AgentLLMProviderInput {
     pub provider_type: String,
     pub model: String,
     pub api_key: String,
@@ -389,7 +577,7 @@ impl From<&AgentDefinition> for AgentDefinitionGQL {
             id: agent.id.as_str().to_string(),
             name: agent.name.clone(),
             description: agent.description.clone(),
-            llm_provider: LLMProviderGQL::from(&agent.llm_provider),
+            llm_provider: AgentLLMProviderGQL::from(&agent.llm_provider),
             llm_config: LLMConfigGQL::from(&agent.llm_config),
             prompts: AgentPromptsGQL::from(&agent.prompts),
             capabilities: agent.capabilities.clone(),
@@ -400,30 +588,30 @@ impl From<&AgentDefinition> for AgentDefinitionGQL {
     }
 }
 
-impl From<&LLMProvider> for LLMProviderGQL {
+impl From<&LLMProvider> for AgentLLMProviderGQL {
     fn from(provider: &LLMProvider) -> Self {
         match provider {
-            LLMProvider::OpenAI { model, base_url, .. } => LLMProviderGQL {
+            LLMProvider::OpenAI { model, base_url, .. } => AgentLLMProviderGQL {
                 provider_type: "openai".to_string(),
                 model: model.clone(),
                 base_url: base_url.clone(),
             },
-            LLMProvider::Anthropic { model, base_url, .. } => LLMProviderGQL {
+            LLMProvider::Anthropic { model, api_key, .. } => AgentLLMProviderGQL {
                 provider_type: "anthropic".to_string(),
                 model: model.clone(),
-                base_url: base_url.clone(),
+                base_url: None,
             },
-            LLMProvider::Google { model, .. } => LLMProviderGQL {
+            LLMProvider::Google { model, api_key, .. } => AgentLLMProviderGQL {
                 provider_type: "google".to_string(),
                 model: model.clone(),
                 base_url: None,
             },
-            LLMProvider::Ollama { model, base_url } => LLMProviderGQL {
+            LLMProvider::Ollama { model, base_url, .. } => AgentLLMProviderGQL {
                 provider_type: "ollama".to_string(),
                 model: model.clone(),
                 base_url: Some(base_url.clone()),
             },
-            LLMProvider::Custom { model, endpoint, .. } => LLMProviderGQL {
+            LLMProvider::Custom { model, endpoint, .. } => AgentLLMProviderGQL {
                 provider_type: "custom".to_string(),
                 model: model.clone(),
                 base_url: Some(endpoint.clone()),
@@ -815,6 +1003,120 @@ impl Query {
                 Err(e) => Err(async_graphql::Error::new(format!("Failed to find token: {}", e))),
             }
         }
+    }
+
+    /// List all configured LLM providers
+    async fn llm_providers(&self, _ctx: &Context<'_>) -> async_graphql::Result<Vec<LLMProviderGQL>> {
+        // Create router and get providers
+        let router = crate::llm::router::LLMRouter::new().await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to initialize router: {}", e)))?;
+        
+        let providers = router.get_providers().await;
+        let health_status = router.get_health_status().await;
+        
+        Ok(providers.into_iter().map(|provider| {
+            let health = health_status.get(&provider.provider_type)
+                .cloned()
+                .unwrap_or_default();
+            
+            LLMProviderGQL {
+                id: ID(provider.id.to_string()),
+                provider_type: provider.provider_type.to_string(),
+                name: provider.name,
+                base_url: provider.base_url,
+                models: provider.models.into_iter().map(|model| LLMModelGQL {
+                    id: model.id,
+                    name: model.name,
+                    max_tokens: model.max_tokens as i32,
+                    context_window: model.context_window as i32,
+                    cost_per_input_token: model.cost_per_input_token,
+                    cost_per_output_token: model.cost_per_output_token,
+                    supports_streaming: model.supports_streaming,
+                    supports_function_calling: model.supports_function_calling,
+                    capabilities: model.capabilities.into_iter().map(|c| format!("{:?}", c)).collect(),
+                }).collect(),
+                health_status: LLMProviderHealthGQL {
+                    is_healthy: health.is_healthy,
+                    last_check: health.last_check.to_rfc3339(),
+                    error_rate: health.error_rate,
+                    average_latency_ms: health.average_latency_ms as i32,
+                    consecutive_failures: health.consecutive_failures as i32,
+                    last_error: health.last_error,
+                },
+                created_at: provider.created_at.to_rfc3339(),
+                updated_at: provider.updated_at.to_rfc3339(),
+            }
+        }).collect())
+    }
+
+    /// Get LLM provider by ID
+    async fn llm_provider(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<LLMProviderGQL>> {
+        // Mock implementation
+        if id == "openai" {
+            Ok(Some(LLMProviderGQL {
+                id: ID("openai".to_string()),
+                provider_type: "openai".to_string(),
+                name: "OpenAI".to_string(),
+                base_url: "https://api.openai.com/v1".to_string(),
+                models: vec![],
+                health_status: LLMProviderHealthGQL {
+                    is_healthy: true,
+                    last_check: chrono::Utc::now().to_rfc3339(),
+                    error_rate: 0.01,
+                    average_latency_ms: 800,
+                    consecutive_failures: 0,
+                    last_error: None,
+                },
+                created_at: chrono::Utc::now().to_rfc3339(),
+                updated_at: chrono::Utc::now().to_rfc3339(),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get budget status for user or project
+    async fn budget_status(&self, ctx: &Context<'_>, user_id: Option<String>, project_id: Option<String>) -> async_graphql::Result<BudgetStatusGQL> {
+        // Mock implementation
+        Ok(BudgetStatusGQL {
+            budget_id: if let Some(pid) = project_id { 
+                format!("project:{}", pid) 
+            } else { 
+                format!("user:{}", user_id.unwrap_or_else(|| "default".to_string())) 
+            },
+            limit: 100.0,
+            used: 25.50,
+            percentage_used: 0.255,
+            is_exhausted: false,
+            is_warning: false,
+            remaining: 74.50,
+            message: "Budget healthy: $25.50 of $100.00 used".to_string(),
+        })
+    }
+
+    /// Get cost analytics for a time period
+    async fn cost_analytics(&self, ctx: &Context<'_>, input: CostAnalyticsInput) -> async_graphql::Result<CostAnalyticsGQL> {
+        // Mock implementation
+        Ok(CostAnalyticsGQL {
+            total_cost: 125.75,
+            total_tokens: 50000,
+            average_cost_per_token: 0.002515,
+            provider_breakdown: serde_json::json!({
+                "openai": 75.25,
+                "anthropic": 50.50
+            }),
+            model_breakdown: serde_json::json!({
+                "gpt-4": 75.25,
+                "claude-3-opus": 50.50
+            }),
+            daily_costs: serde_json::json!({
+                "2024-01-01": 25.50,
+                "2024-01-02": 30.25,
+                "2024-01-03": 70.00
+            }),
+            period_start: input.start_date,
+            period_end: input.end_date,
+        })
     }
 }
 
@@ -1318,6 +1620,155 @@ impl Mutation {
             Ok(NATSTokenGQL::from(&updated_token))
         }
     }
+
+    /// Send LLM chat completion request
+    async fn llm_chat_completion(
+        &self,
+        _ctx: &Context<'_>,
+        input: LLMChatCompletionInput,
+    ) -> async_graphql::Result<LLMResponseGQL> {
+        // Create router
+        let router = crate::llm::router::LLMRouter::new().await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to initialize router: {}", e)))?;
+        
+        // Convert GraphQL input to LLM request
+        let llm_request = crate::llm::LLMRequest {
+            id: uuid::Uuid::new_v4(),
+            model: input.model,
+            messages: input.messages.into_iter().map(|msg| crate::llm::ChatMessage {
+                role: match msg.role.as_str() {
+                    "system" => crate::llm::MessageRole::System,
+                    "user" => crate::llm::MessageRole::User,
+                    "assistant" => crate::llm::MessageRole::Assistant,
+                    "function" => crate::llm::MessageRole::Function,
+                    _ => crate::llm::MessageRole::User,
+                },
+                content: msg.content,
+                name: msg.name,
+                function_call: None,
+            }).collect(),
+            temperature: input.temperature.map(|t| t as f32),
+            max_tokens: input.max_tokens.map(|t| t as u32),
+            top_p: input.top_p.map(|p| p as f32),
+            frequency_penalty: input.frequency_penalty.map(|p| p as f32),
+            presence_penalty: input.presence_penalty.map(|p| p as f32),
+            stop: input.stop,
+            stream: input.stream.unwrap_or(false),
+            functions: None,
+            function_call: None,
+            user: input.user,
+            metadata: {
+                let mut meta = std::collections::HashMap::new();
+                if let Some(project_id) = input.project_id {
+                    meta.insert("project_id".to_string(), serde_json::Value::String(project_id));
+                }
+                meta
+            },
+        };
+        
+        // Make the actual LLM request
+        let response = router.chat_completion(llm_request).await
+            .map_err(|e| async_graphql::Error::new(format!("LLM request failed: {}", e)))?;
+        
+        // Convert response back to GraphQL format
+        Ok(LLMResponseGQL {
+            id: response.id,
+            model: response.model,
+            choices: response.choices.into_iter().map(|choice| LLMChoiceGQL {
+                index: choice.index as i32,
+                message: ChatMessageGQL {
+                    role: match choice.message.role {
+                        crate::llm::MessageRole::System => "system".to_string(),
+                        crate::llm::MessageRole::User => "user".to_string(),
+                        crate::llm::MessageRole::Assistant => "assistant".to_string(),
+                        crate::llm::MessageRole::Function => "function".to_string(),
+                    },
+                    content: choice.message.content,
+                    name: choice.message.name,
+                },
+                finish_reason: choice.finish_reason,
+            }).collect(),
+            usage: TokenUsageGQL {
+                prompt_tokens: response.usage.prompt_tokens as i32,
+                completion_tokens: response.usage.completion_tokens as i32,
+                total_tokens: response.usage.total_tokens as i32,
+                estimated_cost: response.usage.estimated_cost,
+            },
+            provider: response.provider.to_string(),
+            routing_info: RoutingInfoGQL {
+                selected_provider: response.routing_info.selected_provider.to_string(),
+                routing_strategy: format!("{:?}", response.routing_info.routing_strategy),
+                latency_ms: response.routing_info.latency_ms as i32,
+                retry_count: response.routing_info.retry_count as i32,
+                fallback_used: response.routing_info.fallback_used,
+            },
+        })
+    }
+
+
+
+    /// Configure LLM provider
+    async fn configure_llm_provider(
+        &self,
+        ctx: &Context<'_>,
+        input: LLMProviderConfigInput,
+    ) -> async_graphql::Result<LLMProviderGQL> {
+        // Mock implementation - in real implementation this would store provider config
+        Ok(LLMProviderGQL {
+            id: ID(uuid::Uuid::new_v4().to_string()),
+            provider_type: input.provider_type.clone(),
+            name: input.name.clone(),
+            base_url: input.base_url.clone(),
+            models: input.models.into_iter().map(|model| LLMModelGQL {
+                id: model.id,
+                name: model.name,
+                max_tokens: model.max_tokens,
+                context_window: model.context_window,
+                cost_per_input_token: model.cost_per_input_token,
+                cost_per_output_token: model.cost_per_output_token,
+                supports_streaming: model.supports_streaming,
+                supports_function_calling: model.supports_function_calling,
+                capabilities: model.capabilities,
+            }).collect(),
+            health_status: LLMProviderHealthGQL {
+                is_healthy: true,
+                last_check: chrono::Utc::now().to_rfc3339(),
+                error_rate: 0.0,
+                average_latency_ms: 0,
+                consecutive_failures: 0,
+                last_error: None,
+            },
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        })
+    }
+
+    /// Set budget limits
+    async fn set_budget(
+        &self,
+        ctx: &Context<'_>,
+        input: BudgetInput,
+    ) -> async_graphql::Result<BudgetStatusGQL> {
+        // Mock implementation - in real implementation this would store budget config
+        let budget_id = if let Some(project_id) = input.project_id {
+            format!("project:{}", project_id)
+        } else if let Some(user_id) = input.user_id {
+            format!("user:{}", user_id)
+        } else {
+            "default".to_string()
+        };
+
+        Ok(BudgetStatusGQL {
+            budget_id,
+            limit: input.limit,
+            used: 0.0,
+            percentage_used: 0.0,
+            is_exhausted: false,
+            is_warning: false,
+            remaining: input.limit,
+            message: format!("Budget set to ${:.2}", input.limit),
+        })
+    }
 }
 
 // GraphQL Subscription root (for real-time updates)
@@ -1346,6 +1797,94 @@ impl Subscription {
         // TODO: Implement real-time agent execution streaming
         // For now, return empty stream
         Ok(futures::stream::empty())
+    }
+
+    /// Subscribe to LLM response stream for real-time streaming
+    async fn llm_stream(&self, _ctx: &Context<'_>, _request_id: String) -> async_graphql::Result<impl futures::Stream<Item = String>> {
+        // Create router and real LLM request
+        let router = crate::llm::router::LLMRouter::new().await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to initialize router: {}", e)))?;
+        
+        let llm_request = crate::llm::LLMRequest {
+            id: uuid::Uuid::new_v4(),
+            model: "claude-sonnet-4-20250514".to_string(),
+            messages: vec![crate::llm::ChatMessage {
+                role: crate::llm::MessageRole::User,
+                content: "How much wood would a woodchuck chuck if a woodchuck could chuck wood?".to_string(),
+                name: None,
+                function_call: None,
+            }],
+            temperature: Some(0.7),
+            max_tokens: Some(150),
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            stop: None,
+            stream: true,
+            functions: None,
+            function_call: None,
+            user: None,
+            metadata: std::collections::HashMap::new(),
+        };
+        
+        // Get the real streaming response
+        let stream = router.chat_completion_stream(llm_request).await
+            .map_err(|e| async_graphql::Error::new(format!("LLM streaming request failed: {}", e)))?;
+        
+        // Convert the stream to JSON strings for WebSocket
+        use futures::StreamExt;
+        let json_stream = stream.map(|chunk_result| {
+            match chunk_result {
+                Ok(chunk) => {
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "chunk",
+                        "data": {
+                            "id": chunk.id,
+                            "model": chunk.model,
+                            "choices": chunk.choices.iter().map(|choice| {
+                                serde_json::json!({
+                                    "index": choice.index,
+                                    "delta": {
+                                        "role": match choice.delta.role {
+                                            crate::llm::MessageRole::Assistant => "assistant",
+                                            crate::llm::MessageRole::User => "user",
+                                            crate::llm::MessageRole::System => "system",
+                                            crate::llm::MessageRole::Function => "function",
+                                        },
+                                        "content": choice.delta.content
+                                    },
+                                    "finish_reason": choice.finish_reason
+                                })
+                            }).collect::<Vec<_>>()
+                        }
+                    })).unwrap_or_else(|_| r#"{"type":"error","error":"JSON serialization failed"}"#.to_string())
+                }
+                Err(e) => {
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "error",
+                        "error": e.to_string()
+                    })).unwrap_or_else(|_| r#"{"type":"error","error":"Unknown error"}"#.to_string())
+                }
+            }
+        });
+        
+        Ok(json_stream)
+    }
+
+    /// Subscribe to cost updates for real-time budget monitoring
+    async fn cost_updates(&self, ctx: &Context<'_>, user_id: Option<String>) -> async_graphql::Result<impl futures::Stream<Item = String>> {
+        // Mock cost update stream - in production this would track real cost changes
+        let mock_updates = vec![
+            r#"{"type":"cost_update","user_id":"user123","cost_delta":0.025,"total_cost":15.50,"timestamp":"2024-01-15T10:30:00Z"}"#,
+            r#"{"type":"budget_warning","user_id":"user123","percentage_used":0.85,"message":"Budget warning: 85% of daily budget used"}"#,
+        ];
+        
+        let stream = futures::stream::iter(mock_updates.into_iter().map(|update| {
+            tokio::time::sleep(std::time::Duration::from_secs(5));
+            update.to_string()
+        }));
+        
+        Ok(stream)
     }
 }
 

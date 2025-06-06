@@ -263,6 +263,9 @@ cargo run --example token_demo
 
 # GraphQL client (distributed systems, same API as other languages)
 cargo run --example graphql_client
+
+# LLM Router and AI infrastructure demo
+cargo run --example llm_router_demo
 ```
 
 **TypeScript Clients:**
@@ -280,6 +283,9 @@ npm run start:demo
 ```bash
 # Shows the separation of models, engine, and server layers
 cargo run --example basic_workflow
+
+# Demonstrates LLM routing with cost optimization
+cargo run --example llm_router_demo
 ```
 
 **Output:**

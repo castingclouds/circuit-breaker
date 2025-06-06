@@ -101,6 +101,10 @@ pub mod engine;
 // This contains HTTP server and GraphQL server setup
 pub mod server;
 
+// LLM Router and AI infrastructure
+// This contains the OpenRouter alternative implementation with BYOK model
+pub mod llm;
+
 // TODO: Implement these modules as we build them
 // These are commented out because the modules don't exist yet
 // pub mod rules;

@@ -33,8 +33,17 @@ tower-http = { version = "0.4", features = ["cors"] }
 # NATS for distributed state
 async-nats = "0.34"
 
-# HTTP client for GraphQL examples
-reqwest = { version = "0.11", features = ["json"] }
+# HTTP client for GraphQL examples and LLM providers
+reqwest = { version = "0.11", features = ["json", "stream"] }
+
+# WebSocket for real-time streaming
+tokio-tungstenite = "0.20"
+
+# LLM Provider integrations
+base64 = "0.21"
+sha2 = "0.10"
+hmac = "0.12"
+url = "2.4"
 
 # Error handling
 anyhow = "1.0"
@@ -47,6 +56,13 @@ tracing-subscriber = "0.3"
 # Configuration
 config = "0.14"
 dotenv = "0.15"
+
+# Database support for credentials
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
+
+# Security and encryption
+ring = "0.16"
+jsonwebtoken = "8.3"
 
 # Examples - Client examples only (no servers)
 [[example]]
@@ -84,3 +100,7 @@ path = "examples/nats_timing_test.rs"
 [[example]]
 name = "nats_debug_token_search"
 path = "examples/nats_debug_token_search.rs"
+
+[[example]]
+name = "llm_router_demo"
+path = "examples/rust/llm_router_demo.rs"

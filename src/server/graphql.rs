@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use async_graphql::{http::GraphiQLSource, Schema};
-use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
+use async_graphql_axum::{GraphQLRequest, GraphQLResponse, GraphQLSubscription};
 use axum::{
     extract::State,
     http::StatusCode,
@@ -123,11 +123,14 @@ impl GraphQLServer {
             }
         };
         
-        let app_state = Arc::new(RwLock::new(schema));
+        let app_state = Arc::new(RwLock::new(schema.clone()));
+
+        let subscription_service = GraphQLSubscription::new(schema);
 
         let mut app = Router::new()
             .route("/", get(graphiql).post(graphql_handler))
             .route("/graphql", post(graphql_handler))
+            .route_service("/ws", subscription_service)
             .route("/health", get(health_check))
             .with_state(app_state);
 
@@ -140,6 +143,7 @@ impl GraphQLServer {
         info!("🚀 GraphQL server running on http://localhost:{}", self.config.port);
         info!("📊 GraphiQL interface: http://localhost:{}", self.config.port);
         info!("🔗 GraphQL endpoint: http://localhost:{}/graphql", self.config.port);
+        info!("📡 GraphQL WebSocket: ws://localhost:{}/ws", self.config.port);
         
         // Use axum 0.6 syntax
         Server::bind(&addr.parse()?)
@@ -336,12 +340,19 @@ async fn graphql_handler(
     schema.execute(req.into_inner()).await.into()
 }
 
-// GraphiQL interface
+// GraphiQL interface with WebSocket support
 async fn graphiql() -> impl IntoResponse {
-    Html(GraphiQLSource::build().endpoint("/graphql").finish())
+    Html(
+        GraphiQLSource::build()
+            .endpoint("/graphql")
+            .subscription_endpoint("/ws")
+            .finish()
+    )
 }
+
+
 
 // Health check endpoint
 async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, "Circuit Breaker GraphQL Server is running!")
-} 
+}
