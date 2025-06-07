@@ -4,7 +4,7 @@
 //! and GraphQL subscriptions for real-time LLM response streaming.
 
 use super::*;
-use futures::{Stream, StreamExt, SinkExt};
+use futures::{Stream, StreamExt};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::sync::Arc;
@@ -51,52 +51,103 @@ pub enum StreamEvent {
     #[serde(rename = "done")]
     Done {
         id: String,
-        usage: Option<TokenUsage>,
-        final_response: Option<LLMResponse>,
+        final_data: Option<serde_json::Value>,
     },
-    #[serde(rename = "heartbeat")]
-    Heartbeat {
-        timestamp: DateTime<Utc>,
-    },
-    #[serde(rename = "metadata")]
-    Metadata {
+    #[serde(rename = "usage")]
+    Usage {
         id: String,
-        routing_info: RoutingInfo,
-        cost_info: Option<CostInfo>,
+        tokens_used: u32,
+        cost: f64,
     },
 }
 
-/// Streaming manager that handles multiple protocols
+/// Flow control for adaptive streaming
+#[derive(Debug, Clone)]
+pub struct FlowControl {
+    pub max_rate: f64,          // Items per second
+    pub burst_size: usize,      // Maximum burst items
+    last_sent: Instant,
+    tokens: f64,
+    max_tokens: f64,
+}
+
+impl FlowControl {
+    pub fn new(max_rate: f64, burst_size: usize) -> Self {
+        Self {
+            max_rate,
+            burst_size,
+            last_sent: Instant::now(),
+            tokens: burst_size as f64,
+            max_tokens: burst_size as f64,
+        }
+    }
+
+    pub fn should_send(&mut self) -> bool {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_sent).as_secs_f64();
+        
+        // Refill tokens based on elapsed time
+        self.tokens = (self.tokens + elapsed * self.max_rate).min(self.max_tokens);
+        
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            self.last_sent = now;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn on_item_sent(&mut self) {
+        // This can be used for additional bookkeeping if needed
+    }
+}
+
+/// High-level streaming manager for LLM responses
+#[derive(Debug)]
 pub struct StreamingManager {
-    active_sessions: Arc<RwLock<HashMap<Uuid, StreamingSession>>>,
-    session_channels: Arc<RwLock<HashMap<Uuid, mpsc::UnboundedSender<StreamEvent>>>>,
-    heartbeat_interval: Duration,
+    pub active_sessions: Arc<RwLock<HashMap<Uuid, StreamingSession>>>,
+    pub active_streams: Arc<RwLock<HashMap<Uuid, mpsc::Sender<StreamEvent>>>>,
+    pub config: StreamingConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamingConfig {
+    pub max_concurrent_streams: usize,
+    pub default_buffer_size: usize,
+    pub session_timeout: Duration,
+    pub max_chunk_size: usize,
+    pub enable_flow_control: bool,
+}
+
+impl Default for StreamingConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent_streams: 1000,
+            default_buffer_size: 100,
+            session_timeout: Duration::from_secs(300), // 5 minutes
+            max_chunk_size: 8192,
+            enable_flow_control: true,
+        }
+    }
 }
 
 impl StreamingManager {
-    pub fn new() -> Self {
-        let manager = Self {
+    pub fn new(config: StreamingConfig) -> Self {
+        Self {
             active_sessions: Arc::new(RwLock::new(HashMap::new())),
-            session_channels: Arc::new(RwLock::new(HashMap::new())),
-            heartbeat_interval: Duration::from_secs(30),
-        };
-        
-        // Start heartbeat task
-        manager.start_heartbeat_task();
-        
-        manager
+            active_streams: Arc::new(RwLock::new(HashMap::new())),
+            config,
+        }
     }
 
-    /// Create a new streaming session
     pub async fn create_session(
         &self,
         protocol: StreamingProtocol,
         user_id: Option<String>,
         project_id: Option<String>,
-    ) -> (Uuid, mpsc::UnboundedReceiver<StreamEvent>) {
+    ) -> Result<Uuid, Box<dyn std::error::Error>> {
         let session_id = Uuid::new_v4();
-        let (tx, rx) = mpsc::unbounded_channel();
-        
         let session = StreamingSession {
             id: session_id,
             protocol,
@@ -105,498 +156,201 @@ impl StreamingManager {
             started_at: Utc::now(),
             last_activity: Utc::now(),
         };
-        
+
+        let mut sessions = self.active_sessions.write().await;
+        if sessions.len() >= self.config.max_concurrent_streams {
+            return Err("Maximum concurrent streams reached".into());
+        }
+
+        sessions.insert(session_id, session);
+        Ok(session_id)
+    }
+
+    pub async fn start_stream(
+        &self,
+        session_id: Uuid,
+        stream: Pin<Box<dyn Stream<Item = StreamEvent> + Send>>,
+    ) -> Result<mpsc::Receiver<StreamEvent>, Box<dyn std::error::Error>> {
+        let (tx, rx) = mpsc::channel(self.config.default_buffer_size);
+
         {
-            let mut sessions = self.active_sessions.write().await;
-            sessions.insert(session_id, session);
+            let mut streams = self.active_streams.write().await;
+            streams.insert(session_id, tx.clone());
         }
-        
-        {
-            let mut channels = self.session_channels.write().await;
-            channels.insert(session_id, tx);
-        }
-        
-        (session_id, rx)
-    }
 
-    /// Send event to a specific session
-    pub async fn send_to_session(&self, session_id: Uuid, event: StreamEvent) -> Result<(), String> {
-        let channels = self.session_channels.read().await;
-        if let Some(tx) = channels.get(&session_id) {
-            tx.send(event).map_err(|e| format!("Failed to send event: {}", e))?;
-            
-            // Update last activity
-            let mut sessions = self.active_sessions.write().await;
-            if let Some(session) = sessions.get_mut(&session_id) {
-                session.last_activity = Utc::now();
-            }
-            
-            Ok(())
-        } else {
-            Err(format!("Session not found: {}", session_id))
-        }
-    }
-
-    /// Broadcast event to all sessions
-    pub async fn broadcast(&self, event: StreamEvent) {
-        let channels = self.session_channels.read().await;
-        for tx in channels.values() {
-            let _ = tx.send(event.clone());
-        }
-    }
-
-    /// Broadcast to sessions with specific criteria
-    pub async fn broadcast_filtered<F>(&self, event: StreamEvent, filter: F)
-    where
-        F: Fn(&StreamingSession) -> bool,
-    {
-        let sessions = self.active_sessions.read().await;
-        let channels = self.session_channels.read().await;
-        
-        for (session_id, session) in sessions.iter() {
-            if filter(session) {
-                if let Some(tx) = channels.get(session_id) {
-                    let _ = tx.send(event.clone());
-                }
-            }
-        }
-    }
-
-    /// Remove a session
-    pub async fn remove_session(&self, session_id: Uuid) {
-        {
-            let mut sessions = self.active_sessions.write().await;
-            sessions.remove(&session_id);
-        }
-        
-        {
-            let mut channels = self.session_channels.write().await;
-            channels.remove(&session_id);
-        }
-    }
-
-    /// Get active session count
-    pub async fn active_session_count(&self) -> usize {
-        let sessions = self.active_sessions.read().await;
-        sessions.len()
-    }
-
-    /// Get sessions by protocol
-    pub async fn get_sessions_by_protocol(&self, protocol: StreamingProtocol) -> Vec<StreamingSession> {
-        let sessions = self.active_sessions.read().await;
-        sessions.values()
-            .filter(|session| session.protocol == protocol)
-            .cloned()
-            .collect()
-    }
-
-    /// Clean up inactive sessions
-    pub async fn cleanup_inactive_sessions(&self, max_idle_duration: Duration) {
-        let cutoff_time = Utc::now() - chrono::Duration::from_std(max_idle_duration).unwrap();
-        let mut sessions_to_remove = Vec::new();
-        
-        {
-            let sessions = self.active_sessions.read().await;
-            for (session_id, session) in sessions.iter() {
-                if session.last_activity < cutoff_time {
-                    sessions_to_remove.push(*session_id);
-                }
-            }
-        }
-        
-        for session_id in sessions_to_remove {
-            self.remove_session(session_id).await;
-        }
-    }
-
-    /// Start heartbeat task
-    fn start_heartbeat_task(&self) {
-        let sessions = self.active_sessions.clone();
-        let channels = self.session_channels.clone();
-        let interval = self.heartbeat_interval;
-        
-        tokio::spawn(async move {
-            let mut heartbeat_interval = tokio::time::interval(interval);
-            
-            loop {
-                heartbeat_interval.tick().await;
-                
-                let heartbeat_event = StreamEvent::Heartbeat {
-                    timestamp: Utc::now(),
-                };
-                
-                let channels = channels.read().await;
-                for tx in channels.values() {
-                    let _ = tx.send(heartbeat_event.clone());
-                }
-            }
-        });
-    }
-}
-
-/// Server-Sent Events (SSE) formatter
-pub struct SSEFormatter;
-
-impl SSEFormatter {
-    pub fn format_event(event: &StreamEvent) -> String {
-        match event {
-            StreamEvent::Chunk { id, data } => {
-                format!(
-                    "id: {}\nevent: chunk\ndata: {}\n\n",
-                    id,
-                    serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string())
-                )
-            }
-            StreamEvent::Error { id, error, code } => {
-                let error_data = json!({
-                    "error": error,
-                    "code": code
-                });
-                format!(
-                    "id: {}\nevent: error\ndata: {}\n\n",
-                    id,
-                    serde_json::to_string(&error_data).unwrap_or_else(|_| "{}".to_string())
-                )
-            }
-            StreamEvent::Done { id, usage, final_response } => {
-                let done_data = json!({
-                    "usage": usage,
-                    "final_response": final_response
-                });
-                format!(
-                    "id: {}\nevent: done\ndata: {}\n\n",
-                    id,
-                    serde_json::to_string(&done_data).unwrap_or_else(|_| "{}".to_string())
-                )
-            }
-            StreamEvent::Heartbeat { timestamp } => {
-                format!(
-                    "event: heartbeat\ndata: {}\n\n",
-                    serde_json::to_string(&json!({ "timestamp": timestamp }))
-                        .unwrap_or_else(|_| "{}".to_string())
-                )
-            }
-            StreamEvent::Metadata { id, routing_info, cost_info } => {
-                let metadata = json!({
-                    "routing_info": routing_info,
-                    "cost_info": cost_info
-                });
-                format!(
-                    "id: {}\nevent: metadata\ndata: {}\n\n",
-                    id,
-                    serde_json::to_string(&metadata).unwrap_or_else(|_| "{}".to_string())
-                )
-            }
-        }
-    }
-}
-
-/// WebSocket message formatter
-pub struct WebSocketFormatter;
-
-impl WebSocketFormatter {
-    pub fn format_event(event: &StreamEvent) -> String {
-        serde_json::to_string(event).unwrap_or_else(|_| "{}".to_string())
-    }
-}
-
-/// GraphQL subscription formatter
-pub struct GraphQLFormatter;
-
-impl GraphQLFormatter {
-    pub fn format_event(event: &StreamEvent, subscription_id: &str) -> String {
-        let payload = json!({
-            "id": subscription_id,
-            "type": "data",
-            "payload": {
-                "data": {
-                    "llmStream": event
-                }
-            }
-        });
-        
-        serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
-    }
-}
-
-/// Adaptive streaming wrapper that handles buffering and flow control
-pub struct AdaptiveStream<T> {
-    inner: Pin<Box<dyn Stream<Item = T> + Send>>,
-    buffer_size: usize,
-    buffer: Vec<T>,
-    flow_control: FlowControl,
-}
-
-impl<T> AdaptiveStream<T> {
-    pub fn new(stream: Pin<Box<dyn Stream<Item = T> + Send>>, buffer_size: usize) -> Self {
-        Self {
-            inner: stream,
-            buffer_size,
-            buffer: Vec::with_capacity(buffer_size),
-            flow_control: FlowControl::new(),
-        }
-    }
-    
-    pub fn with_flow_control(mut self, flow_control: FlowControl) -> Self {
-        self.flow_control = flow_control;
-        self
-    }
-}
-
-impl<T> Stream for AdaptiveStream<T> {
-    type Item = T;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Check flow control
-        if !self.flow_control.should_send() {
-            return Poll::Pending;
-        }
-        
-        // Try to fill buffer
-        while self.buffer.len() < self.buffer_size {
-            match self.inner.as_mut().poll_next(cx) {
-                Poll::Ready(Some(item)) => {
-                    self.buffer.push(item);
-                }
-                Poll::Ready(None) => break,
-                Poll::Pending => break,
-            }
-        }
-        
-        // Return buffered item if available
-        if !self.buffer.is_empty() {
-            let item = self.buffer.remove(0);
-            self.flow_control.on_item_sent();
-            Poll::Ready(Some(item))
-        } else if self.buffer.is_empty() {
-            // Check if inner stream is done
-            match self.inner.as_mut().poll_next(cx) {
-                Poll::Ready(None) => Poll::Ready(None),
-                _ => Poll::Pending,
-            }
-        } else {
-            Poll::Pending
-        }
-    }
-}
-
-/// Flow control for streaming
-pub struct FlowControl {
-    max_rate: u32,         // items per second
-    window_size: Duration, // time window
-    sent_count: u32,
-    window_start: Instant,
-}
-
-impl FlowControl {
-    pub fn new() -> Self {
-        Self {
-            max_rate: 100,
-            window_size: Duration::from_secs(1),
-            sent_count: 0,
-            window_start: Instant::now(),
-        }
-    }
-    
-    pub fn with_rate(mut self, max_rate: u32) -> Self {
-        self.max_rate = max_rate;
-        self
-    }
-    
-    pub fn should_send(&mut self) -> bool {
-        let now = Instant::now();
-        
-        // Reset window if needed
-        if now.duration_since(self.window_start) >= self.window_size {
-            self.sent_count = 0;
-            self.window_start = now;
-        }
-        
-        self.sent_count < self.max_rate
-    }
-    
-    pub fn on_item_sent(&mut self) {
-        self.sent_count += 1;
-    }
-}
-
-/// Stream multiplexer for handling multiple concurrent streams
-pub struct StreamMultiplexer {
-    streams: HashMap<Uuid, Box<dyn Stream<Item = StreamEvent> + Send + Unpin>>,
-    output_tx: mpsc::UnboundedSender<(Uuid, StreamEvent)>,
-    output_rx: mpsc::UnboundedReceiver<(Uuid, StreamEvent)>,
-}
-
-impl StreamMultiplexer {
-    pub fn new() -> Self {
-        let (output_tx, output_rx) = mpsc::unbounded_channel();
-        
-        Self {
-            streams: HashMap::new(),
-            output_tx,
-            output_rx,
-        }
-    }
-    
-    pub fn add_stream(&mut self, id: Uuid, stream: Box<dyn Stream<Item = StreamEvent> + Send + Unpin>) {
-        let tx = self.output_tx.clone();
-        
-        // Spawn task to forward stream events
+        // Spawn task to handle the stream
+        let tx_clone = tx.clone();
+        let streams_arc = self.active_streams.clone();
         tokio::spawn(async move {
             let mut stream = stream;
             while let Some(event) = stream.next().await {
-                if tx.send((id, event)).is_err() {
+                if tx_clone.send(event).await.is_err() {
                     break;
                 }
             }
-        });
-        
-        self.streams.insert(id, stream);
-    }
-    
-    pub fn remove_stream(&mut self, id: Uuid) {
-        self.streams.remove(&id);
-    }
-    
-    pub async fn next_event(&mut self) -> Option<(Uuid, StreamEvent)> {
-        self.output_rx.recv().await
-    }
-}
-
-/// Streaming response aggregator
-pub struct StreamAggregator {
-    chunks: Vec<StreamingChunk>,
-    current_content: String,
-    usage: Option<TokenUsage>,
-    routing_info: Option<RoutingInfo>,
-}
-
-impl StreamAggregator {
-    pub fn new() -> Self {
-        Self {
-            chunks: Vec::new(),
-            current_content: String::new(),
-            usage: None,
-            routing_info: None,
-        }
-    }
-    
-    pub fn add_chunk(&mut self, chunk: StreamingChunk) {
-        // Aggregate content from delta
-        if let Some(choice) = chunk.choices.first() {
-            self.current_content.push_str(&choice.delta.content);
-        }
-        
-        self.chunks.push(chunk);
-    }
-    
-    pub fn set_usage(&mut self, usage: TokenUsage) {
-        self.usage = Some(usage);
-    }
-    
-    pub fn set_routing_info(&mut self, routing_info: RoutingInfo) {
-        self.routing_info = Some(routing_info);
-    }
-    
-    pub fn build_final_response(&self, request_id: String) -> LLMResponse {
-        let model = self.chunks.first()
-            .map(|c| c.model.clone())
-            .unwrap_or_default();
             
-        let provider = self.chunks.first()
-            .map(|c| c.provider.clone())
-            .unwrap_or(LLMProviderType::OpenAI);
-        
-        LLMResponse {
-            id: request_id,
-            object: "chat.completion".to_string(),
-            created: Utc::now().timestamp() as u64,
-            model,
-            choices: vec![Choice {
-                index: 0,
-                message: ChatMessage {
-                    role: MessageRole::Assistant,
-                    content: self.current_content.clone(),
-                    name: None,
-                    function_call: None,
-                },
-                finish_reason: Some("stop".to_string()),
-            }],
-            usage: self.usage.clone().unwrap_or_default(),
-            provider,
-            routing_info: self.routing_info.clone().unwrap_or(RoutingInfo {
-                selected_provider: provider,
-                routing_strategy: RoutingStrategy::CostOptimized,
-                latency_ms: 0,
-                retry_count: 0,
-                fallback_used: false,
-            }),
-        }
-    }
-}
-
-impl Default for TokenUsage {
-    fn default() -> Self {
-        Self {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-            estimated_cost: 0.0,
-        }
-    }
-}
-
-/// Streaming utilities
-pub mod utils {
-    use super::*;
-    
-    /// Convert LLM provider stream to our stream events
-    pub fn convert_provider_stream(
-        provider_stream: Box<dyn Stream<Item = LLMResult<StreamingChunk>> + Send + Unpin>,
-        request_id: String,
-    ) -> Box<dyn Stream<Item = StreamEvent> + Send + Unpin> {
-        let stream = provider_stream.map(move |result| {
-            match result {
-                Ok(chunk) => StreamEvent::Chunk {
-                    id: request_id.clone(),
-                    data: chunk,
-                },
-                Err(e) => StreamEvent::Error {
-                    id: request_id.clone(),
-                    error: e.to_string(),
-                    code: Some("provider_error".to_string()),
-                },
-            }
+            // Clean up when stream ends
+            let mut streams = streams_arc.write().await;
+            streams.remove(&session_id);
         });
-        
-        Box::new(Box::pin(stream))
+
+        Ok(rx)
     }
-    
-    /// Create a test stream for development
-    pub fn create_test_stream(messages: Vec<String>) -> Box<dyn Stream<Item = StreamEvent> + Send + Unpin> {
-        let stream = futures::stream::iter(messages.into_iter().enumerate().map(|(i, content)| {
-            StreamEvent::Chunk {
-                id: format!("test-{}", i),
-                data: StreamingChunk {
-                    id: format!("test-{}", i),
-                    object: "chat.completion.chunk".to_string(),
-                    created: Utc::now().timestamp() as u64,
-                    model: "test-model".to_string(),
-                    choices: vec![StreamingChoice {
-                        index: 0,
-                        delta: ChatMessage {
-                            role: MessageRole::Assistant,
-                            content,
-                            name: None,
-                            function_call: None,
-                        },
-                        finish_reason: None,
-                    }],
-                    provider: LLMProviderType::OpenAI,
-                },
-            }
-        }));
+
+    pub async fn close_session(&self, session_id: Uuid) -> Result<(), Box<dyn std::error::Error>> {
+        let mut sessions = self.active_sessions.write().await;
+        let mut streams = self.active_streams.write().await;
         
-        Box::new(Box::pin(stream))
+        sessions.remove(&session_id);
+        if let Some(sender) = streams.remove(&session_id) {
+            // Sender will be dropped, closing the channel
+            drop(sender);
+        }
+        
+        Ok(())
+    }
+
+    pub async fn cleanup_expired_sessions(&self) {
+        let timeout = self.config.session_timeout;
+        let now = Utc::now();
+        
+        let mut sessions = self.active_sessions.write().await;
+        let mut streams = self.active_streams.write().await;
+        
+        let expired_sessions: Vec<Uuid> = sessions
+            .iter()
+            .filter_map(|(id, session)| {
+                if now.signed_duration_since(session.last_activity).to_std().unwrap_or(Duration::ZERO) > timeout {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for session_id in expired_sessions {
+            sessions.remove(&session_id);
+            streams.remove(&session_id);
+        }
+    }
+
+    pub async fn get_active_session_count(&self) -> usize {
+        let sessions = self.active_sessions.read().await;
+        sessions.len()
+    }
+}
+
+/// Convert LLM streaming chunks to StreamEvent
+impl From<StreamingChunk> for StreamEvent {
+    fn from(chunk: StreamingChunk) -> Self {
+        StreamEvent::Chunk {
+            id: chunk.id.clone(),
+            data: chunk,
+        }
+    }
+}
+
+/// Utility function to create a simple streaming chunk
+pub fn create_streaming_chunk(
+    id: String,
+    content: String,
+    model: String,
+    provider: LLMProviderType,
+    finish_reason: Option<String>,
+) -> StreamingChunk {
+    StreamingChunk {
+        id,
+        object: "chat.completion.chunk".to_string(),
+        choices: vec![StreamingChoice {
+            index: 0,
+            delta: ChatMessage {
+                role: MessageRole::Assistant,
+                content,
+                name: None,
+                function_call: None,
+            },
+            finish_reason,
+        }],
+        created: chrono::Utc::now().timestamp() as u64,
+        model,
+        provider,
+    }
+}
+
+/// Create an error stream event
+pub fn create_error_event(id: String, error: String, code: Option<String>) -> StreamEvent {
+    StreamEvent::Error { id, error, code }
+}
+
+/// Create a completion done event
+pub fn create_done_event(id: String, final_data: Option<serde_json::Value>) -> StreamEvent {
+    StreamEvent::Done { id, final_data }
+}
+
+/// Create a usage tracking event
+pub fn create_usage_event(id: String, tokens_used: u32, cost: f64) -> StreamEvent {
+    StreamEvent::Usage { id, tokens_used, cost }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_test;
+
+    #[tokio::test]
+    async fn test_streaming_manager_creation() {
+        let config = StreamingConfig::default();
+        let manager = StreamingManager::new(config);
+        
+        assert_eq!(manager.get_active_session_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_session_creation() {
+        let manager = StreamingManager::new(StreamingConfig::default());
+        
+        let session_id = manager
+            .create_session(StreamingProtocol::ServerSentEvents, None, None)
+            .await
+            .unwrap();
+        
+        assert_eq!(manager.get_active_session_count().await, 1);
+        
+        manager.close_session(session_id).await.unwrap();
+        assert_eq!(manager.get_active_session_count().await, 0);
+    }
+
+    #[test]
+    fn test_flow_control() {
+        let mut flow_control = FlowControl::new(10.0, 5); // 10 items/sec, burst of 5
+        
+        // Should allow initial burst
+        for _ in 0..5 {
+            assert!(flow_control.should_send());
+        }
+        
+        // Should block after burst
+        assert!(!flow_control.should_send());
+    }
+
+    #[test]
+    fn test_streaming_chunk_conversion() {
+        let chunk = create_streaming_chunk(
+            "test-id".to_string(),
+            "Hello, world!".to_string(),
+            "gpt-4".to_string(),
+            LLMProviderType::OpenAI,
+            None,
+        );
+        
+        let event: StreamEvent = chunk.into();
+        
+        match event {
+            StreamEvent::Chunk { id, data } => {
+                assert_eq!(id, "test-id");
+                assert_eq!(data.choices[0].delta.content, "Hello, world!");
+            }
+            _ => panic!("Expected chunk event"),
+        }
     }
 }

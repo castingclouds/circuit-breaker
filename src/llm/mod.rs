@@ -5,9 +5,9 @@
 
 pub mod providers;
 pub mod router;
-// pub mod streaming;
-// pub mod security;
-// pub mod cost;
+pub mod streaming;
+pub mod security;
+pub mod cost;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -45,6 +45,14 @@ impl std::fmt::Display for LLMProviderType {
         }
     }
 }
+
+// Re-export main types for easier access
+pub use router::LLMRouter;
+pub use cost::{CostOptimizer, BudgetManager, CostAnalyzer, InMemoryUsageTracker};
+pub use providers::LLMProviderClient;
+
+// Re-export streaming types
+pub use streaming::{StreamEvent, StreamingSession, StreamingProtocol};
 
 /// LLM Provider configuration with secure key management
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -214,20 +222,48 @@ pub struct RoutingInfo {
     pub fallback_used: bool,
 }
 
-/// Streaming response chunk
+/// Streaming chunk for real-time responses
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamingChunk {
     pub id: String,
     pub object: String,
+    pub choices: Vec<StreamingChoice>,
     pub created: u64,
     pub model: String,
-    pub choices: Vec<StreamingChoice>,
     pub provider: LLMProviderType,
 }
 
-/// Streaming choice
+/// Streaming choice for chunked responses
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamingChoice {
+    pub index: u32,
+    pub delta: ChatMessage,
+    pub finish_reason: Option<String>,
+}
+
+/// Delta content for streaming
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamingDelta {
+    pub role: MessageRole,
+    pub content: String,
+}
+
+
+
+/// Legacy streaming chunk (keeping for compatibility)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LegacyStreamingChunk {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<LegacyStreamingChoice>,
+    pub provider: LLMProviderType,
+}
+
+/// Legacy streaming choice
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LegacyStreamingChoice {
     pub index: u32,
     pub delta: ChatMessage,
     pub finish_reason: Option<String>,

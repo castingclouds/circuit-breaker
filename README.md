@@ -1,18 +1,112 @@
 # Circuit Breaker - Rust Edition
 
-> A distributed, polyglot workflow engine powered by **State Managed Workflows**, GraphQL, and Petri Nets  
+> A unified platform providing **State Managed Workflows** via GraphQL and **OpenAI-compatible LLM routing** via REST API  
 > **Generic by design** - like Dagger's engine, the backend knows nothing about your domain  
-> **State-centric** - unlike DAG-based systems, supports cycles, concurrent states, and complex workflows
+> **OpenRouter Alternative** - BYOK (Bring Your Own Key) model with intelligent provider routing
 
 ## 🚀 Project Vision
 
-Circuit Breaker is a **distributed, high-performance platform** for orchestrating complex workflows and AI agent campaigns. Inspired by [Dagger's](https://dagger.io) generic engine architecture, while pioneering **State Managed Workflows** powered by Petri Nets for mathematical rigor and formal workflow verification.
+Circuit Breaker is a **distributed, high-performance platform** that combines workflow orchestration with intelligent LLM routing. It provides two complementary APIs:
+
+1. **State Managed Workflows** - Powered by Petri Nets for mathematical rigor and formal workflow verification
+2. **LLM Provider Routing** - OpenAI-compatible API with cost optimization and intelligent failover
 
 **Key Principles**: 
-- **Generic Engine**: The Rust backend is domain-agnostic - all workflow logic defined via GraphQL
+- **Unified Server**: Single binary providing both GraphQL and REST APIs
+- **OpenAI Compatible**: Drop-in replacement for OpenRouter.ai with BYOK model
 - **State Managed Workflows**: Unlike DAG-based systems, supports cycles, concurrent states, and complex relationships
 - **Mathematical Guarantees**: Petri Net formalism provides deadlock detection and state safety
-- **Polyglot First**: Any language can define and execute workflows through GraphQL
+- **Polyglot First**: Any language can use either GraphQL or REST APIs
+
+## 🚀 Quick Start
+
+### 1. Start the Server
+
+```bash
+# Clone and build
+git clone <repository>
+cd circuit-breaker
+cargo build --release
+
+# Optional: Add your API keys for smart routing
+cp .env.example .env
+# Edit .env with your OpenAI, Anthropic, etc. keys
+
+# Start unified server (both GraphQL + OpenAI API)
+cargo run --bin server
+```
+
+The server starts two APIs:
+- **GraphQL API**: http://localhost:4000 (Workflow management)
+- **OpenAI API**: http://localhost:3000 (LLM routing with smart features)
+
+### 2. Try OpenAI-Compatible API (100% Compatible)
+
+```bash
+# Works exactly like OpenAI API
+curl -X POST http://localhost:3000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "claude-3-haiku-20240307",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+
+# List all models (real + virtual)
+curl http://localhost:3000/v1/models
+```
+
+### 3. Try Smart Routing Features
+
+```bash
+# Auto-select best model
+curl -X POST http://localhost:3000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "auto",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+
+# Cost-optimized routing
+curl -X POST http://localhost:3000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "cb:cost-optimal",
+    "messages": [{"role": "user", "content": "Explain quantum computing"}]
+  }'
+
+# Smart routing with preferences
+curl -X POST http://localhost:3000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "gpt-4",
+    "messages": [{"role": "user", "content": "Write code"}],
+    "circuit_breaker": {
+      "routing_strategy": "cost_optimized",
+      "max_cost_per_1k_tokens": 0.002,
+      "task_type": "coding"
+    }
+  }'
+```
+
+### 3. Try the GraphQL API
+
+Visit http://localhost:4000 for the GraphiQL interface, or:
+
+```bash
+# Create a workflow
+curl -X POST http://localhost:4000/graphql \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "mutation { createWorkflow(input: {name: \"Test\", places: [\"start\", \"end\"], transitions: [{id: \"go\", from_places: [\"start\"], to_place: \"end\"}]}) { id name } }"
+  }'
+
+# Create and manage AI agents
+curl -X POST http://localhost:4000/graphql \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "mutation { createAgent(input: {name: \"Helper\", description: \"AI Assistant\", llm_provider: {provider_type: \"openai\", model: \"gpt-4\", api_key: \"your-key\"}}) { id status } }"
+  }'
+```
 
 ## 🏗️ Architecture Overview
 
@@ -44,22 +138,35 @@ examples/             # 📚 Client examples only (no servers!)
     └── README.md         # TypeScript setup instructions
 ```
 
-### Single Server, Multiple Clients
+### Unified Server Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                🦀 Rust Main Server                          │
-│             cargo run --bin server                         │  
-│          http://localhost:4000/graphql                     │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-        ┌─────────────┼─────────────┐
-        │             │             │
-   🦀 Rust       📜 TypeScript   🐍 Python     
-   Clients        Clients       Clients      
-     │              │             │          
- Direct Models   GraphQL Only  GraphQL Only  
- GraphQL Client                               
+│                🦀 Circuit Breaker Unified Server            │
+│                  cargo run --bin server                     │  
+├─────────────────────────────────────────────────────────────┤
+│  📊 GraphQL API (Port 4000)    🤖 OpenAI API (Port 3000)   │
+│  • Workflow Management         • Chat Completions          │
+│  • Agent Orchestration         • Streaming Support         │
+│  • Real-time Updates           • Model Management          │
+│  • GraphiQL Interface          • Cost Optimization         │
+└─────────────────────┬───────────────────┬───────────────────┘
+                      │                   │
+        ┌─────────────┼─────────────┐     │
+        │             │             │     │
+   🦀 Rust       📜 TypeScript   🐍 Python  │
+   Clients        Clients       Clients    │
+     │              │             │        │
+ Direct Models   GraphQL Only  GraphQL Only │
+ GraphQL Client                             │
+                                           │
+        ┌──────────────────────────────────┘
+        │
+   🔗 Any OpenAI-Compatible Client
+   • curl, HTTPie, Postman
+   • OpenAI Python/JS SDKs  
+   • LangChain, AutoGPT
+   • Custom Applications
 ```
 
 ## 🎯 State Managed Workflows vs. DAG Systems

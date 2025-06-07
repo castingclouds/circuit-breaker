@@ -5,7 +5,7 @@
 
 use super::*;
 use jsonwebtoken::{encode, decode, Header, Algorithm, Validation, EncodingKey, DecodingKey};
-use ring::{digest, hmac, rand};
+use ring::{hmac, rand};
 use base64::{Engine as _, engine::general_purpose};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::Arc;
@@ -317,8 +317,9 @@ impl SecurityManager {
 
     /// Hash secret for storage
     fn hash_secret(&self, secret: &str) -> String {
-        let key = hmac::Key::new(hmac::HMAC_SHA256, self.encoding_key.as_ref());
-        let signature = hmac::sign(&key, secret.as_bytes());
+        // Use a separate key for HMAC operations since EncodingKey is for JWT
+        let hmac_key = hmac::Key::new(hmac::HMAC_SHA256, b"circuit_breaker_hmac_key");
+        let signature = hmac::sign(&hmac_key, secret.as_bytes());
         general_purpose::STANDARD.encode(signature.as_ref())
     }
 

@@ -36,23 +36,27 @@ use async_graphql::Request;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🤖 Circuit Breaker LLM Router Demo - Real Anthropic Integration");
-    println!("===============================================================");
+    println!("🤖 Circuit Breaker LLM Router Demo - Smart Routing Edition");
+    println!("==========================================================");
     println!();
 
-    // Check for Anthropic API key
-    match std::env::var("ANTHROPIC_API_KEY") {
-        Ok(_) => println!("✅ ANTHROPIC_API_KEY found"),
-        Err(_) => {
-            println!("❌ ANTHROPIC_API_KEY not set!");
-            println!("💡 Please set your API key: export ANTHROPIC_API_KEY=your_key_here");
-            return Ok(());
+    // Check for Anthropic API key (optional for direct API tests)
+    let has_anthropic_key = match std::env::var("ANTHROPIC_API_KEY") {
+        Ok(_) => {
+            println!("✅ ANTHROPIC_API_KEY found - will run all tests including direct API");
+            true
         }
-    }
+        Err(_) => {
+            println!("ℹ️  ANTHROPIC_API_KEY not set - skipping direct Anthropic API tests");
+            println!("💡 Server-based tests will still work without the API key");
+            false
+        }
+    };
 
     println!("📋 Prerequisites:");
-    println!("• Circuit Breaker server must be running on port 4000");
+    println!("• Circuit Breaker server must be running on ports 3000 (OpenAI API) and 4000 (GraphQL)");
     println!("• Start with: cargo run --bin server");
+    println!("• OpenAI API: http://localhost:3000");
     println!("• GraphiQL interface: http://localhost:4000");
     println!();
 
@@ -61,21 +65,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test server connectivity
     println!("🔗 Testing server connectivity...");
-    match client.get("http://localhost:4000/health").send().await {
-        Ok(response) if response.status().is_success() => {
-            println!("✅ Server is running and accessible");
+    let graphql_health = client.get("http://localhost:4000/health").send().await;
+    let openai_health = client.get("http://localhost:3000/health").send().await;
+    
+    match (graphql_health, openai_health) {
+        (Ok(graphql_resp), Ok(openai_resp)) if graphql_resp.status().is_success() && openai_resp.status().is_success() => {
+            println!("✅ Both GraphQL and OpenAI API servers are running");
         }
-        Ok(response) => {
-            println!("⚠️  Server responded with status: {}", response.status());
-        }
-        Err(e) => {
-            println!("❌ Cannot connect to server: {}", e);
+        _ => {
+            println!("❌ One or more servers are not responding correctly");
             println!("💡 Please start the server first: cargo run --bin server");
-            return Err(e.into());
+            return Ok(());
         }
     }
 
-    println!("\n📊 1. Checking LLM Providers");
+    // Demo smart routing capabilities
+    demonstrate_smart_routing(&client).await?;
+
+    println!("\n📊 5. Checking LLM Providers");
     println!("----------------------------");
 
     // Query available LLM providers
@@ -116,17 +123,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         serde_json::to_string_pretty(&providers_result)?
     );
 
-    println!("\n💬 2. Real Streaming LLM Integration");
+    println!("\n💬 6. Real Streaming LLM Integration");
     println!("-----------------------------------");
 
-    println!("🔄 Testing real-time LLM streaming...");
-    println!("📡 Using direct Anthropic streaming API integration");
-    
-    // Test the actual streaming implementation through the router
-    use circuit_breaker::llm::{router::LLMRouter, LLMRequest, ChatMessage, MessageRole};
-    use uuid::Uuid;
-    
-    match LLMRouter::new().await {
+    if has_anthropic_key {
+        println!("🔄 Testing real-time LLM streaming...");
+        println!("📡 Using direct Anthropic streaming API integration");
+        
+        // Test the actual streaming implementation through the router
+        use circuit_breaker::llm::{router::LLMRouter, LLMRequest, ChatMessage, MessageRole};
+        use uuid::Uuid;
+        
+        match LLMRouter::new().await {
         Ok(router) => {
             let streaming_request = LLMRequest {
                 id: Uuid::new_v4(),
@@ -199,6 +207,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("❌ Failed to initialize LLM Router: {}", e);
         }
     }
+    } else {
+        println!("⏭️  Skipping LLM router streaming test (no API key)");
+        println!("💡 This test requires ANTHROPIC_API_KEY to be set");
+    }
     
     println!("\n📡 WebSocket Streaming Infrastructure:");
     println!("   • GraphQL subscriptions implemented ✅");
@@ -206,7 +218,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   • Real-time streaming ready ✅");
     println!("   • Test in GraphiQL: http://localhost:4000 🌐");
 
-    println!("\n💰 3. Checking Budget Status");
+    println!("\n💰 7. Checking Budget Status");
     println!("---------------------------");
 
     // Check budget status
@@ -247,7 +259,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    println!("\n📈 4. Getting Cost Analytics");
+    println!("\n📈 8. Getting Cost Analytics");
     println!("---------------------------");
 
     // Get cost analytics
@@ -305,7 +317,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    println!("\n⚙️  5. Configuring New Provider");
+    println!("\n⚙️  9. Configuring New Provider");
     println!("------------------------------");
 
     // Configure a new LLM provider
@@ -382,7 +394,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("\n💵 6. Setting Budget Limits");
+    println!("\n💵 10. Setting Budget Limits");
     println!("--------------------------");
 
     // Set budget limits
@@ -430,8 +442,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    println!("\n🔄 7. WebSocket Streaming Implementation Validation");
-    println!("--------------------------------------------------");
+    println!("\n🔄 11. WebSocket Streaming Implementation Validation");
+    println!("---------------------------------------------------");
 
     // Validate the streaming infrastructure is properly implemented
     println!("🔍 Validating WebSocket streaming infrastructure...");
@@ -525,8 +537,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Token Updates:");
     println!("   subscription {{ tokenUpdates(tokenId: \"demo-token\") {{ id place }} }}");
 
-    println!("\n🎯 8. Real API Integration Analysis");
-    println!("-----------------------------------");
+    println!("\n🎯 12. Real API Integration Analysis");
+    println!("------------------------------------");
 
     println!("✅ What We Just Demonstrated:");
     println!("   • Real Anthropic Claude API integration");
@@ -577,5 +589,232 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🎉 Circuit Breaker: REAL LLM routing + WebSocket streaming ready!");
     println!("📡 Test real-time streaming now: http://localhost:4000");
 
+    Ok(())
+}
+
+/// Demonstrate smart routing capabilities
+async fn demonstrate_smart_routing(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n🧠 Smart Routing Demonstration");
+    println!("==============================");
+
+    // Test 1: List Available Models (including virtual)
+    println!("\n1️⃣  Available Models Check");
+    list_available_models(client).await?;
+
+    // Test 2: OpenAI API Compatibility
+    println!("\n2️⃣  OpenAI API Compatibility Test");
+    test_openai_compatibility(client).await?;
+
+    // Test 3: Virtual Model Names
+    println!("\n3️⃣  Virtual Model Names Test");
+    test_virtual_models(client).await?;
+
+    // Test 4: Smart Routing with Preferences
+    println!("\n4️⃣  Smart Routing with Preferences Test");
+    test_smart_routing_preferences(client).await?;
+
+    println!("\n✅ Smart routing demonstration complete!");
+    println!("{}", "=".repeat(50));
+
+    Ok(())
+}
+
+/// List and validate available models
+async fn list_available_models(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
+    println!("   Fetching available models from API...");
+    
+    let response = client.get("http://localhost:3000/v1/models").send().await?;
+    
+    if response.status().is_success() {
+        let data: serde_json::Value = response.json().await?;
+        let empty_vec = vec![];
+        let models = data["data"].as_array().unwrap_or(&empty_vec);
+        
+        println!("   ✅ Found {} models available:", models.len());
+        
+        // Separate real and virtual models
+        let real_models: Vec<_> = models.iter()
+            .filter(|m| !m["id"].as_str().unwrap_or("").starts_with("cb:") && m["id"] != "auto")
+            .collect();
+        let virtual_models: Vec<_> = models.iter()
+            .filter(|m| m["id"].as_str().unwrap_or("").starts_with("cb:") || m["id"] == "auto")
+            .collect();
+        
+        println!("\n   📊 Real Provider Models ({}):", real_models.len());
+        for model in &real_models {
+            println!("      • {} ({})", 
+                model["id"].as_str().unwrap_or("unknown"),
+                model["owned_by"].as_str().unwrap_or("unknown provider"));
+        }
+        
+        println!("\n   🎯 Virtual Smart Routing Models ({}):", virtual_models.len());
+        for model in &virtual_models {
+            println!("      • {} - {}", 
+                model["id"].as_str().unwrap_or("unknown"),
+                model.get("display_name").and_then(|v| v.as_str()).unwrap_or("Smart routing model"));
+        }
+        
+        // Validate expected virtual models
+        let expected_virtual_models = ["auto", "cb:smart-chat", "cb:cost-optimal", "cb:fastest", "cb:coding"];
+        let missing_models: Vec<_> = expected_virtual_models.iter()
+            .filter(|expected| !virtual_models.iter().any(|m| m["id"].as_str().unwrap_or("") == **expected))
+            .collect();
+        
+        if missing_models.is_empty() {
+            println!("   ✅ All expected virtual models are available");
+        } else {
+            println!("   ⚠️  Missing virtual models: {:?}", missing_models);
+        }
+    } else {
+        println!("   ❌ Failed to fetch models: {}", response.status());
+    }
+    
+    Ok(())
+}
+
+/// Test OpenAI API compatibility
+async fn test_openai_compatibility(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
+    println!("   Testing OpenAI API compatibility...");
+    
+    let request = json!({
+        "model": "claude-3-haiku-20240307",
+        "messages": [{"role": "user", "content": "Say hello in a creative way!"}]
+    });
+    
+    let response = client
+        .post("http://localhost:3000/v1/chat/completions")
+        .header("Content-Type", "application/json")
+        .json(&request)
+        .send()
+        .await?;
+    
+    if response.status().is_success() {
+        let result: serde_json::Value = response.json().await?;
+        println!("   ✅ OpenAI compatible request successful");
+        if let Some(content) = result["choices"][0]["message"]["content"].as_str() {
+            println!("      Response: {}...", &content[..content.len().min(100)]);
+        }
+    } else {
+        println!("   ❌ OpenAI compatible request failed: {}", response.status());
+    }
+    
+    Ok(())
+}
+
+/// Test virtual model names
+async fn test_virtual_models(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
+    let virtual_models = [
+        ("auto", "Auto-select best model"),
+        ("cb:smart-chat", "Smart chat model"),
+        ("cb:cost-optimal", "Most cost-effective"),
+        ("cb:fastest", "Fastest response"),
+        ("cb:coding", "Best for code generation"),
+    ];
+    
+    println!("   Testing virtual models...");
+    
+    for (model_name, description) in virtual_models.iter() {
+        println!("   🧪 {} ({})", model_name, description);
+        
+        let content = match *model_name {
+            "cb:coding" => "Write a Rust function to reverse a string",
+            "cb:cost-optimal" => "What is 2+2? (simple question for cost testing)",
+            "cb:fastest" => "Hi! (quick response test)",
+            _ => "Hello! How are you today?",
+        };
+        
+        let request = json!({
+            "model": model_name,
+            "messages": [{"role": "user", "content": content}]
+        });
+        
+        let response = client
+            .post("http://localhost:3000/v1/chat/completions")
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await?;
+        
+        if response.status().is_success() {
+            let result: serde_json::Value = response.json().await?;
+            println!("      ✅ {}: Response received", model_name);
+            if let Some(content) = result["choices"][0]["message"]["content"].as_str() {
+                println!("         Preview: {}...", &content[..content.len().min(50)]);
+            }
+        } else {
+            println!("      ❌ {}: Failed ({})", model_name, response.status());
+        }
+        
+        // Small delay between requests
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+    
+    Ok(())
+}
+
+/// Test smart routing with preferences
+async fn test_smart_routing_preferences(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
+    let routing_tests = [
+        (
+            "Cost Optimized",
+            json!({
+                "routing_strategy": "cost_optimized",
+                "max_cost_per_1k_tokens": 0.002
+            }),
+            "Explain machine learning in simple terms"
+        ),
+        (
+            "Performance First",
+            json!({
+                "routing_strategy": "performance_first",
+                "max_latency_ms": 2000
+            }),
+            "Quick question: What is AI?"
+        ),
+        (
+            "Task Specific - Coding",
+            json!({
+                "routing_strategy": "task_specific",
+                "task_type": "coding"
+            }),
+            "Write a Rust function to calculate fibonacci numbers"
+        ),
+    ];
+    
+    println!("   Testing smart routing with preferences...");
+    
+    for (test_name, config, content) in routing_tests.iter() {
+        println!("   🎯 {}", test_name);
+        
+        let request = json!({
+            "model": "auto",
+            "messages": [{"role": "user", "content": content}],
+            "circuit_breaker": config
+        });
+        
+        let response = client
+            .post("http://localhost:3000/v1/chat/completions")
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await?;
+        
+        if response.status().is_success() {
+            let result: serde_json::Value = response.json().await?;
+            println!("      ✅ {}: Smart routing successful", test_name);
+            if let Some(model) = result["model"].as_str() {
+                println!("         Model used: {}", model);
+            }
+            if let Some(content) = result["choices"][0]["message"]["content"].as_str() {
+                println!("         Response preview: {}...", &content[..content.len().min(80)]);
+            }
+        } else {
+            println!("      ❌ {}: Failed ({})", test_name, response.status());
+        }
+        
+        // Delay between requests
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
+    
     Ok(())
 }

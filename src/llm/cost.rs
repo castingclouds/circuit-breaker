@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::cmp::Ordering;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use chrono::Datelike;
 
 /// Cost optimization engine
 pub struct CostOptimizer {
@@ -264,7 +265,7 @@ impl CostOptimizer {
         let history = self.cost_history.read().await;
         let mut total_tokens = 0;
 
-        for (timestamp, costs) in history.range(since..) {
+        for (_timestamp, costs) in history.range(since..) {
             for cost in costs {
                 if cost.user_id.as_ref() == Some(&user_id.to_string()) {
                     total_tokens += cost.input_tokens + cost.output_tokens;

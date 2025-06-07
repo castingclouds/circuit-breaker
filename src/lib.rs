@@ -105,6 +105,10 @@ pub mod server;
 // This contains the OpenRouter alternative implementation with BYOK model
 pub mod llm;
 
+// OpenAI-compatible API
+// This contains REST API endpoints that are compatible with OpenAI's API specification
+pub mod api;
+
 // TODO: Implement these modules as we build them
 // These are commented out because the modules don't exist yet
 // pub mod rules;
@@ -148,6 +152,16 @@ pub use engine::{
 
 // Re-export server types for convenience
 pub use server::graphql::GraphQLServerBuilder;
+
+// Re-export API types for convenience
+pub use api::{
+    OpenAIApiServer, OpenAIApiServerBuilder, OpenAIApiConfig,
+    create_default_server, create_server_with_port, create_server_with_config,
+    types::{
+        ChatCompletionRequest, ChatCompletionResponse, ChatCompletionStreamResponse,
+        ChatMessage, ChatRole, ModelsResponse, Model, ErrorResponse,
+    },
+};
 
 // Core error types
 // Using the `thiserror` crate to make error handling easier
