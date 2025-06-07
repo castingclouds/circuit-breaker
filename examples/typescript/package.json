@@ -14,13 +14,21 @@
     "demo:agents": "tsx places_ai_agent_demo.ts",
     "demo:agents-simple": "tsx places_ai_agent_demo_simple.ts",
     "demo:nats": "tsx nats_demo.ts",
+    "demo:llm": "tsx llm_router_demo.ts",
+    "test:setup": "tsx test_setup.ts",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "node-fetch": "^3.3.2",
+    "ws": "^8.14.2",
+    "graphql-ws": "^5.14.2",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
+    "@types/ws": "^8.5.9",
+    "@types/uuid": "^9.0.7",
     "tsx": "^4.6.0",
     "typescript": "^5.3.0"
   },

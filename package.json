@@ -1,0 +1,22 @@
+{
+  "name": "circuit-breaker-graphql-client-test",
+  "version": "1.0.0",
+  "description": "GraphQL client test suite for Circuit Breaker LLM Router",
+  "main": "test_client.js",
+  "scripts": {
+    "test": "node test_client.js",
+    "test:basic": "node test_client.js basic",
+    "test:cost": "node test_client.js cost",
+    "test:conversation": "node test_client.js conversation",
+    "test:interactive": "node test_client.js interactive",
+    "test:providers": "node test_client.js providers",
+    "test:budget": "node test_client.js budget",
+    "test:analytics": "node test_client.js analytics",
+    "chat": "node test_client.js chat",
+    "install-deps": "npm install",
+    "start": "node test_client.js interactive"
+  },
+  "dependencies": {
+    "graphql-request": "^6"
+  }
+}
