@@ -342,12 +342,50 @@ async fn graphql_handler(
 
 // GraphiQL interface with WebSocket support
 async fn graphiql() -> impl IntoResponse {
-    Html(
-        GraphiQLSource::build()
-            .endpoint("/graphql")
-            .subscription_endpoint("/ws")
-            .finish()
-    )
+    Html(r#"
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="robots" content="noindex">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="origin">
+    <title>GraphiQL IDE</title>
+    <style>
+      body {
+        height: 100%;
+        margin: 0;
+        width: 100%;
+        overflow: hidden;
+      }
+      #graphiql {
+        height: 100vh;
+      }
+    </style>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <link rel="icon" href="https://graphql.org/favicon.ico">
+    <link rel="stylesheet" href="https://unpkg.com/graphiql@3/graphiql.min.css" />
+  </head>
+  <body>
+    <div id="graphiql">Loading...</div>
+    <script src="https://unpkg.com/graphiql@3/graphiql.min.js" type="application/javascript"></script>
+    <script>
+      const root = ReactDOM.createRoot(document.getElementById('graphiql'));
+      
+      const fetcher = GraphiQL.createFetcher({
+        url: '/graphql',
+        subscriptionUrl: 'ws://localhost:4000/ws',
+      });
+
+      root.render(React.createElement(GraphiQL, {
+        fetcher: fetcher,
+        defaultEditorToolsVisibility: true,
+      }));
+    </script>
+  </body>
+</html>
+"#)
 }
 
 
