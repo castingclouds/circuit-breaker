@@ -339,7 +339,9 @@ class LLMRouterDemo {
           const result = await response.json() as SmartRoutingResult;
           console.log(`   ✅ ${virtualModel.name}: Response received`);
           console.log(`      Model used: ${result.model || 'unknown'}`);
-          console.log(`      Preview: ${result.choices[0].message.content.substring(0, 60)}...`);
+          // Use longer preview for coding model to show complete code examples
+          const previewLength = virtualModel.name === "cb:coding" ? 200 : 60;
+          console.log(`      Preview: ${result.choices[0].message.content.substring(0, previewLength)}...`);
           
           // Show routing metadata if available
           if (result.provider_used) {
@@ -454,7 +456,9 @@ class LLMRouterDemo {
           console.log(`   ✅ ${test.name}: Smart routing successful`);
           console.log(`      Strategy: ${test.config.routing_strategy}`);
           console.log(`      Model used: ${result.model || 'auto-selected'}`);
-          console.log(`      Response preview: ${result.choices[0].message.content.substring(0, 80)}...`);
+          // Use longer preview for coding tasks to show complete code examples
+          const previewLength = test.config.task_type === "coding" ? 200 : 80;
+          console.log(`      Response preview: ${result.choices[0].message.content.substring(0, previewLength)}...`);
           
           // Show cost info if available
           if (result.cost_estimate) {
@@ -519,50 +523,43 @@ class LLMRouterDemo {
 
         if (response.ok && response.body) {
           console.log(`      ✅ ${test.name} streaming started...`);
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
           let chunks = 0;
           let totalContent = "";
           let firstChunkTime = Date.now();
 
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              
-              const chunk = decoder.decode(value);
-              chunks++;
-              
-              // Try to parse streaming data
-              const lines = chunk.split('\n').filter(line => line.trim());
-              for (const line of lines) {
-                if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-                  try {
-                    const data = JSON.parse(line.substring(6));
-                    if (data.choices?.[0]?.delta?.content) {
-                      totalContent += data.choices[0].delta.content;
-                    }
-                  } catch (e) {
-                    // Ignore parsing errors for non-JSON chunks
+          // Use Node.js compatible stream handling
+          const stream = response.body as any;
+          
+          for await (const chunk of stream) {
+            const text = chunk.toString();
+            chunks++;
+            
+            // Try to parse streaming data
+            const lines = text.split('\n').filter(line => line.trim());
+            for (const line of lines) {
+              if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                try {
+                  const data = JSON.parse(line.substring(6));
+                  if (data.choices?.[0]?.delta?.content) {
+                    totalContent += data.choices[0].delta.content;
                   }
+                } catch (e) {
+                  // Ignore parsing errors for non-JSON chunks
                 }
-              }
-              
-              if (chunks <= 3) {
-                console.log(`         Chunk ${chunks}: ${chunk.substring(0, 40)}...`);
               }
             }
             
-            const streamDuration = Date.now() - firstChunkTime;
-            console.log(`      ✅ ${test.name} complete:`);
-            console.log(`         Chunks received: ${chunks}`);
-            console.log(`         Stream duration: ${streamDuration}ms`);
-            console.log(`         Content length: ${totalContent.length} chars`);
-            console.log(`         Preview: ${totalContent.substring(0, 80)}...`);
-            
-          } finally {
-            reader.releaseLock();
+            if (chunks <= 3) {
+              console.log(`         Chunk ${chunks}: ${text.substring(0, 40)}...`);
+            }
           }
+          
+          const streamDuration = Date.now() - firstChunkTime;
+          console.log(`      ✅ ${test.name} complete:`);
+          console.log(`         Chunks received: ${chunks}`);
+          console.log(`         Stream duration: ${streamDuration}ms`);
+          console.log(`         Content length: ${totalContent.length} chars`);
+          console.log(`         Preview: ${totalContent.substring(0, 80)}...`);
         } else {
           const errorText = await response.text();
           console.log(`      ❌ ${test.name} failed: ${response.status}`);
@@ -711,40 +708,36 @@ class LLMRouterDemo {
             console.log("   🔄 Real-time streaming response:");
             console.log("   Smart Router: ", { flush: false });
           
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
             let chunkCount = 0;
+            let responseText = '';
           
-            try {
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
+            // Use Node.js compatible stream handling
+            const stream = response.body as any;
+            
+            for await (const chunk of stream) {
+              const text = chunk.toString();
+              responseText += text;
               
-                const chunk = decoder.decode(value);
-                const lines = chunk.split('\n').filter(line => line.trim());
+              const lines = text.split('\n').filter(line => line.trim());
               
-                for (const line of lines) {
-                  if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-                    try {
-                      const data = JSON.parse(line.substring(6));
-                      if (data.choices?.[0]?.delta?.content) {
-                        process.stdout.write(data.choices[0].delta.content);
-                        chunkCount++;
-                      }
-                    } catch (e) {
-                      // Ignore parsing errors
+              for (const line of lines) {
+                if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                  try {
+                    const data = JSON.parse(line.substring(6));
+                    if (data.choices?.[0]?.delta?.content) {
+                      process.stdout.write(data.choices[0].delta.content);
+                      chunkCount++;
                     }
+                  } catch (e) {
+                    // Ignore parsing errors
                   }
                 }
               }
-            
-              console.log(`\n   ✅ Real-time streaming completed successfully!`);
-              console.log(`      Chunks received: ${chunkCount}`);
-              console.log("      🎯 This demonstrates the working smart routing with streaming");
-            
-            } finally {
-              reader.releaseLock();
             }
+            
+            console.log(`\n   ✅ Real-time streaming completed successfully!`);
+            console.log(`      Chunks received: ${chunkCount}`);
+            console.log("      🎯 This demonstrates the working smart routing with streaming");
           } else {
             console.log(`   ❌ Streaming failed: ${response.status}`);
             console.log("      💡 This might be due to missing API key or network issues");
@@ -799,45 +792,37 @@ class LLMRouterDemo {
         console.log("🔄 Real-time Anthropic streaming response:");
         console.log("   Claude: ", { flush: false });
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
         let chunkCount = 0;
 
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+        // Use Node.js compatible stream handling
+        const stream = response.body as any;
+        
+        for await (const chunk of stream) {
+          const text = chunk.toString();
+          const lines = text.split('\n').filter(line => line.trim());
 
-            const chunk = decoder.decode(value);
-            const lines = chunk.split('\n').filter(line => line.trim());
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              if (line === 'data: [DONE]') {
+                break;
+              }
 
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                try {
-                  const data = JSON.parse(line.substring(6));
-                  
-                  if (data.type === 'content_block_delta' && data.delta?.text) {
-                    process.stdout.write(data.delta.text);
-                    chunkCount++;
-                  }
-                  
-                  if (data.type === 'message_stop') {
-                    break;
-                  }
-                } catch (e) {
-                  // Ignore parsing errors for event lines
+              try {
+                const data = JSON.parse(line.substring(6));
+                if (data.type === 'content_block_delta' && data.delta?.text) {
+                  process.stdout.write(data.delta.text);
+                  chunkCount++;
                 }
+              } catch (e) {
+                // Ignore parsing errors for now
               }
             }
           }
-
-          console.log(`\n✅ Direct Anthropic streaming completed successfully!`);
-          console.log(`   Chunks received: ${chunkCount}`);
-          console.log("   🎯 This demonstrates the working Anthropic streaming integration");
-
-        } finally {
-          reader.releaseLock();
         }
+
+        console.log(`\n✅ Real-time Anthropic streaming completed successfully!`);
+        console.log(`   Chunks received: ${chunkCount}`);
+        console.log("   🎯 This demonstrates the working Anthropic SSE streaming");
       } else {
         console.log(`❌ Anthropic streaming failed: ${response.status}`);
         const errorText = await response.text();
