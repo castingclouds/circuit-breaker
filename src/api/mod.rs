@@ -14,7 +14,7 @@ use tower_http::cors::CorsLayer;
 use tracing::info;
 
 use handlers::{OpenAIApiState, health_check, list_models, chat_completions, get_model, not_found};
-use crate::llm::{LLMRouter, LLMRouterConfig};
+use crate::llm::LLMRouter;
 use crate::llm::cost::CostOptimizer;
 
 /// OpenAI API server configuration
@@ -258,7 +258,7 @@ mod tests {
     #[tokio::test]
     async fn test_router_creation() {
         let server = create_default_server();
-        let router = server.create_router();
+        let _router = server.create_router();
         
         // Test that the router was created successfully
         // In a real test, you might want to test specific routes

@@ -2,12 +2,11 @@
 // This module contains the actual provider clients that interface with external LLM APIs
 
 use async_trait::async_trait;
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use reqwest::{header::HeaderMap, header::HeaderValue, header::CONTENT_TYPE, Client};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::{
     LLMError, LLMRequest, LLMResponse, LLMResult, StreamingChunk, 

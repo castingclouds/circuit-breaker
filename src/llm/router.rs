@@ -14,11 +14,11 @@ use crate::api::types::{CircuitBreakerConfig, is_virtual_model};
 
 /// Simplified LLM Router for Anthropic
 pub struct LLMRouter {
-    config: LLMRouterConfig,
+    _config: LLMRouterConfig,
     providers: HashMap<LLMProviderType, Box<dyn LLMProviderClient>>,
     provider_configs: HashMap<LLMProviderType, LLMProvider>,
     health_status: Arc<RwLock<HashMap<LLMProviderType, ProviderHealthStatus>>>,
-    api_keys: Arc<SimpleApiKeyStorage>,
+    _api_keys: Arc<SimpleApiKeyStorage>,
 }
 
 impl LLMRouter {
@@ -103,11 +103,11 @@ impl LLMRouter {
         configs.insert(LLMProviderType::Anthropic, anthropic_config);
 
         let router = Self {
-            config: LLMRouterConfig::default(),
+            _config: LLMRouterConfig::default(),
             providers,
             provider_configs: configs,
             health_status: Arc::new(RwLock::new(health_status)),
-            api_keys: Arc::new(SimpleApiKeyStorage::new()),
+            _api_keys: Arc::new(SimpleApiKeyStorage::new()),
         };
 
         Ok(router)
@@ -360,7 +360,7 @@ impl LLMRouter {
     async fn resolve_virtual_model(
         &self,
         virtual_model: &str,
-        config: &Option<CircuitBreakerConfig>
+        _config: &Option<CircuitBreakerConfig>
     ) -> LLMResult<String> {
         match virtual_model {
             "auto" => self.select_balanced().await,

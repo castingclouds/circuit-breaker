@@ -66,6 +66,9 @@ sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid"
 ring = "0.16"
 jsonwebtoken = "8.3"
 
+[dev-dependencies]
+tokio-test = "0.4"
+
 # Examples - Client examples only (no servers)
 [[example]]
 name = "basic_workflow"
@@ -95,13 +98,7 @@ path = "examples/rust/places_ai_agent_demo.rs"
 name = "nats_demo"
 path = "examples/rust/nats_demo.rs"
 
-[[example]]
-name = "nats_timing_test"
-path = "examples/nats_timing_test.rs"
 
-[[example]]
-name = "nats_debug_token_search"
-path = "examples/nats_debug_token_search.rs"
 
 [[example]]
 name = "llm_router_demo"

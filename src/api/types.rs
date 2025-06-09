@@ -490,7 +490,7 @@ pub fn create_error_response(message: String, error_type: String, param: Option<
 
 /// Helper function to generate a completion ID
 pub fn generate_completion_id() -> String {
-    format!("chatcmpl-{}", uuid::Uuid::new_v4().to_string().replace("-", "")[..29].to_string())
+    format!("chatcmpl-{}", uuid::Uuid::new_v4().to_string().replace("-", "")[..27].to_string())
 }
 
 /// Helper function to get current Unix timestamp
@@ -575,7 +575,7 @@ mod tests {
     fn test_completion_id_generation() {
         let id = generate_completion_id();
         assert!(id.starts_with("chatcmpl-"));
-        assert_eq!(id.len(), 36); // "chatcmpl-" + 29 chars
+        assert_eq!(id.len(), 36); // "chatcmpl-" + 27 chars
     }
     
     #[test]

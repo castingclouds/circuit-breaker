@@ -6,11 +6,11 @@
 use super::*;
 use futures::{Stream, StreamExt};
 use std::pin::Pin;
-use std::task::{Context, Poll};
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
-use serde_json::json;
+
 use uuid::Uuid;
 use std::collections::HashMap;
 
@@ -295,7 +295,7 @@ pub fn create_usage_event(id: String, tokens_used: u32, cost: f64) -> StreamEven
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio_test;
+
 
     #[tokio::test]
     async fn test_streaming_manager_creation() {

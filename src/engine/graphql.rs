@@ -596,12 +596,12 @@ impl From<&LLMProvider> for AgentLLMProviderGQL {
                 model: model.clone(),
                 base_url: base_url.clone(),
             },
-            LLMProvider::Anthropic { model, api_key, .. } => AgentLLMProviderGQL {
+            LLMProvider::Anthropic { model, .. } => AgentLLMProviderGQL {
                 provider_type: "anthropic".to_string(),
                 model: model.clone(),
                 base_url: None,
             },
-            LLMProvider::Google { model, api_key, .. } => AgentLLMProviderGQL {
+            LLMProvider::Google { model, .. } => AgentLLMProviderGQL {
                 provider_type: "google".to_string(),
                 model: model.clone(),
                 base_url: None,
@@ -836,7 +836,7 @@ impl Query {
     /// Get available transitions for a token
     async fn available_transitions(
         &self, 
-        ctx: &Context<'_>, 
+        ctx: &Context<'_>,
         token_id: String
     ) -> async_graphql::Result<Vec<TransitionGQL>> {
         let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
@@ -1050,7 +1050,7 @@ impl Query {
     }
 
     /// Get LLM provider by ID
-    async fn llm_provider(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<LLMProviderGQL>> {
+    async fn llm_provider(&self, _ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<LLMProviderGQL>> {
         // Mock implementation
         if id == "openai" {
             Ok(Some(LLMProviderGQL {
@@ -1076,7 +1076,7 @@ impl Query {
     }
 
     /// Get budget status for user or project
-    async fn budget_status(&self, ctx: &Context<'_>, user_id: Option<String>, project_id: Option<String>) -> async_graphql::Result<BudgetStatusGQL> {
+    async fn budget_status(&self, _ctx: &Context<'_>, user_id: Option<String>, project_id: Option<String>) -> async_graphql::Result<BudgetStatusGQL> {
         // Mock implementation
         Ok(BudgetStatusGQL {
             budget_id: if let Some(pid) = project_id { 
@@ -1095,7 +1095,7 @@ impl Query {
     }
 
     /// Get cost analytics for a time period
-    async fn cost_analytics(&self, ctx: &Context<'_>, input: CostAnalyticsInput) -> async_graphql::Result<CostAnalyticsGQL> {
+    async fn cost_analytics(&self, _ctx: &Context<'_>, input: CostAnalyticsInput) -> async_graphql::Result<CostAnalyticsGQL> {
         // Mock implementation
         Ok(CostAnalyticsGQL {
             total_cost: 125.75,
@@ -1872,7 +1872,7 @@ impl Subscription {
     }
 
     /// Subscribe to cost updates for real-time budget monitoring
-    async fn cost_updates(&self, ctx: &Context<'_>, user_id: Option<String>) -> async_graphql::Result<impl futures::Stream<Item = String>> {
+    async fn cost_updates(&self, _ctx: &Context<'_>, _user_id: Option<String>) -> async_graphql::Result<impl futures::Stream<Item = String>> {
         // Mock cost update stream - in production this would track real cost changes
         let mock_updates = vec![
             r#"{"type":"cost_update","user_id":"user123","cost_delta":0.025,"total_cost":15.50,"timestamp":"2024-01-15T10:30:00Z"}"#,
@@ -1880,7 +1880,6 @@ impl Subscription {
         ];
         
         let stream = futures::stream::iter(mock_updates.into_iter().map(|update| {
-            tokio::time::sleep(std::time::Duration::from_secs(5));
             update.to_string()
         }));
         
