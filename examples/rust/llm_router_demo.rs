@@ -31,6 +31,17 @@ use circuit_breaker::{
     },
 };
 use async_graphql::Request;
+use std::io::{self, Write};
+
+/// Interactive pause for demo presentations
+fn wait_for_enter(message: &str) {
+    println!("\n🎤 {}", message);
+    print!("   Press Enter to continue...");
+    io::stdout().flush().unwrap();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    println!();
+}
 
 
 
@@ -79,8 +90,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    wait_for_enter("Ready to demonstrate smart routing capabilities?");
+    
     // Demo smart routing capabilities
     demonstrate_smart_routing(&client).await?;
+    
+    wait_for_enter("Smart routing demo complete! Ready to check LLM providers?");
 
     println!("\n📊 5. Checking LLM Providers");
     println!("----------------------------");
@@ -122,6 +137,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "✅ Available Providers: {}",
         serde_json::to_string_pretty(&providers_result)?
     );
+    
+    wait_for_enter("Provider configuration shown! Ready to test real-time streaming?");
 
     println!("\n💬 6. Real Streaming LLM Integration");
     println!("-----------------------------------");
@@ -217,6 +234,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   • WebSocket endpoint: ws://localhost:4000/ws ✅");
     println!("   • Real-time streaming ready ✅");
     println!("   • Test in GraphiQL: http://localhost:4000 🌐");
+    
+    wait_for_enter("Streaming demo complete! Ready to check budget management?");
 
     println!("\n💰 7. Checking Budget Status");
     println!("---------------------------");
@@ -258,6 +277,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             budget.get("message").unwrap_or(&json!("Unknown"))
         );
     }
+    
+    wait_for_enter("Budget status checked! Ready to analyze cost analytics?");
 
     println!("\n📈 8. Getting Cost Analytics");
     println!("---------------------------");
@@ -316,6 +337,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             serde_json::to_string_pretty(analytics.get("providerBreakdown").unwrap_or(&json!({})))?
         );
     }
+    
+    wait_for_enter("Cost analytics reviewed! Ready to configure a new provider?");
 
     println!("\n⚙️  9. Configuring New Provider");
     println!("------------------------------");
@@ -393,6 +416,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("   Models: {} configured", models.len());
         }
     }
+    
+    wait_for_enter("Provider configured! Ready to set budget limits?");
 
     println!("\n💵 10. Setting Budget Limits");
     println!("--------------------------");
@@ -441,6 +466,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             budget.get("message").unwrap_or(&json!("Unknown"))
         );
     }
+    
+    wait_for_enter("Budget limits set! Ready to validate WebSocket infrastructure?");
 
     println!("\n🔄 11. WebSocket Streaming Implementation Validation");
     println!("---------------------------------------------------");
@@ -536,6 +563,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   ");
     println!("   Token Updates:");
     println!("   subscription {{ tokenUpdates(tokenId: \"demo-token\") {{ id place }} }}");
+    
+    wait_for_enter("WebSocket validation complete! Ready for final integration analysis?");
 
     println!("\n🎯 12. Real API Integration Analysis");
     println!("------------------------------------");
@@ -548,6 +577,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   • Health monitoring and latency tracking");
     println!("   • Project-scoped request routing");
     println!("   • WebSocket streaming infrastructure validation");
+    
+    wait_for_enter("Integration analysis complete! Ready for final summary?");
 
     println!("\n🏁 Real Integration Demo Complete!");
     println!("==================================");

@@ -15,11 +15,30 @@ import WebSocket from "ws";
 import { createClient } from "graphql-ws";
 import { v4 as uuidv4 } from "uuid";
 import { config } from "dotenv";
-import { createInterface } from "readline";
-import { Readable } from "stream";
+import { createInterface } from 'readline';
+import { Readable } from 'stream';
 
 // Load environment variables
 config();
+
+/// Interactive pause for demo presentations
+function waitForEnter(message: string): Promise<void> {
+  return new Promise((resolve) => {
+    console.log(`\n🎤 ${message}`);
+    process.stdout.write('   Press Enter to continue...');
+    
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+    
+    rl.question('', () => {
+      rl.close();
+      console.log();
+      resolve();
+    });
+  });
+}
 
 interface GraphQLResponse<T = any> {
   data?: T;
@@ -164,21 +183,52 @@ class LLMRouterDemo {
       return;
     }
 
+    await waitForEnter("Ready to demonstrate smart routing capabilities?");
+    
     // Demo smart routing capabilities
     await this.demonstrateSmartRouting();
+    
+    await waitForEnter("Smart routing demo complete! Ready to check LLM providers?");
+    
     await this.checkLLMProviders();
+    
+    await waitForEnter("Provider configuration shown! Ready to test direct LLM router integration?");
+    
     await this.testDirectLLMRouterIntegration();
+    
+    await waitForEnter("LLM router integration tested! Ready for streaming demo?");
+    
     if (anthropicApiKey) {
       await this.testDirectAnthropicStreaming(anthropicApiKey);
     } else {
       console.log("\n⏭️  Skipping direct Anthropic streaming test (no API key)");
     }
+    
+    await waitForEnter("Streaming demo complete! Ready to check budget management?");
+    
     await this.checkBudgetStatus();
+    
+    await waitForEnter("Budget status checked! Ready to analyze cost analytics?");
+    
     await this.getCostAnalytics();
+    
+    await waitForEnter("Cost analytics reviewed! Ready to configure a new provider?");
+    
     await this.configureLLMProvider();
+    
+    await waitForEnter("Provider configured! Ready to set budget limits?");
+    
     await this.setBudgetLimits();
+    
+    await waitForEnter("Budget limits set! Ready to validate WebSocket infrastructure?");
+    
     await this.validateWebSocketStreaming();
+    
+    await waitForEnter("WebSocket validation complete! Ready to test GraphQL subscriptions?");
+    
     await this.testGraphQLSubscriptions();
+    
+    await waitForEnter("GraphQL subscriptions tested! Ready for final integration analysis?");
     await this.realApiIntegrationAnalysis();
     this.printSummary();
   }
