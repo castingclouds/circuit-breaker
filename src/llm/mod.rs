@@ -8,6 +8,8 @@ pub mod router;
 pub mod streaming;
 pub mod security;
 pub mod cost;
+pub mod traits;
+pub mod sse;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -48,8 +50,13 @@ impl std::fmt::Display for LLMProviderType {
 
 // Re-export main types for easier access
 pub use router::LLMRouter;
+pub use traits::{
+    LLMProviderClient, ModelInfo, ProviderConfig, ProviderConfigRequirements,
+    AuthMethod, RateLimitInfo, ParameterRestriction, ModelCapability,
+    ProviderFactory, CostCalculator, CostBreakdown, ProviderHealth,
+    ProviderRegistry
+};
 pub use cost::{CostOptimizer, BudgetManager, CostAnalyzer, InMemoryUsageTracker};
-pub use providers::LLMProviderClient;
 
 // Re-export streaming types
 pub use streaming::{StreamEvent, StreamingSession, StreamingProtocol};
@@ -84,21 +91,7 @@ pub struct LLMModel {
     pub capabilities: Vec<ModelCapability>,
 }
 
-/// Model capabilities
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ModelCapability {
-    TextGeneration,
-    CodeGeneration,
-    TextAnalysis,
-    Translation,
-    Summarization,
-    QuestionAnswering,
-    FunctionCalling,
-    Vision,
-    Audio,
-    Multimodal,
-    Reasoning,
-}
+// ModelCapability is now defined in traits.rs
 
 /// Rate limiting configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,13 +129,13 @@ pub struct LLMRequest {
     pub id: Uuid,
     pub model: String,
     pub messages: Vec<ChatMessage>,
-    pub temperature: Option<f32>,
+    pub temperature: Option<f64>,
     pub max_tokens: Option<u32>,
-    pub top_p: Option<f32>,
-    pub frequency_penalty: Option<f32>,
-    pub presence_penalty: Option<f32>,
+    pub top_p: Option<f64>,
+    pub frequency_penalty: Option<f64>,
+    pub presence_penalty: Option<f64>,
     pub stop: Option<Vec<String>>,
-    pub stream: bool,
+    pub stream: Option<bool>,
     pub functions: Option<Vec<FunctionDefinition>>,
     pub function_call: Option<String>,
     pub user: Option<String>,
@@ -237,6 +230,9 @@ pub struct RoutingInfo {
     pub latency_ms: u64,
     pub retry_count: u32,
     pub fallback_used: bool,
+    pub provider_used: LLMProviderType,
+    pub total_latency_ms: u64,
+    pub provider_latency_ms: u64,
 }
 
 /// Streaming chunk for real-time responses
@@ -332,6 +328,12 @@ pub enum LLMError {
     
     #[error("Serialization error: {0}")]
     Serialization(String),
+    
+    #[error("Parse error: {0}")]
+    Parse(String),
+    
+    #[error("Provider error: {0}")]
+    Provider(String),
 }
 
 /// Result type for LLM operations

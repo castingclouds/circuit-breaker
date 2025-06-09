@@ -1,29 +1,70 @@
-//! Simplified LLM Router Implementation
+//! LLM Router with Modular Provider System
 //!
-//! This module implements a simplified router focused on Anthropic provider
-//! with real API integration and cost tracking.
+//! This module implements a router that uses the new modular provider architecture
+//! with support for multiple providers and proper API key management.
 
-use super::providers::{LLMProviderClient, create_provider_client};
+use super::traits::{LLMProviderClient, ProviderRegistry};
+use super::providers;
 use super::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
-use tracing::{error, warn, info};
-use crate::api::types::{CircuitBreakerConfig, is_virtual_model};
+use tracing::{warn, info};
+use futures::StreamExt;
 
-/// Simplified LLM Router for Anthropic
+/// Provider health status tracking
+#[derive(Debug, Clone)]
+pub struct ProviderHealthStatus {
+    pub is_healthy: bool,
+    pub last_check: chrono::DateTime<chrono::Utc>,
+    pub consecutive_failures: u32,
+    pub last_error: Option<String>,
+}
+
+impl Default for ProviderHealthStatus {
+    fn default() -> Self {
+        Self {
+            is_healthy: true,
+            last_check: chrono::Utc::now(),
+            consecutive_failures: 0,
+            last_error: None,
+        }
+    }
+}
+
+/// LLM Router configuration
+#[derive(Debug, Clone)]
+pub struct LLMRouterConfig {
+    pub max_retries: u32,
+    pub retry_delay_ms: u64,
+    pub health_check_interval_seconds: u64,
+    pub enable_cost_tracking: bool,
+    pub enable_health_monitoring: bool,
+}
+
+impl Default for LLMRouterConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            retry_delay_ms: 1000,
+            health_check_interval_seconds: 300, // 5 minutes
+            enable_cost_tracking: true,
+            enable_health_monitoring: true,
+        }
+    }
+}
+
+/// Main LLM Router using modular provider system
 pub struct LLMRouter {
-    _config: LLMRouterConfig,
+    config: LLMRouterConfig,
     providers: HashMap<LLMProviderType, Box<dyn LLMProviderClient>>,
-    provider_configs: HashMap<LLMProviderType, LLMProvider>,
     health_status: Arc<RwLock<HashMap<LLMProviderType, ProviderHealthStatus>>>,
-    _api_keys: Arc<SimpleApiKeyStorage>,
     configured_api_keys: HashMap<LLMProviderType, String>,
 }
 
 impl LLMRouter {
-    /// Create a new LLM router with simplified setup
+    /// Create a new LLM router with default configuration
     pub async fn new() -> Result<Self, LLMError> {
         Self::new_with_keys(None, None, None).await
     }
@@ -34,274 +75,80 @@ impl LLMRouter {
         anthropic_key: Option<String>, 
         google_key: Option<String>,
     ) -> Result<Self, LLMError> {
+        let config = LLMRouterConfig::default();
         let mut providers = HashMap::new();
-        let mut configs = HashMap::new();
         let mut health_status = HashMap::new();
-
-        // Default OpenAI provider configuration
-        let openai_config = LLMProvider {
-            id: uuid::Uuid::new_v4(),
-            provider_type: LLMProviderType::OpenAI,
-            name: "OpenAI".to_string(),
-            base_url: "https://api.openai.com/v1".to_string(),
-            api_key_id: Some("openai_key".to_string()),
-            models: vec![
-                LLMModel {
-                    id: "gpt-3.5-turbo".to_string(),
-                    name: "GPT-3.5 Turbo".to_string(),
-                    provider_id: uuid::Uuid::new_v4(),
-                    max_tokens: 4096,
-                    context_window: 16385,
-                    cost_per_input_token: 0.000001,
-                    cost_per_output_token: 0.000002,
-                    supports_streaming: true,
-                    supports_function_calling: true,
-                    capabilities: vec![
-                        ModelCapability::TextGeneration,
-                        ModelCapability::TextAnalysis,
-                        ModelCapability::FunctionCalling,
-                    ],
-                },
-                LLMModel {
-                    id: "gpt-3.5-turbo".to_string(),
-                    name: "GPT-3.5 Turbo".to_string(),
-                    provider_id: uuid::Uuid::new_v4(),
-                    max_tokens: 4096,
-                    context_window: 16385,
-                    cost_per_input_token: 0.000001,
-                    cost_per_output_token: 0.000002,
-                    supports_streaming: true,
-                    supports_function_calling: true,
-                    capabilities: vec![
-                        ModelCapability::TextGeneration,
-                        ModelCapability::TextAnalysis,
-                        ModelCapability::FunctionCalling,
-                    ],
-                },
-                LLMModel {
-                    id: "o4-mini-2025-04-16".to_string(),
-                    name: "OpenAI o4 Mini".to_string(),
-                    provider_id: uuid::Uuid::new_v4(),
-                    max_tokens: 16384,
-                    context_window: 128000,
-                    cost_per_input_token: 0.000001,
-                    cost_per_output_token: 0.000002,
-                    supports_streaming: true,
-                    supports_function_calling: true,
-                    capabilities: vec![
-                        ModelCapability::TextGeneration,
-                        ModelCapability::TextAnalysis,
-                        ModelCapability::CodeGeneration,
-                        ModelCapability::Reasoning,
-                        ModelCapability::FunctionCalling,
-                    ],
-                },
-            ],
-            rate_limits: RateLimits::default(),
-            health_status: ProviderHealthStatus::default(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-
-        // Default Google provider configuration
-        let google_config = LLMProvider {
-            id: uuid::Uuid::new_v4(),
-            provider_type: LLMProviderType::Google,
-            name: "Google Gemini".to_string(),
-            base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
-            api_key_id: Some("google_key".to_string()),
-            models: vec![
-                LLMModel {
-                    id: "gemini-pro".to_string(),
-                    name: "Gemini Pro".to_string(),
-                    provider_id: uuid::Uuid::new_v4(),
-                    max_tokens: 8192,
-                    context_window: 32768,
-                    cost_per_input_token: 0.0000005,
-                    cost_per_output_token: 0.0000015,
-                    supports_streaming: true,
-                    supports_function_calling: true,
-                    capabilities: vec![
-                        ModelCapability::TextGeneration,
-                        ModelCapability::TextAnalysis,
-                        ModelCapability::CodeGeneration,
-                        ModelCapability::Reasoning,
-                        ModelCapability::FunctionCalling,
-                    ],
-                },
-                LLMModel {
-                    id: "gemini-2.5-flash-preview-05-20".to_string(),
-                    name: "Gemini 2.5 Flash Preview".to_string(),
-                    provider_id: uuid::Uuid::new_v4(),
-                    max_tokens: 8192,
-                    context_window: 1048576,
-                    cost_per_input_token: 0.000000075,
-                    cost_per_output_token: 0.0000003,
-                    supports_streaming: true,
-                    supports_function_calling: true,
-                    capabilities: vec![
-                        ModelCapability::TextGeneration,
-                        ModelCapability::TextAnalysis,
-                        ModelCapability::CodeGeneration,
-                        ModelCapability::Reasoning,
-                        ModelCapability::FunctionCalling,
-                    ],
-                },
-            ],
-            rate_limits: RateLimits::default(),
-            health_status: ProviderHealthStatus::default(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-
-        // Default Anthropic provider configuration
-        let anthropic_config = LLMProvider {
-            id: uuid::Uuid::new_v4(),
-            provider_type: LLMProviderType::Anthropic,
-            name: "Anthropic Claude".to_string(),
-            base_url: "https://api.anthropic.com".to_string(),
-            api_key_id: Some("anthropic_key".to_string()),
-            models: vec![
-                LLMModel {
-                    id: "claude-3-haiku-20240307".to_string(),
-                    name: "Claude 3 Haiku".to_string(),
-                    provider_id: uuid::Uuid::new_v4(),
-                    max_tokens: 4096,
-                    context_window: 200000,
-                    cost_per_input_token: 0.00000025,
-                    cost_per_output_token: 0.00000125,
-                    supports_streaming: true,
-                    supports_function_calling: false,
-                    capabilities: vec![
-                        ModelCapability::TextGeneration,
-                        ModelCapability::TextAnalysis,
-                    ],
-                },
-                LLMModel {
-                    id: "claude-3-sonnet-20240229".to_string(),
-                    name: "Claude 3 Sonnet".to_string(),
-                    provider_id: uuid::Uuid::new_v4(),
-                    max_tokens: 4096,
-                    context_window: 200000,
-                    cost_per_input_token: 0.000003,
-                    cost_per_output_token: 0.000015,
-                    supports_streaming: true,
-                    supports_function_calling: false,
-                    capabilities: vec![
-                        ModelCapability::TextGeneration,
-                        ModelCapability::TextAnalysis,
-                    ],
-                },
-                LLMModel {
-                    id: "claude-sonnet-4-20250514".to_string(),
-                    name: "Claude 4".to_string(),
-                    provider_id: uuid::Uuid::new_v4(),
-                    max_tokens: 8192,
-                    context_window: 200000,
-                    cost_per_input_token: 0.000003,
-                    cost_per_output_token: 0.000015,
-                    supports_streaming: true,
-                    supports_function_calling: true,
-                    capabilities: vec![
-                        ModelCapability::TextGeneration,
-                        ModelCapability::TextAnalysis,
-                        ModelCapability::CodeGeneration,
-                        ModelCapability::Reasoning,
-                    ],
-                },
-            ],
-            rate_limits: RateLimits::default(),
-            health_status: ProviderHealthStatus::default(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-
-        // Create provider clients
-        let openai_client = create_provider_client(
-            &openai_config.provider_type,
-            Some(openai_config.base_url.clone()),
-        );
-
-        let google_client = create_provider_client(
-            &google_config.provider_type,
-            Some(google_config.base_url.clone()),
-        );
-
-        let anthropic_client = create_provider_client(
-            &anthropic_config.provider_type,
-            Some(anthropic_config.base_url.clone()),
-        );
-
-        providers.insert(LLMProviderType::OpenAI, openai_client);
-        providers.insert(LLMProviderType::Google, google_client);
-        providers.insert(LLMProviderType::Anthropic, anthropic_client);
-
-        configs.insert(LLMProviderType::OpenAI, openai_config);
-        configs.insert(LLMProviderType::Google, google_config);
-        configs.insert(LLMProviderType::Anthropic, anthropic_config);
-
-        health_status.insert(
-            LLMProviderType::OpenAI,
-            ProviderHealthStatus::default(),
-        );
-        health_status.insert(
-            LLMProviderType::Google,
-            ProviderHealthStatus::default(),
-        );
-        health_status.insert(
-            LLMProviderType::Anthropic,
-            ProviderHealthStatus::default(),
-        );
-
-        // Store configured API keys
         let mut configured_api_keys = HashMap::new();
+
+        // Initialize OpenAI provider if key is available
         if let Some(key) = openai_key.or_else(|| std::env::var("OPENAI_API_KEY").ok()) {
+            let client = providers::openai::create_client(key.clone(), None);
+            providers.insert(LLMProviderType::OpenAI, Box::new(client) as Box<dyn LLMProviderClient>);
+            health_status.insert(LLMProviderType::OpenAI, ProviderHealthStatus::default());
             configured_api_keys.insert(LLMProviderType::OpenAI, key);
+            info!("✅ OpenAI provider initialized");
         }
+
+        // Initialize Anthropic provider if key is available
         if let Some(key) = anthropic_key.or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()) {
+            let client = providers::anthropic::create_client(key.clone(), None);
+            providers.insert(LLMProviderType::Anthropic, Box::new(client) as Box<dyn LLMProviderClient>);
+            health_status.insert(LLMProviderType::Anthropic, ProviderHealthStatus::default());
             configured_api_keys.insert(LLMProviderType::Anthropic, key);
+            info!("✅ Anthropic provider initialized");
         }
+
+        // Initialize Google provider if key is available
         if let Some(key) = google_key.or_else(|| std::env::var("GOOGLE_API_KEY").ok()) {
+            let client = providers::google::create_client(key.clone(), None);
+            providers.insert(LLMProviderType::Google, Box::new(client) as Box<dyn LLMProviderClient>);
+            health_status.insert(LLMProviderType::Google, ProviderHealthStatus::default());
             configured_api_keys.insert(LLMProviderType::Google, key);
+            info!("✅ Google provider initialized");
         }
 
-        let router = Self {
-            _config: LLMRouterConfig::default(),
-            providers,
-            provider_configs: configs,
-            health_status: Arc::new(RwLock::new(health_status)),
-            _api_keys: Arc::new(SimpleApiKeyStorage::new()),
-            configured_api_keys,
-        };
+        if providers.is_empty() {
+            return Err(LLMError::Internal("No providers configured with valid API keys".to_string()));
+        }
 
-        Ok(router)
+        Ok(Self {
+            config,
+            providers,
+            health_status: Arc::new(RwLock::new(health_status)),
+            configured_api_keys,
+        })
     }
 
-    /// Route a chat completion request
+    /// Route a chat completion request to the appropriate provider
     pub async fn chat_completion(&self, request: LLMRequest) -> LLMResult<LLMResponse> {
-        // Determine provider based on model name
-        let provider_type = self.determine_provider_for_model(&request.model);
+        // Resolve virtual model to actual model
+        let resolved_model = self.resolve_virtual_model(&request.model);
+        let provider_type = self.determine_provider_for_model(&resolved_model);
         
-        eprintln!("🔍 Router: Model '{}' -> Provider '{}'", request.model, provider_type);
+        eprintln!("🔍 Router: Model '{}' -> Resolved '{}' -> Provider '{}'", request.model, resolved_model, provider_type);
+        
+        let provider_client = self.providers.get(&provider_type)
+            .ok_or_else(|| LLMError::Internal(format!("Provider {} not available", provider_type)))?;
 
-        let provider_client = self
-            .providers
-            .get(&provider_type)
-            .ok_or_else(|| LLMError::ProviderNotFound(provider_type.to_string()))?;
-
-        // Get API key
         let api_key = self.get_api_key(&provider_type).await?;
 
+        // Create modified request with resolved model name
+        let mut resolved_request = request.clone();
+        resolved_request.model = resolved_model.clone();
+
+        let max_retries = self.config.max_retries;
         let mut retry_count = 0;
-        let max_retries = 3;
 
         while retry_count <= max_retries {
-            match provider_client.chat_completion(&request, &api_key).await {
+            match provider_client.chat_completion(&resolved_request, &api_key).await {
                 Ok(mut response) => {
                     // Update routing info
+                    response.routing_info.latency_ms = 0; // TODO: Measure actual latency
                     response.routing_info.retry_count = retry_count;
-                    response.routing_info.routing_strategy =
-                        RoutingStrategy::ModelSpecific("anthropic".to_string());
+                    response.routing_info.selected_provider = provider_type.clone();
+                    response.routing_info.routing_strategy = 
+                        RoutingStrategy::ModelSpecific(provider_type.to_string());
+                    response.routing_info.fallback_used = retry_count > 0;
 
                     // Update health status on success
                     self.update_health_success(&provider_type).await;
@@ -317,9 +164,8 @@ impl LLMRouter {
 
                     if retry_count <= max_retries {
                         tokio::time::sleep(std::time::Duration::from_millis(
-                            100 * retry_count as u64,
-                        ))
-                        .await;
+                            self.config.retry_delay_ms * retry_count as u64,
+                        )).await;
                     } else {
                         return Err(e);
                     }
@@ -335,31 +181,72 @@ impl LLMRouter {
         &self,
         request: LLMRequest,
     ) -> LLMResult<Box<dyn futures::Stream<Item = LLMResult<StreamingChunk>> + Send + Unpin>> {
-        // Determine provider based on model name
-        let provider_type = self.determine_provider_for_model(&request.model);
+        let provider = self.determine_provider_for_model(&request.model);
+        let api_key = self.get_api_key(&provider).await?;
         
-        eprintln!("🔍 Router Streaming: Model '{}' -> Provider '{}'", request.model, provider_type);
+        eprintln!("🔍 Router: streaming request for model {} using provider {:?}", request.model, provider);
         
-        // For now, use non-streaming and convert to stream to avoid lifetime issues
-        // This is a temporary solution until we can properly implement streaming
-        let response = self.chat_completion(request).await?;
-        
-        // Convert the single response into a stream
-        let chunk = StreamingChunk {
-            id: response.id,
-            object: "chat.completion.chunk".to_string(),
-            created: response.created,
-            model: response.model,
-            choices: response.choices.into_iter().map(|choice| StreamingChoice {
-                index: choice.index,
-                delta: choice.message,
-                finish_reason: choice.finish_reason,
-            }).collect(),
-            provider: response.provider,
-        };
-        
-        let stream = futures::stream::once(async move { Ok(chunk) });
-        Ok(Box::new(Box::pin(stream)))
+        if let Some(client) = self.providers.get(&provider) {
+            eprintln!("🔍 Router: calling provider client for streaming");
+            let stream_result = client.chat_completion_stream(request.clone(), api_key).await;
+            match stream_result {
+                Ok(stream) => {
+                    eprintln!("✅ Router: provider returned stream successfully");
+                    // Wrap the stream to add debugging
+                    let debug_stream = stream.map(|chunk_result| {
+                        match &chunk_result {
+                            Ok(chunk) => {
+                                eprintln!("📦 Router: received chunk from provider: {:?}", 
+                                    chunk.choices.get(0).map(|c| &c.delta.content).unwrap_or(&"<empty>".to_string()));
+                                eprintln!("🚀 Router: forwarding chunk to client");
+                            }
+                            Err(e) => {
+                                eprintln!("❌ Router: received error from provider: {}", e);
+                            }
+                        }
+                        chunk_result
+                    });
+                    Ok(Box::new(Box::pin(debug_stream)))
+                }
+                Err(e) => {
+                    eprintln!("❌ Router: provider returned error: {}", e);
+                    Err(e)
+                }
+            }
+        } else {
+            // For unsupported providers, fall back to mock streaming
+            let response = self.chat_completion(request).await?;
+            
+            let chunk = StreamingChunk {
+                id: response.id,
+                object: "chat.completion.chunk".to_string(),
+                created: response.created,
+                model: response.model,
+                choices: response.choices.into_iter().map(|choice| StreamingChoice {
+                    index: choice.index,
+                    delta: choice.message,
+                    finish_reason: choice.finish_reason,
+                }).collect(),
+                provider: response.provider,
+            };
+            
+            let stream = futures::stream::once(async move { Ok(chunk) });
+            Ok(Box::new(Box::pin(stream)))
+        }
+    }
+
+    /// Resolve virtual model name to actual model name
+    pub fn resolve_virtual_model(&self, model: &str) -> String {
+        match model {
+            "auto" => "claude-3-haiku-20240307".to_string(), // Default to fast, cost-effective model
+            "cb:smart-chat" => "claude-3-sonnet-20240229".to_string(), // Balanced model for chat
+            "cb:cost-optimal" => "claude-3-haiku-20240307".to_string(), // Cheapest option
+            "cb:fastest" => "o4-mini-2025-04-16".to_string(), // Fastest response
+            "cb:coding" => "claude-3-5-sonnet-20240620".to_string(), // Best for coding
+            "cb:analysis" => "claude-3-5-sonnet-20240620".to_string(), // Best for analysis
+            "cb:creative" => "claude-3-opus-20240229".to_string(), // Most creative
+            _ => model.to_string(), // Return as-is if not a virtual model
+        }
     }
 
     /// Determine which provider to use based on model name
@@ -371,12 +258,20 @@ impl LLMRouter {
         } else if model.starts_with("claude-") {
             LLMProviderType::Anthropic
         } else {
-            // Default to Anthropic for backward compatibility
-            LLMProviderType::Anthropic
+            // Check if any provider supports this model
+            for (provider_type, client) in &self.providers {
+                if client.supports_model(model) {
+                    return provider_type.clone();
+                }
+            }
+            
+            // Default to the first available provider
+            self.providers.keys().next().cloned()
+                .unwrap_or(LLMProviderType::OpenAI)
         }
     }
 
-    /// Get API key for provider from configured keys or environment
+    /// Get API key for provider
     async fn get_api_key(&self, provider_type: &LLMProviderType) -> LLMResult<String> {
         eprintln!("🔍 Getting API key for provider: {}", provider_type);
         eprintln!("   Configured keys available: {:?}", self.configured_api_keys.keys().collect::<Vec<_>>());
@@ -405,487 +300,201 @@ impl LLMRouter {
                     "GOOGLE_API_KEY not configured in server or environment".to_string(),
                 )
             }),
-            _ => Err(LLMError::ProviderNotFound(provider_type.to_string())),
+            _ => Err(LLMError::AuthenticationFailed(
+                format!("API key not configured for provider: {}", provider_type),
+            )),
         }
     }
 
     /// Update health status on successful request
     async fn update_health_success(&self, provider_type: &LLMProviderType) {
-        let mut health_status = self.health_status.write().await;
-        if let Some(status) = health_status.get_mut(provider_type) {
-            status.consecutive_failures = 0;
-            status.last_error = None;
-            status.error_rate = status.error_rate * 0.9; // Decay error rate
+        let mut health_map = self.health_status.write().await;
+        if let Some(status) = health_map.get_mut(provider_type) {
             status.is_healthy = true;
+            status.consecutive_failures = 0;
+            status.last_check = chrono::Utc::now();
+            status.last_error = None;
         }
     }
 
     /// Update health status on failed request
     async fn update_health_failure(&self, provider_type: &LLMProviderType, error: &LLMError) {
-        let mut health_status = self.health_status.write().await;
-        if let Some(status) = health_status.get_mut(provider_type) {
+        let mut health_map = self.health_status.write().await;
+        if let Some(status) = health_map.get_mut(provider_type) {
             status.consecutive_failures += 1;
+            status.last_check = chrono::Utc::now();
             status.last_error = Some(error.to_string());
-            status.error_rate = (status.error_rate * 0.9) + 0.1; // Increase error rate
-
-            // Mark as unhealthy if too many consecutive failures
+            
+            // Mark as unhealthy after 3 consecutive failures
             if status.consecutive_failures >= 3 {
                 status.is_healthy = false;
+                warn!("Provider {} marked as unhealthy after {} failures", provider_type, status.consecutive_failures);
             }
         }
     }
 
-    /// Get current health status for all providers
+    /// Get health status for a provider
+    pub async fn get_provider_health(&self, provider_type: &LLMProviderType) -> Option<ProviderHealthStatus> {
+        let health_map = self.health_status.read().await;
+        health_map.get(provider_type).cloned()
+    }
+
+    /// Get all available providers
+    pub fn get_available_providers(&self) -> Vec<LLMProviderType> {
+        self.providers.keys().cloned().collect()
+    }
+
+    /// Check if a provider is available
+    pub fn is_provider_available(&self, provider_type: &LLMProviderType) -> bool {
+        self.providers.contains_key(provider_type)
+    }
+
+    /// Get provider client for direct access (for advanced use cases)
+    pub fn get_provider_client(&self, provider_type: &LLMProviderType) -> Option<&dyn LLMProviderClient> {
+        self.providers.get(provider_type).map(|client| client.as_ref())
+    }
+
+    /// Get providers (for GraphQL compatibility)
+    pub async fn get_providers(&self) -> Vec<LLMProvider> {
+        let mut providers = Vec::new();
+        for (provider_type, client) in &self.providers {
+            let models = client.get_available_models();
+            let llm_models: Vec<LLMModel> = models.into_iter().map(|model| LLMModel {
+                id: model.id,
+                name: model.name,
+                provider_id: uuid::Uuid::new_v4(),
+                max_tokens: model.max_output_tokens,
+                context_window: model.context_window,
+                cost_per_input_token: model.cost_per_input_token,
+                cost_per_output_token: model.cost_per_output_token,
+                supports_streaming: model.supports_streaming,
+                supports_function_calling: model.supports_function_calling,
+                capabilities: model.capabilities.into_iter().map(|cap| match cap {
+                    crate::llm::traits::ModelCapability::TextGeneration => ModelCapability::TextGeneration,
+                    crate::llm::traits::ModelCapability::CodeGeneration => ModelCapability::CodeGeneration,
+                    crate::llm::traits::ModelCapability::ConversationalAI => ModelCapability::TextAnalysis,
+                    crate::llm::traits::ModelCapability::FunctionCalling => ModelCapability::FunctionCalling,
+                    crate::llm::traits::ModelCapability::Translation => ModelCapability::Translation,
+                    crate::llm::traits::ModelCapability::Summarization => ModelCapability::Summarization,
+                    crate::llm::traits::ModelCapability::ReasoningChain => ModelCapability::Reasoning,
+                    _ => ModelCapability::TextGeneration,
+                }).collect(),
+            }).collect();
+
+            providers.push(LLMProvider {
+                id: uuid::Uuid::new_v4(),
+                provider_type: provider_type.clone(),
+                name: format!("{:?}", provider_type),
+                base_url: match provider_type {
+                    LLMProviderType::OpenAI => "https://api.openai.com/v1".to_string(),
+                    LLMProviderType::Anthropic => "https://api.anthropic.com".to_string(),
+                    LLMProviderType::Google => "https://generativelanguage.googleapis.com/v1beta".to_string(),
+                    _ => "".to_string(),
+                },
+                api_key_id: Some(format!("{}_key", provider_type.to_string())),
+                models: llm_models,
+                rate_limits: RateLimits::default(),
+                health_status: super::ProviderHealthStatus::default(),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            });
+        }
+        providers
+    }
+
+    /// Get health status for all providers (for GraphQL compatibility)
     pub async fn get_health_status(&self) -> HashMap<LLMProviderType, ProviderHealthStatus> {
         self.health_status.read().await.clone()
     }
 
-    /// Get available providers
-    pub async fn get_providers(&self) -> Vec<LLMProvider> {
-        self.provider_configs.values().cloned().collect()
-    }
-
-    // ============================================================================
-    // Smart Routing Extensions
-    // These methods extend the existing router with intelligent routing capabilities
-    // ============================================================================
-
-    /// Smart routing method that extends existing chat_completion
+    /// Smart chat completion (for API handler compatibility)
     pub async fn smart_chat_completion(
         &self, 
         request: LLMRequest, 
-        routing_config: Option<CircuitBreakerConfig>
+        _config: Option<crate::api::types::CircuitBreakerConfig>
     ) -> LLMResult<LLMResponse> {
-        info!("Processing smart routing request for model: {}", request.model);
-        
-        // 1. Check if it's a virtual model or "auto"
-        if is_virtual_model(&request.model) {
-            return self.route_with_strategy(request, routing_config).await;
-        }
-        
-        // 2. Check if it's a real model name (existing functionality)
-        if self.has_model(&request.model).await {
-            // Apply smart routing if config provided, otherwise use existing logic
-            if let Some(config) = routing_config {
-                return self.route_with_preferences(request, config).await;
-            } else {
-                // Use existing chat_completion method
-                return self.chat_completion(request).await;
-            }
-        }
-        
-        // 3. Model not found, try smart selection
-        self.auto_select_model(request, routing_config).await
+        // For now, just use regular chat completion
+        self.chat_completion(request).await
     }
 
-    /// Smart routing for streaming requests
+    /// Smart streaming chat completion (for API handler compatibility)
     pub async fn smart_chat_completion_stream(
         &self,
         request: LLMRequest,
-        routing_config: Option<CircuitBreakerConfig>
+        _config: Option<crate::api::types::CircuitBreakerConfig>
     ) -> LLMResult<Box<dyn futures::Stream<Item = LLMResult<StreamingChunk>> + Send + Unpin>> {
-        info!("Processing smart streaming request for model: {}", request.model);
-        
-        // For virtual models, resolve to actual model first
-        let resolved_request = if is_virtual_model(&request.model) {
-            let selected_model = self.resolve_virtual_model(&request.model, &routing_config).await?;
-            LLMRequest {
-                model: selected_model,
-                ..request
-            }
-        } else {
-            request
-        };
-        
-        // Use existing streaming method with resolved model
-        self.stream_chat_completion(resolved_request).await
-    }
-    
-    /// Route request using strategy (extends existing routing)
-    async fn route_with_strategy(
-        &self, 
-        mut request: LLMRequest, 
-        config: Option<CircuitBreakerConfig>
-    ) -> LLMResult<LLMResponse> {
-        let default_strategy = "balanced".to_string();
-        let strategy = config
-            .as_ref()
-            .and_then(|c| c.routing_strategy.as_ref())
-            .unwrap_or(&default_strategy);
-            
-        info!("Routing with strategy: {}", strategy);
-            
-        // Select best provider based on strategy
-        let selected_model = match strategy.as_str() {
-            "cost_optimized" => self.select_cheapest_available().await?,
-            "performance_first" => self.select_fastest_available().await?,
-            "balanced" => self.select_balanced().await?,
-            "reliability_first" => self.select_most_reliable().await?,
-            _ => self.select_default().await?,
-        };
-        
-        info!("Selected model: {} for strategy: {}", selected_model, strategy);
-        
-        // Update request with selected model
-        request.model = selected_model;
-        
-        // Use existing chat_completion with selected model
-        self.chat_completion(request).await
+        // For now, just use regular streaming
+        self.stream_chat_completion(request).await
     }
 
-    /// Route with user preferences (cost, latency constraints)
-    async fn route_with_preferences(
-        &self,
-        mut request: LLMRequest,
-        config: CircuitBreakerConfig
-    ) -> LLMResult<LLMResponse> {
-        info!("Routing with preferences: {:?}", config);
-        
-        // Try to use the specified model first if it meets constraints
-        if self.model_meets_constraints(&request.model, &config).await {
-            return self.chat_completion(request).await;
+    /// Run health checks on all providers
+    pub async fn run_health_checks(&self) {
+        if !self.config.enable_health_monitoring {
+            return;
         }
-        
-        // If specified model doesn't meet constraints, find alternative
-        let alternative_model = self.find_model_with_constraints(&config).await?;
-        request.model = alternative_model;
-        
-        self.chat_completion(request).await
-    }
 
-    /// Auto-select best model when none specified
-    async fn auto_select_model(
-        &self,
-        mut request: LLMRequest,
-        _config: Option<CircuitBreakerConfig>
-    ) -> LLMResult<LLMResponse> {
-        info!("Auto-selecting model for request");
-        
-        let selected_model = if let Some(config) = &_config {
-            self.find_model_with_constraints(config).await?
-        } else {
-            self.select_default().await?
-        };
-        
-        request.model = selected_model;
-        self.chat_completion(request).await
-    }
-
-    /// Resolve virtual model to actual model name
-    async fn resolve_virtual_model(
-        &self,
-        virtual_model: &str,
-        _config: &Option<CircuitBreakerConfig>
-    ) -> LLMResult<String> {
-        match virtual_model {
-            "auto" => self.select_balanced().await,
-            "cb:smart-chat" => self.select_balanced().await,
-            "cb:cost-optimal" => self.select_cheapest_available().await,
-            "cb:fastest" => self.select_fastest_available().await,
-            "cb:coding" => self.select_best_for_task("coding").await,
-            "cb:analysis" => self.select_best_for_task("analysis").await,
-            "cb:creative" => self.select_best_for_task("creative").await,
-            _ => {
-                warn!("Unknown virtual model: {}, using default", virtual_model);
-                self.select_default().await
-            }
-        }
-    }
-    
-    /// Select cheapest available model
-    async fn select_cheapest_available(&self) -> LLMResult<String> {
-        let mut cheapest_model = None;
-        let mut lowest_cost = f64::MAX;
-        
-        // First try to find the cheapest model among healthy providers
-        for (provider_type, config) in &self.provider_configs {
-            if self.is_provider_healthy(provider_type).await {
-                for model in &config.models {
-                    let total_cost = model.cost_per_input_token + model.cost_per_output_token;
-                    if total_cost < lowest_cost {
-                        lowest_cost = total_cost;
-                        cheapest_model = Some(model.id.clone());
-                    }
-                }
-            }
-        }
-        
-        // If no healthy providers found, fall back to Anthropic as it's most likely to work
-        if cheapest_model.is_none() {
-            warn!("No healthy providers found, falling back to Anthropic");
-            if let Some(anthropic_config) = self.provider_configs.get(&LLMProviderType::Anthropic) {
-                if let Some(model) = anthropic_config.models.first() {
-                    return Ok(model.id.clone());
-                }
-            }
-        }
-        
-        cheapest_model.ok_or_else(|| {
-            error!("No providers available");
-            LLMError::Internal("No providers available".to_string())
-        })
-    }
-    
-    /// Select fastest available model (based on average latency)
-    async fn select_fastest_available(&self) -> LLMResult<String> {
-        let health_status = self.health_status.read().await;
-        
-        let mut fastest_model = None;
-        let mut lowest_latency = u64::MAX;
-        
-        for (provider_type, config) in &self.provider_configs {
-            if let Some(status) = health_status.get(provider_type) {
-                if status.is_healthy && status.average_latency_ms < lowest_latency {
-                    lowest_latency = status.average_latency_ms;
-                    // Select the first model from the fastest provider
-                    if let Some(model) = config.models.first() {
-                        fastest_model = Some(model.id.clone());
-                    }
-                }
-            }
-        }
-        
-        fastest_model.ok_or_else(|| {
-            error!("No healthy providers available for performance optimization");
-            LLMError::Internal("No healthy providers available".to_string())
-        })
-    }
-    
-    /// Select balanced model (considers both cost and performance)
-    async fn select_balanced(&self) -> LLMResult<String> {
-        let health_status = self.health_status.read().await;
-        
-        let mut best_model = None;
-        let mut best_score = f64::MIN;
-        
-        for (provider_type, config) in &self.provider_configs {
-            if let Some(status) = health_status.get(provider_type) {
-                if status.is_healthy {
-                    for model in &config.models {
-                        // Calculate balance score (lower cost and latency is better)
-                        let cost_score = 1.0 / (model.cost_per_input_token + model.cost_per_output_token + 0.000001);
-                        let latency_score = 1.0 / (status.average_latency_ms as f64 + 1.0);
-                        let balance_score = (cost_score + latency_score) / 2.0;
-                        
-                        if balance_score > best_score {
-                            best_score = balance_score;
-                            best_model = Some(model.id.clone());
+        for (provider_type, client) in &self.providers {
+            if let Ok(api_key) = self.get_api_key(provider_type).await {
+                match client.health_check(&api_key).await {
+                    Ok(is_healthy) => {
+                        if is_healthy {
+                            self.update_health_success(provider_type).await;
+                        } else {
+                            let error = LLMError::Internal("Health check failed".to_string());
+                            self.update_health_failure(provider_type, &error).await;
                         }
                     }
-                }
-            }
-        }
-        
-        // If no healthy providers found, fall back to Anthropic
-        if best_model.is_none() {
-            warn!("No healthy providers found for balanced selection, falling back to Anthropic");
-            if let Some(anthropic_config) = self.provider_configs.get(&LLMProviderType::Anthropic) {
-                if let Some(model) = anthropic_config.models.first() {
-                    return Ok(model.id.clone());
-                }
-            }
-        }
-        
-        best_model.ok_or_else(|| {
-            error!("No providers available for balanced selection");
-            LLMError::Internal("No providers available".to_string())
-        })
-    }
-    
-    /// Select most reliable model (lowest error rate)
-    async fn select_most_reliable(&self) -> LLMResult<String> {
-        let health_status = self.health_status.read().await;
-        
-        let mut most_reliable_model = None;
-        let mut lowest_error_rate = f64::MAX;
-        
-        for (provider_type, config) in &self.provider_configs {
-            if let Some(status) = health_status.get(provider_type) {
-                if status.is_healthy && status.error_rate < lowest_error_rate {
-                    lowest_error_rate = status.error_rate;
-                    if let Some(model) = config.models.first() {
-                        most_reliable_model = Some(model.id.clone());
+                    Err(error) => {
+                        self.update_health_failure(provider_type, &error).await;
                     }
                 }
             }
         }
-        
-        most_reliable_model.ok_or_else(|| {
-            error!("No healthy providers available for reliability optimization");
-            LLMError::Internal("No healthy providers available".to_string())
-        })
-    }
-    
-    /// Select best model for specific task
-    async fn select_best_for_task(&self, task: &str) -> LLMResult<String> {
-        // For now, use simple task-based selection
-        // In the future, this could use model capability matching
-        match task {
-            "coding" => {
-                // Prefer models with code generation capabilities
-                for (provider_type, config) in &self.provider_configs {
-                    if self.is_provider_healthy(provider_type).await {
-                        for model in &config.models {
-                            if model.capabilities.contains(&ModelCapability::CodeGeneration) {
-                                return Ok(model.id.clone());
-                            }
-                        }
-                    }
-                }
-                // Fallback to balanced selection
-                self.select_balanced().await
-            },
-            "analysis" => {
-                // Prefer models with reasoning capabilities
-                for (provider_type, config) in &self.provider_configs {
-                    if self.is_provider_healthy(provider_type).await {
-                        for model in &config.models {
-                            if model.capabilities.contains(&ModelCapability::Reasoning) {
-                                return Ok(model.id.clone());
-                            }
-                        }
-                    }
-                }
-                self.select_balanced().await
-            },
-            _ => self.select_balanced().await
-        }
-    }
-    
-    /// Select default model (fallback)
-    async fn select_default(&self) -> LLMResult<String> {
-        // Return the first available healthy model
-        for (provider_type, config) in &self.provider_configs {
-            if self.is_provider_healthy(provider_type).await {
-                if let Some(model) = config.models.first() {
-                    return Ok(model.id.clone());
-                }
-            }
-        }
-        
-        // If no healthy providers, try Anthropic as fallback
-        warn!("No healthy providers found, falling back to Anthropic");
-        if let Some(anthropic_config) = self.provider_configs.get(&LLMProviderType::Anthropic) {
-            if let Some(model) = anthropic_config.models.first() {
-                return Ok(model.id.clone());
-            }
-        }
-        
-        Err(LLMError::Internal("No providers available".to_string()))
-    }
-    
-    /// Check if provider is healthy (uses existing health status)
-    async fn is_provider_healthy(&self, provider_type: &LLMProviderType) -> bool {
-        let health_status = self.health_status.read().await;
-        health_status
-            .get(provider_type)
-            .map(|status| status.is_healthy)
-            .unwrap_or(true) // Default to healthy for demo purposes when no status available
-    }
-    
-    /// Check if model exists in any provider
-    async fn has_model(&self, model_name: &str) -> bool {
-        for config in self.provider_configs.values() {
-            if config.models.iter().any(|m| m.id == model_name) {
-                return true;
-            }
-        }
-        false
-    }
-    
-    /// Check if model meets user constraints
-    async fn model_meets_constraints(&self, model_name: &str, config: &CircuitBreakerConfig) -> bool {
-        // Find the model and check constraints
-        for provider_config in self.provider_configs.values() {
-            if let Some(model) = provider_config.models.iter().find(|m| m.id == model_name) {
-                // Check cost constraint
-                if let Some(max_cost) = config.max_cost_per_1k_tokens {
-                    let total_cost = (model.cost_per_input_token + model.cost_per_output_token) * 1000.0;
-                    if total_cost > max_cost {
-                        return false;
-                    }
-                }
-                
-                // Check latency constraint
-                if let Some(max_latency) = config.max_latency_ms {
-                    let health_status = futures::executor::block_on(self.health_status.read());
-                    for (provider_type, provider_config) in &self.provider_configs {
-                        if provider_config.models.iter().any(|m| m.id == model_name) {
-                            if let Some(status) = health_status.get(provider_type) {
-                                if status.average_latency_ms > max_latency {
-                                    return false;
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                return true;
-            }
-        }
-        false
-    }
-    
-    /// Find model that meets constraints
-    async fn find_model_with_constraints(&self, config: &CircuitBreakerConfig) -> LLMResult<String> {
-        let health_status = self.health_status.read().await;
-        
-        for (provider_type, provider_config) in &self.provider_configs {
-            if let Some(status) = health_status.get(provider_type) {
-                if !status.is_healthy {
-                    continue;
-                }
-                
-                for model in &provider_config.models {
-                    let mut meets_constraints = true;
-                    
-                    // Check cost constraint
-                    if let Some(max_cost) = config.max_cost_per_1k_tokens {
-                        let total_cost = (model.cost_per_input_token + model.cost_per_output_token) * 1000.0;
-                        if total_cost > max_cost {
-                            meets_constraints = false;
-                        }
-                    }
-                    
-                    // Check latency constraint
-                    if let Some(max_latency) = config.max_latency_ms {
-                        if status.average_latency_ms > max_latency {
-                            meets_constraints = false;
-                        }
-                    }
-                    
-                    if meets_constraints {
-                        return Ok(model.id.clone());
-                    }
-                }
-            }
-        }
-        
-        // If no model meets constraints, use balanced selection
-        warn!("No models meet specified constraints, using balanced selection");
-        self.select_balanced().await
     }
 }
 
-/// Simple API key storage
-pub struct SimpleApiKeyStorage {
-    keys: Arc<RwLock<HashMap<String, String>>>,
+impl std::fmt::Display for LLMRouter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "LLMRouter with {} providers: {:?}", 
+            self.providers.len(), 
+            self.providers.keys().collect::<Vec<_>>()
+        )
+    }
 }
 
-impl SimpleApiKeyStorage {
-    pub fn new() -> Self {
-        Self {
-            keys: Arc::new(RwLock::new(HashMap::new())),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_router_creation_without_keys() {
+        // Should fail without any API keys
+        let result = LLMRouter::new_with_keys(None, None, None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_provider_determination() {
+        // Mock router with OpenAI key
+        if let Ok(router) = LLMRouter::new_with_keys(Some("test-key".to_string()), None, None).await {
+            assert_eq!(router.determine_provider_for_model("gpt-4"), LLMProviderType::OpenAI);
+            assert_eq!(router.determine_provider_for_model("o4-mini-2025-04-16"), LLMProviderType::OpenAI);
+            assert_eq!(router.determine_provider_for_model("claude-3"), LLMProviderType::OpenAI); // Fallback
         }
     }
 
-    pub async fn store_key(&self, key_id: &str, key: &str) {
-        let mut keys = self.keys.write().await;
-        keys.insert(key_id.to_string(), key.to_string());
-    }
-
-    pub async fn get_key(&self, key_id: &str) -> Option<String> {
-        let keys = self.keys.read().await;
-        keys.get(key_id).cloned()
+    #[test]
+    fn test_router_display() {
+        // Test that the router formats correctly
+        let router = LLMRouter {
+            config: LLMRouterConfig::default(),
+            providers: HashMap::new(),
+            health_status: Arc::new(RwLock::new(HashMap::new())),
+            configured_api_keys: HashMap::new(),
+        };
+        
+        let display = format!("{}", router);
+        assert!(display.contains("LLMRouter"));
+        assert!(display.contains("0 providers"));
     }
 }

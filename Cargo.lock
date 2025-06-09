@@ -439,12 +439,15 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.21.7",
+ "bytes",
  "chrono",
  "config",
  "dotenv",
+ "eventsource-stream",
  "futures",
  "hmac",
  "jsonwebtoken",
+ "pin-project-lite",
  "reqwest",
  "ring 0.16.20",
  "serde",
@@ -455,6 +458,7 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tokio-tungstenite",
+ "tokio-util",
  "tower",
  "tower-http",
  "tracing",
@@ -792,6 +796,17 @@ name = "event-listener"
 version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
+
+[[package]]
+name = "eventsource-stream"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74fef4569247a5f429d9156b9d0a2599914385dd189c539334c625d8099d90ab"
+dependencies = [
+ "futures-core",
+ "nom",
+ "pin-project-lite",
+]
 
 [[package]]
 name = "fast_chemail"

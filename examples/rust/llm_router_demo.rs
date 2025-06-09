@@ -170,7 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     frequency_penalty: None,
                     presence_penalty: None,
                     stop: None,
-                    stream: true,
+                    stream: Some(true),
                     functions: None,
                     function_call: None,
                     user: None,

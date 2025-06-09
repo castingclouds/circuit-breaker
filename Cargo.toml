@@ -38,6 +38,12 @@ async-nats = "0.34"
 # HTTP client for GraphQL examples and LLM providers
 reqwest = { version = "0.11", features = ["json", "stream"] }
 
+# SSE and streaming support
+eventsource-stream = "0.2"
+pin-project-lite = "0.2"
+bytes = "1.0"
+tokio-util = "0.7"
+
 # WebSocket for real-time streaming
 tokio-tungstenite = "0.20"
 
@@ -113,5 +119,9 @@ path = "examples/rust/llm_router_demo.rs"
 [[example]]
 name = "websocket_stream_test"
 path = "examples/rust/websocket_stream_test.rs"
+
+[[example]]
+name = "streaming_architecture_demo"
+path = "examples/rust/streaming_architecture_demo.rs"
 
 

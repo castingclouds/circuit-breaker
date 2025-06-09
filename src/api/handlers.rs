@@ -371,14 +371,10 @@ async fn handle_streaming_completion(
         }
     };
 
-    // Create manual SSE response
+    // Create manual SSE response with proper headers
     let (mut sender, body) = Body::channel();
     
     tokio::spawn(async move {
-        // Send SSE headers manually
-        let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n";
-        let _ = sender.send_data(headers.into()).await;
-        
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
                 Ok(streaming_chunk) => {
@@ -431,11 +427,22 @@ async fn handle_streaming_completion(
     });
 
     let response = Response::builder()
+        .status(StatusCode::OK)
         .header("Content-Type", "text/event-stream")
         .header("Cache-Control", "no-cache")
         .header("Connection", "keep-alive")
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Access-Control-Allow-Headers", "Content-Type")
         .body(body)
-        .unwrap();
+        .map_err(|e| {
+            error!("Failed to build SSE response: {}", e);
+            create_error_response(
+                "Failed to create streaming response".to_string(),
+                "internal_error".to_string(),
+                None,
+                None,
+            )
+        })?;
         
     Ok(response.into_response())
 }
