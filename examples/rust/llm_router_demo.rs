@@ -179,7 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 println!("✅ LLM Router initialized");
 
-                match router.chat_completion_stream(streaming_request).await {
+                match router.stream_chat_completion(streaming_request).await {
                     Ok(mut stream) => {
                         println!("🔄 Real-time streaming response:");
                         print!("   Claude 4: ");

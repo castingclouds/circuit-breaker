@@ -7,7 +7,7 @@ use axum::{
     response::{Response, IntoResponse},
     Json,
 };
-use futures::StreamExt;
+
 use axum::body::Body;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
@@ -124,24 +124,24 @@ impl OpenAIApiState {
                 cost_per_output_token: 0.000015,
             },
             ModelConfig {
-                id: "gpt-4".to_string(),
+                id: "o4-mini-2025-04-16".to_string(),
                 provider: LLMProviderType::OpenAI,
-                display_name: "GPT-4".to_string(),
-                context_window: 8192,
-                max_output_tokens: 4096,
-                supports_streaming: true,
-                cost_per_input_token: 0.00003,
-                cost_per_output_token: 0.00006,
-            },
-            ModelConfig {
-                id: "gpt-3.5-turbo".to_string(),
-                provider: LLMProviderType::OpenAI,
-                display_name: "GPT-3.5 Turbo".to_string(),
-                context_window: 16385,
-                max_output_tokens: 4096,
+                display_name: "OpenAI o4 Mini".to_string(),
+                context_window: 128000,
+                max_output_tokens: 16384,
                 supports_streaming: true,
                 cost_per_input_token: 0.000001,
                 cost_per_output_token: 0.000002,
+            },
+            ModelConfig {
+                id: "gemini-2.5-flash-preview-05-20".to_string(),
+                provider: LLMProviderType::Google,
+                display_name: "Gemini 2.5 Flash Preview".to_string(),
+                context_window: 1048576,
+                max_output_tokens: 8192,
+                supports_streaming: true,
+                cost_per_input_token: 0.000000075,
+                cost_per_output_token: 0.0000003,
             },
         ];
 
@@ -357,7 +357,7 @@ async fn handle_streaming_completion(
 
     // Get the LLM router stream
     let router = &state.llm_router;
-    let stream_result = router.chat_completion_stream(llm_request).await;
+    let stream_result = router.stream_chat_completion(llm_request).await;
 
     let mut stream = match stream_result {
         Ok(stream) => stream,

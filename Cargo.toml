@@ -98,8 +98,20 @@ path = "examples/rust/places_ai_agent_demo.rs"
 name = "nats_demo"
 path = "examples/rust/nats_demo.rs"
 
+[[example]]
+name = "multi_provider_demo"
+path = "examples/rust/multi_provider_demo.rs"
 
+[[example]]
+name = "verify_providers"
+path = "examples/rust/verify_providers.rs"
 
 [[example]]
 name = "llm_router_demo"
 path = "examples/rust/llm_router_demo.rs"
+
+[[example]]
+name = "websocket_stream_test"
+path = "examples/rust/websocket_stream_test.rs"
+
+

@@ -19,14 +19,140 @@ pub struct LLMRouter {
     provider_configs: HashMap<LLMProviderType, LLMProvider>,
     health_status: Arc<RwLock<HashMap<LLMProviderType, ProviderHealthStatus>>>,
     _api_keys: Arc<SimpleApiKeyStorage>,
+    configured_api_keys: HashMap<LLMProviderType, String>,
 }
 
 impl LLMRouter {
     /// Create a new LLM router with simplified setup
     pub async fn new() -> Result<Self, LLMError> {
+        Self::new_with_keys(None, None, None).await
+    }
+
+    /// Create a new LLM router with provided API keys
+    pub async fn new_with_keys(
+        openai_key: Option<String>,
+        anthropic_key: Option<String>, 
+        google_key: Option<String>,
+    ) -> Result<Self, LLMError> {
         let mut providers = HashMap::new();
         let mut configs = HashMap::new();
         let mut health_status = HashMap::new();
+
+        // Default OpenAI provider configuration
+        let openai_config = LLMProvider {
+            id: uuid::Uuid::new_v4(),
+            provider_type: LLMProviderType::OpenAI,
+            name: "OpenAI".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            api_key_id: Some("openai_key".to_string()),
+            models: vec![
+                LLMModel {
+                    id: "gpt-3.5-turbo".to_string(),
+                    name: "GPT-3.5 Turbo".to_string(),
+                    provider_id: uuid::Uuid::new_v4(),
+                    max_tokens: 4096,
+                    context_window: 16385,
+                    cost_per_input_token: 0.000001,
+                    cost_per_output_token: 0.000002,
+                    supports_streaming: true,
+                    supports_function_calling: true,
+                    capabilities: vec![
+                        ModelCapability::TextGeneration,
+                        ModelCapability::TextAnalysis,
+                        ModelCapability::FunctionCalling,
+                    ],
+                },
+                LLMModel {
+                    id: "gpt-3.5-turbo".to_string(),
+                    name: "GPT-3.5 Turbo".to_string(),
+                    provider_id: uuid::Uuid::new_v4(),
+                    max_tokens: 4096,
+                    context_window: 16385,
+                    cost_per_input_token: 0.000001,
+                    cost_per_output_token: 0.000002,
+                    supports_streaming: true,
+                    supports_function_calling: true,
+                    capabilities: vec![
+                        ModelCapability::TextGeneration,
+                        ModelCapability::TextAnalysis,
+                        ModelCapability::FunctionCalling,
+                    ],
+                },
+                LLMModel {
+                    id: "o4-mini-2025-04-16".to_string(),
+                    name: "OpenAI o4 Mini".to_string(),
+                    provider_id: uuid::Uuid::new_v4(),
+                    max_tokens: 16384,
+                    context_window: 128000,
+                    cost_per_input_token: 0.000001,
+                    cost_per_output_token: 0.000002,
+                    supports_streaming: true,
+                    supports_function_calling: true,
+                    capabilities: vec![
+                        ModelCapability::TextGeneration,
+                        ModelCapability::TextAnalysis,
+                        ModelCapability::CodeGeneration,
+                        ModelCapability::Reasoning,
+                        ModelCapability::FunctionCalling,
+                    ],
+                },
+            ],
+            rate_limits: RateLimits::default(),
+            health_status: ProviderHealthStatus::default(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        // Default Google provider configuration
+        let google_config = LLMProvider {
+            id: uuid::Uuid::new_v4(),
+            provider_type: LLMProviderType::Google,
+            name: "Google Gemini".to_string(),
+            base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
+            api_key_id: Some("google_key".to_string()),
+            models: vec![
+                LLMModel {
+                    id: "gemini-pro".to_string(),
+                    name: "Gemini Pro".to_string(),
+                    provider_id: uuid::Uuid::new_v4(),
+                    max_tokens: 8192,
+                    context_window: 32768,
+                    cost_per_input_token: 0.0000005,
+                    cost_per_output_token: 0.0000015,
+                    supports_streaming: true,
+                    supports_function_calling: true,
+                    capabilities: vec![
+                        ModelCapability::TextGeneration,
+                        ModelCapability::TextAnalysis,
+                        ModelCapability::CodeGeneration,
+                        ModelCapability::Reasoning,
+                        ModelCapability::FunctionCalling,
+                    ],
+                },
+                LLMModel {
+                    id: "gemini-2.5-flash-preview-05-20".to_string(),
+                    name: "Gemini 2.5 Flash Preview".to_string(),
+                    provider_id: uuid::Uuid::new_v4(),
+                    max_tokens: 8192,
+                    context_window: 1048576,
+                    cost_per_input_token: 0.000000075,
+                    cost_per_output_token: 0.0000003,
+                    supports_streaming: true,
+                    supports_function_calling: true,
+                    capabilities: vec![
+                        ModelCapability::TextGeneration,
+                        ModelCapability::TextAnalysis,
+                        ModelCapability::CodeGeneration,
+                        ModelCapability::Reasoning,
+                        ModelCapability::FunctionCalling,
+                    ],
+                },
+            ],
+            rate_limits: RateLimits::default(),
+            health_status: ProviderHealthStatus::default(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
 
         // Default Anthropic provider configuration
         let anthropic_config = LLMProvider {
@@ -90,17 +216,54 @@ impl LLMRouter {
             updated_at: chrono::Utc::now(),
         };
 
-        let client = create_provider_client(
+        // Create provider clients
+        let openai_client = create_provider_client(
+            &openai_config.provider_type,
+            Some(openai_config.base_url.clone()),
+        );
+
+        let google_client = create_provider_client(
+            &google_config.provider_type,
+            Some(google_config.base_url.clone()),
+        );
+
+        let anthropic_client = create_provider_client(
             &anthropic_config.provider_type,
             Some(anthropic_config.base_url.clone()),
         );
 
-        providers.insert(LLMProviderType::Anthropic, client);
+        providers.insert(LLMProviderType::OpenAI, openai_client);
+        providers.insert(LLMProviderType::Google, google_client);
+        providers.insert(LLMProviderType::Anthropic, anthropic_client);
+
+        configs.insert(LLMProviderType::OpenAI, openai_config);
+        configs.insert(LLMProviderType::Google, google_config);
+        configs.insert(LLMProviderType::Anthropic, anthropic_config);
+
+        health_status.insert(
+            LLMProviderType::OpenAI,
+            ProviderHealthStatus::default(),
+        );
+        health_status.insert(
+            LLMProviderType::Google,
+            ProviderHealthStatus::default(),
+        );
         health_status.insert(
             LLMProviderType::Anthropic,
-            anthropic_config.health_status.clone(),
+            ProviderHealthStatus::default(),
         );
-        configs.insert(LLMProviderType::Anthropic, anthropic_config);
+
+        // Store configured API keys
+        let mut configured_api_keys = HashMap::new();
+        if let Some(key) = openai_key.or_else(|| std::env::var("OPENAI_API_KEY").ok()) {
+            configured_api_keys.insert(LLMProviderType::OpenAI, key);
+        }
+        if let Some(key) = anthropic_key.or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()) {
+            configured_api_keys.insert(LLMProviderType::Anthropic, key);
+        }
+        if let Some(key) = google_key.or_else(|| std::env::var("GOOGLE_API_KEY").ok()) {
+            configured_api_keys.insert(LLMProviderType::Google, key);
+        }
 
         let router = Self {
             _config: LLMRouterConfig::default(),
@@ -108,6 +271,7 @@ impl LLMRouter {
             provider_configs: configs,
             health_status: Arc::new(RwLock::new(health_status)),
             _api_keys: Arc::new(SimpleApiKeyStorage::new()),
+            configured_api_keys,
         };
 
         Ok(router)
@@ -115,8 +279,10 @@ impl LLMRouter {
 
     /// Route a chat completion request
     pub async fn chat_completion(&self, request: LLMRequest) -> LLMResult<LLMResponse> {
-        // For now, always route to Anthropic
-        let provider_type = LLMProviderType::Anthropic;
+        // Determine provider based on model name
+        let provider_type = self.determine_provider_for_model(&request.model);
+        
+        eprintln!("🔍 Router: Model '{}' -> Provider '{}'", request.model, provider_type);
 
         let provider_client = self
             .providers
@@ -165,29 +331,78 @@ impl LLMRouter {
     }
 
     /// Route a streaming chat completion request
-    pub async fn chat_completion_stream(
+    pub async fn stream_chat_completion(
         &self,
         request: LLMRequest,
     ) -> LLMResult<Box<dyn futures::Stream<Item = LLMResult<StreamingChunk>> + Send + Unpin>> {
-        let provider_type = LLMProviderType::Anthropic;
-        let api_key = self.get_api_key(&provider_type).await?;
-
-        let provider_client = self
-            .providers
-            .get(&provider_type)
-            .ok_or_else(|| LLMError::ProviderNotFound(provider_type.to_string()))?;
-
-        provider_client
-            .chat_completion_stream(&request, &api_key)
-            .await
+        // Determine provider based on model name
+        let provider_type = self.determine_provider_for_model(&request.model);
+        
+        eprintln!("🔍 Router Streaming: Model '{}' -> Provider '{}'", request.model, provider_type);
+        
+        // For now, use non-streaming and convert to stream to avoid lifetime issues
+        // This is a temporary solution until we can properly implement streaming
+        let response = self.chat_completion(request).await?;
+        
+        // Convert the single response into a stream
+        let chunk = StreamingChunk {
+            id: response.id,
+            object: "chat.completion.chunk".to_string(),
+            created: response.created,
+            model: response.model,
+            choices: response.choices.into_iter().map(|choice| StreamingChoice {
+                index: choice.index,
+                delta: choice.message,
+                finish_reason: choice.finish_reason,
+            }).collect(),
+            provider: response.provider,
+        };
+        
+        let stream = futures::stream::once(async move { Ok(chunk) });
+        Ok(Box::new(Box::pin(stream)))
     }
 
-    /// Get API key for provider from environment
+    /// Determine which provider to use based on model name
+    pub fn determine_provider_for_model(&self, model: &str) -> LLMProviderType {
+        if model.starts_with("gpt-") || model.starts_with("o4-") {
+            LLMProviderType::OpenAI
+        } else if model.starts_with("gemini-") || model == "gemini-pro" {
+            LLMProviderType::Google
+        } else if model.starts_with("claude-") {
+            LLMProviderType::Anthropic
+        } else {
+            // Default to Anthropic for backward compatibility
+            LLMProviderType::Anthropic
+        }
+    }
+
+    /// Get API key for provider from configured keys or environment
     async fn get_api_key(&self, provider_type: &LLMProviderType) -> LLMResult<String> {
+        eprintln!("🔍 Getting API key for provider: {}", provider_type);
+        eprintln!("   Configured keys available: {:?}", self.configured_api_keys.keys().collect::<Vec<_>>());
+        
+        if let Some(key) = self.configured_api_keys.get(provider_type) {
+            eprintln!("   ✅ Found configured key for {}: {}...", provider_type, &key[..8.min(key.len())]);
+            return Ok(key.clone());
+        }
+
+        eprintln!("   ⚠️  No configured key found for {}, checking environment...", provider_type);
+        
+        // Fallback to environment variables if not configured
         match provider_type {
+            LLMProviderType::OpenAI => std::env::var("OPENAI_API_KEY").map_err(|_| {
+                LLMError::AuthenticationFailed(
+                    "OPENAI_API_KEY not configured in server or environment".to_string(),
+                )
+            }),
             LLMProviderType::Anthropic => std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
                 LLMError::AuthenticationFailed(
-                    "ANTHROPIC_API_KEY environment variable not set".to_string(),
+                    "ANTHROPIC_API_KEY not configured in server or environment".to_string(),
+                )
+            }),
+            LLMProviderType::Google => std::env::var("GOOGLE_API_KEY").map_err(|_| {
+                LLMError::AuthenticationFailed(
+                    "GOOGLE_API_KEY not configured in server or environment".to_string(),
                 )
             }),
             _ => Err(LLMError::ProviderNotFound(provider_type.to_string())),
@@ -283,7 +498,7 @@ impl LLMRouter {
         };
         
         // Use existing streaming method with resolved model
-        self.chat_completion_stream(resolved_request).await
+        self.stream_chat_completion(resolved_request).await
     }
     
     /// Route request using strategy (extends existing routing)
@@ -382,6 +597,7 @@ impl LLMRouter {
         let mut cheapest_model = None;
         let mut lowest_cost = f64::MAX;
         
+        // First try to find the cheapest model among healthy providers
         for (provider_type, config) in &self.provider_configs {
             if self.is_provider_healthy(provider_type).await {
                 for model in &config.models {
@@ -394,9 +610,19 @@ impl LLMRouter {
             }
         }
         
+        // If no healthy providers found, fall back to Anthropic as it's most likely to work
+        if cheapest_model.is_none() {
+            warn!("No healthy providers found, falling back to Anthropic");
+            if let Some(anthropic_config) = self.provider_configs.get(&LLMProviderType::Anthropic) {
+                if let Some(model) = anthropic_config.models.first() {
+                    return Ok(model.id.clone());
+                }
+            }
+        }
+        
         cheapest_model.ok_or_else(|| {
-            error!("No healthy providers available for cost optimization");
-            LLMError::Internal("No healthy providers available".to_string())
+            error!("No providers available");
+            LLMError::Internal("No providers available".to_string())
         })
     }
     
@@ -436,13 +662,13 @@ impl LLMRouter {
             if let Some(status) = health_status.get(provider_type) {
                 if status.is_healthy {
                     for model in &config.models {
-                        // Calculate balanced score (lower cost + lower latency = higher score)
-                        let cost_factor = 1.0 / (model.cost_per_input_token + model.cost_per_output_token + 0.000001);
-                        let latency_factor = 1.0 / (status.average_latency_ms as f64 + 1.0);
-                        let score = cost_factor * 0.6 + latency_factor * 0.4; // Weight cost slightly higher
+                        // Calculate balance score (lower cost and latency is better)
+                        let cost_score = 1.0 / (model.cost_per_input_token + model.cost_per_output_token + 0.000001);
+                        let latency_score = 1.0 / (status.average_latency_ms as f64 + 1.0);
+                        let balance_score = (cost_score + latency_score) / 2.0;
                         
-                        if score > best_score {
-                            best_score = score;
+                        if balance_score > best_score {
+                            best_score = balance_score;
                             best_model = Some(model.id.clone());
                         }
                     }
@@ -450,9 +676,19 @@ impl LLMRouter {
             }
         }
         
+        // If no healthy providers found, fall back to Anthropic
+        if best_model.is_none() {
+            warn!("No healthy providers found for balanced selection, falling back to Anthropic");
+            if let Some(anthropic_config) = self.provider_configs.get(&LLMProviderType::Anthropic) {
+                if let Some(model) = anthropic_config.models.first() {
+                    return Ok(model.id.clone());
+                }
+            }
+        }
+        
         best_model.ok_or_else(|| {
-            error!("No healthy providers available for balanced selection");
-            LLMError::Internal("No healthy providers available".to_string())
+            error!("No providers available for balanced selection");
+            LLMError::Internal("No providers available".to_string())
         })
     }
     
@@ -527,7 +763,15 @@ impl LLMRouter {
             }
         }
         
-        Err(LLMError::Internal("No healthy providers available".to_string()))
+        // If no healthy providers, try Anthropic as fallback
+        warn!("No healthy providers found, falling back to Anthropic");
+        if let Some(anthropic_config) = self.provider_configs.get(&LLMProviderType::Anthropic) {
+            if let Some(model) = anthropic_config.models.first() {
+                return Ok(model.id.clone());
+            }
+        }
+        
+        Err(LLMError::Internal("No providers available".to_string()))
     }
     
     /// Check if provider is healthy (uses existing health status)
@@ -536,7 +780,7 @@ impl LLMRouter {
         health_status
             .get(provider_type)
             .map(|status| status.is_healthy)
-            .unwrap_or(false)
+            .unwrap_or(true) // Default to healthy for demo purposes when no status available
     }
     
     /// Check if model exists in any provider

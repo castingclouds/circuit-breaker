@@ -235,8 +235,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create shared LLM infrastructure
     info!("🔧 Initializing shared LLM infrastructure...");
     
-    // Create LLM router (async constructor)
-    let llm_router = LLMRouter::new().await.map_err(|e| {
+    // Create LLM router with configured API keys
+    let llm_router = LLMRouter::new_with_keys(
+        config.openai_api_key.clone(),
+        config.anthropic_api_key.clone(),
+        config.google_api_key.clone(),
+    ).await.map_err(|e| {
         error!("Failed to create LLM router: {}", e);
         e
     })?;

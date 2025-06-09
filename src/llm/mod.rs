@@ -159,12 +159,29 @@ pub struct ChatMessage {
 }
 
 /// Message roles
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum MessageRole {
     System,
     User,
     Assistant,
     Function,
+}
+
+impl<'de> Deserialize<'de> for MessageRole {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_lowercase().as_str() {
+            "system" => Ok(MessageRole::System),
+            "user" => Ok(MessageRole::User),
+            "assistant" => Ok(MessageRole::Assistant),
+            "function" => Ok(MessageRole::Function),
+            _ => Err(serde::de::Error::unknown_variant(&s, &["system", "user", "assistant", "function"])),
+        }
+    }
 }
 
 /// Function definition for function calling

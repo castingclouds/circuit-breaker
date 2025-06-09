@@ -1828,7 +1828,7 @@ impl Subscription {
         };
         
         // Get the real streaming response
-        let stream = router.chat_completion_stream(llm_request).await
+        let stream = router.stream_chat_completion(llm_request).await
             .map_err(|e| async_graphql::Error::new(format!("LLM streaming request failed: {}", e)))?;
         
         // Convert the stream to JSON strings for WebSocket
