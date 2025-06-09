@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use async_graphql::{http::GraphiQLSource, Schema};
-use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
+use async_graphql::Schema;
+use async_graphql_axum::{GraphQLRequest, GraphQLResponse, GraphQLSubscription};
 use axum::{
     extract::State,
     http::StatusCode,
@@ -123,11 +123,14 @@ impl GraphQLServer {
             }
         };
         
-        let app_state = Arc::new(RwLock::new(schema));
+        let app_state = Arc::new(RwLock::new(schema.clone()));
+
+        let subscription_service = GraphQLSubscription::new(schema);
 
         let mut app = Router::new()
             .route("/", get(graphiql).post(graphql_handler))
             .route("/graphql", post(graphql_handler))
+            .route_service("/ws", subscription_service)
             .route("/health", get(health_check))
             .with_state(app_state);
 
@@ -140,6 +143,7 @@ impl GraphQLServer {
         info!("🚀 GraphQL server running on http://localhost:{}", self.config.port);
         info!("📊 GraphiQL interface: http://localhost:{}", self.config.port);
         info!("🔗 GraphQL endpoint: http://localhost:{}/graphql", self.config.port);
+        info!("📡 GraphQL WebSocket: ws://localhost:{}/ws", self.config.port);
         
         // Use axum 0.6 syntax
         Server::bind(&addr.parse()?)
@@ -336,12 +340,57 @@ async fn graphql_handler(
     schema.execute(req.into_inner()).await.into()
 }
 
-// GraphiQL interface
+// GraphiQL interface with WebSocket support
 async fn graphiql() -> impl IntoResponse {
-    Html(GraphiQLSource::build().endpoint("/graphql").finish())
+    Html(r#"
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="robots" content="noindex">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="origin">
+    <title>GraphiQL IDE</title>
+    <style>
+      body {
+        height: 100%;
+        margin: 0;
+        width: 100%;
+        overflow: hidden;
+      }
+      #graphiql {
+        height: 100vh;
+      }
+    </style>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <link rel="icon" href="https://graphql.org/favicon.ico">
+    <link rel="stylesheet" href="https://unpkg.com/graphiql@3/graphiql.min.css" />
+  </head>
+  <body>
+    <div id="graphiql">Loading...</div>
+    <script src="https://unpkg.com/graphiql@3/graphiql.min.js" type="application/javascript"></script>
+    <script>
+      const root = ReactDOM.createRoot(document.getElementById('graphiql'));
+      
+      const fetcher = GraphiQL.createFetcher({
+        url: '/graphql',
+        subscriptionUrl: 'ws://localhost:4000/ws',
+      });
+
+      root.render(React.createElement(GraphiQL, {
+        fetcher: fetcher,
+        defaultEditorToolsVisibility: true,
+      }));
+    </script>
+  </body>
+</html>
+"#)
 }
+
+
 
 // Health check endpoint
 async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, "Circuit Breaker GraphQL Server is running!")
-} 
+}
