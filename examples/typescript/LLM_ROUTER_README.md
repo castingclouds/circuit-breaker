@@ -1,11 +1,12 @@
 # TypeScript LLM Router Demo
 
-This TypeScript implementation demonstrates the same functionality as the Rust `llm_router_demo.rs`, showcasing real Anthropic API integration with SSE streaming and WebSocket GraphQL subscriptions.
+This TypeScript implementation demonstrates the same functionality as the Rust version, showcasing Circuit Breaker's OpenAI-compatible API routing to Anthropic with SSE streaming and WebSocket GraphQL subscriptions.
 
 ## Overview
 
 The TypeScript demo provides a complete example of:
-- **SSE (Server-Sent Events)** streaming with Anthropic Claude API
+- **Circuit Breaker OpenAI-compatible API** routing to Anthropic providers
+- **SSE (Server-Sent Events)** streaming through the router
 - **WebSocket** subscriptions for GraphQL real-time updates
 - Cost tracking and budget management
 - Provider health monitoring
@@ -14,27 +15,29 @@ The TypeScript demo provides a complete example of:
 ## Architecture
 
 ```
-┌─────────────────┐    SSE     ┌──────────────────┐
-│   TypeScript    │◄─────────►│  Anthropic API   │
-│   Demo Client   │            │  (Claude 3/4)    │
-└─────────────────┘            └──────────────────┘
-         │
-         │ WebSocket (GraphQL)
-         ▼
+┌─────────────────┐    HTTP     ┌─────────────────┐    SSE      ┌──────────────────┐
+│   TypeScript               │───────►│ Circuit Breaker             │ ──────►│  Anthropic API               │
+│   Demo Client              │             │ OpenAI API                  │             │  (Claude 3/4)                │
+│   (No API Key)             │             │ (Has all keys)              │             │  (Server has key)            │
+└─────────────────┘             └─────────────────┘             └──────────────────┘
+         │                                           │
+         │ WebSocket (GraphQL)                       │ HTTP
+         ▼                                           ▼
 ┌─────────────────┐            ┌──────────────────┐
-│ Circuit Breaker │◄─────────►│   Other LLM      │
-│     Server      │    HTTP    │   Providers      │
-│   (Port 4000)   │            │                  │
+│ Circuit Breaker            │            │   Other LLM                   │
+│ GraphQL Server             │            │   Providers                   │
+│   (Port 4000)              │            │   (OpenAI,vLLM,Ollama etc.)   │
 └─────────────────┘            └──────────────────┘
 ```
 
 ## Key Features
 
-### 1. **SSE Streaming with Anthropic**
-- Direct integration with Anthropic's streaming API
+### 1. **Streaming via Circuit Breaker Router**
+- OpenAI-compatible API on port 3000
+- Server-side API key management (clients don't need provider keys)
+- Routes to Anthropic (and other providers) based on model selection
 - Real-time token-by-token response streaming
-- Proper SSE event parsing (`data: ` prefixed lines)
-- Handles Anthropic-specific events: `content_block_delta`, `message_stop`
+- Unified interface for all LLM providers
 
 ### 2. **WebSocket GraphQL Subscriptions**
 - Real-time updates for multiple subscribers
@@ -57,8 +60,8 @@ The TypeScript demo provides a complete example of:
 ### Prerequisites
 
 1. **Node.js 18+** - Download from [nodejs.org](https://nodejs.org/)
-2. **Circuit Breaker Server** - Must be running on port 4000
-3. **Anthropic API Key** - Set as environment variable
+2. **Circuit Breaker Server** - Must be running on ports 3000 (OpenAI API) and 4000 (GraphQL)
+3. **Server Configuration** - Anthropic API key must be configured server-side
 
 ### Quick Setup
 
@@ -69,14 +72,12 @@ cd circuit-breaker/examples/typescript
 # 2. Run setup script (installs dependencies)
 ./setup.sh
 
-# 3. Set your Anthropic API key
-export ANTHROPIC_API_KEY=your_key_here
-
-# 4. Start the Circuit Breaker server (in another terminal)
+# 3. Configure server with API key (in another terminal)
 cd ../..
+export ANTHROPIC_API_KEY=your_key_here
 cargo run --bin server
 
-# 5. Run the LLM router demo
+# 4. Run the LLM router demo (no API key needed)
 npm run demo:llm
 ```
 
@@ -95,13 +96,17 @@ npx tsx llm_router_demo.ts
 
 ## Environment Variables
 
+### Server-Side (Required)
 ```bash
-# Required
+# API keys are managed server-side
 export ANTHROPIC_API_KEY=your_anthropic_api_key_here
+```
 
-# Optional (defaults shown)
-export CIRCUIT_BREAKER_URL=http://localhost:4000
-export ANTHROPIC_API_URL=https://api.anthropic.com/v1/messages
+### Client-Side (Optional)
+```bash
+# Optional client configuration (defaults shown)
+export CIRCUIT_BREAKER_GRAPHQL_URL=http://localhost:4000
+export CIRCUIT_BREAKER_OPENAI_URL=http://localhost:3000
 ```
 
 ## Demo Walkthrough
@@ -133,39 +138,56 @@ const query = `
 `;
 ```
 
-### 3. **Direct Anthropic SSE Streaming**
+### 2. **Streaming via Circuit Breaker OpenAI API**
 ```typescript
-// Real-time streaming with SSE
-const response = await fetch('https://api.anthropic.com/v1/messages', {
+// Real-time streaming through Circuit Breaker router
+const response = await fetch('http://localhost:3000/v1/chat/completions', {
   method: 'POST',
   headers: {
-    'x-api-key': apiKey,
-    'anthropic-version': '2023-06-01'
+    'Content-Type': 'application/json'
+    // No Authorization header - server manages API keys
   },
   body: JSON.stringify({
-    model: 'claude-3-sonnet-20240229',
+    model: 'claude-3-sonnet-20240229',  // Router selects Anthropic
     stream: true,  // Enable SSE streaming
     messages: [...]
   })
 });
 
-// Process SSE stream
+// Process OpenAI-compatible SSE stream
 const reader = response.body?.getReader();
 while (true) {
   const { done, value } = await reader.read();
   if (done) break;
-  
-  // Parse SSE events
+
+  // Parse OpenAI-compatible SSE events
   const chunk = decoder.decode(value);
   for (const line of chunk.split('\n')) {
     if (line.startsWith('data: ')) {
       const event = JSON.parse(line.slice(6));
-      if (event.type === 'content_block_delta') {
-        process.stdout.write(event.delta.text);
+      if (event.choices?.[0]?.delta?.content) {
+        process.stdout.write(event.choices[0].delta.content);
       }
     }
   }
 }
+```
+
+### 3. **OpenAI-Compatible API Usage**
+```typescript
+// Use Circuit Breaker's OpenAI-compatible endpoint
+const response = await fetch('http://localhost:3000/v1/chat/completions', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+    // No API key needed - server handles authentication
+  },
+  body: JSON.stringify({
+    model: 'claude-3-sonnet-20240229',  // Router selects Anthropic provider
+    messages: [{ role: 'user', content: 'Hello!' }],
+    stream: false
+  })
+});
 ```
 
 ### 4. **Budget and Cost Management**
@@ -221,22 +243,21 @@ const subscription = `
 
 ## API Response Types
 
-### Anthropic SSE Events
+### OpenAI-Compatible Stream Events
 ```typescript
-interface AnthropicStreamEvent {
-  type: 'content_block_delta' | 'message_stop' | 'message_start';
-  index?: number;
-  delta?: {
-    type: string;
-    text?: string;
-  };
-  message?: {
-    id: string;
-    usage?: {
-      input_tokens: number;
-      output_tokens: number;
+interface OpenAIStreamEvent {
+  id: string;
+  object: 'chat.completion.chunk';
+  created: number;
+  model: string;
+  choices: Array<{
+    index: number;
+    delta: {
+      content?: string;
+      role?: string;
     };
-  };
+    finish_reason?: string | null;
+  }>;
 }
 ```
 
@@ -277,22 +298,23 @@ interface BudgetStatus {
 🤖 Circuit Breaker LLM Router Demo - TypeScript Integration
 ===========================================================
 
-✅ ANTHROPIC_API_KEY found
+ℹ️  API keys are managed server-side by Circuit Breaker
+💡 Client does not need to provide API keys - router handles authentication
 ✅ Server is running and accessible
 
 📊 1. Checking LLM Providers
 ----------------------------
 ✅ Available Providers: {...}
 
-💬 2. Direct Anthropic SSE Streaming
------------------------------------
+2. Circuit Breaker OpenAI API Streaming
+---------------------------------------
 🔄 Testing real-time SSE streaming...
-📡 Using direct Anthropic streaming API integration
+📡 Using Circuit Breaker OpenAI-compatible API with Anthropic routing
 🔄 Real-time SSE streaming response:
    Claude 3: A woodchuck would chuck approximately 700 pounds of wood per day if a woodchuck could chuck wood, according to wildlife biologist Richard Thomas's 1988 calculation.
 ✅ SSE streaming completed successfully!
    Chunks received: 23
-   🎯 This demonstrates working SSE streaming infrastructure
+   🎯 This demonstrates Circuit Breaker router with OpenAI-compatible streaming
 
 💰 3. Checking Budget Status
 ---------------------------
@@ -341,10 +363,12 @@ interface BudgetStatus {
 🎯 9. Integration Analysis
 -------------------------
 ✅ What We Just Demonstrated:
-   • Real Anthropic Claude API integration with SSE streaming
+   • Circuit Breaker OpenAI-compatible API routing to Anthropic
    • TypeScript implementation matching Rust functionality
+   • Unified interface for multiple LLM providers through port 3000
    • Actual token counting and cost calculation
-   • GraphQL queries and mutations
+   • Claude 3: ~$0.000003/input token, ~$0.000015/output token
+   • GraphQL queries and mutations on port 4000
    • WebSocket streaming infrastructure validation
    • Real-time subscription capabilities
 
@@ -352,12 +376,22 @@ interface BudgetStatus {
 📡 Test real-time streaming now: http://localhost:4000
 ```
 
-## Testing WebSocket Subscriptions
+## Testing the Complete System
 
-Once the demo completes, you can test live WebSocket subscriptions using GraphiQL:
+Once the demo completes, you can test both the OpenAI-compatible API and WebSocket subscriptions:
 
-1. Open http://localhost:4000 in your browser
-2. Try these subscription examples:
+### OpenAI-Compatible API (Port 3000)
+```bash
+curl -X POST http://localhost:3000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-3-sonnet-20240229",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+### WebSocket Subscriptions (Port 4000)
+Open http://localhost:4000 in your browser and try these subscription examples:
 
 ```graphql
 # LLM Streaming
@@ -395,9 +429,11 @@ subscription {
 
 ### Common Issues
 
-1. **"ANTHROPIC_API_KEY not set"**
+1. **"API authentication failed"**
    ```bash
+   # Set API key server-side before starting server
    export ANTHROPIC_API_KEY=your_key_here
+   cargo run --bin server
    ```
 
 2. **"Cannot connect to server"**
@@ -422,6 +458,19 @@ Enable debug logging:
 DEBUG=* npm run demo:llm
 ```
 
+### Testing Both Endpoints
+
+Test the complete system:
+```bash
+# Test OpenAI-compatible API
+curl http://localhost:3000/v1/models
+
+# Test GraphQL API
+curl -X POST http://localhost:4000/graphql \
+  -H "Content-Type: application/json" \
+  -d '{"query": "{ __typename }"}'
+```
+
 ## Performance Characteristics
 
 - **SSE Latency**: ~50-200ms per token (depends on model)
@@ -433,7 +482,8 @@ DEBUG=* npm run demo:llm
 
 | Feature | TypeScript | Rust |
 |---------|------------|------|
-| SSE Streaming | ✅ `fetch` + `ReadableStream` | ✅ `reqwest` + `bytes_stream()` |
+| API Integration | ✅ Circuit Breaker OpenAI API | ✅ Circuit Breaker LLM Router |
+| SSE Streaming | ✅ `fetch` + OpenAI format | ✅ `reqwest` + Anthropic format |
 | WebSocket | ✅ `ws` + `graphql-ws` | ✅ `tokio-tungstenite` + `async-graphql` |
 | Type Safety | ✅ TypeScript interfaces | ✅ Rust structs + `serde` |
 | Performance | Good (V8 JIT) | Excellent (native) |

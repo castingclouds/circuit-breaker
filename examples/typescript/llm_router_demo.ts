@@ -15,8 +15,8 @@ import WebSocket from "ws";
 import { createClient } from "graphql-ws";
 import { v4 as uuidv4 } from "uuid";
 import { config } from "dotenv";
-import { createInterface } from 'readline';
-import { Readable } from 'stream';
+import { createInterface } from "readline";
+import { Readable } from "stream";
 
 // Load environment variables
 config();
@@ -25,14 +25,14 @@ config();
 function waitForEnter(message: string): Promise<void> {
   return new Promise((resolve) => {
     console.log(`\n🎤 ${message}`);
-    process.stdout.write('   Press Enter to continue...');
-    
+    process.stdout.write("   Press Enter to continue...");
+
     const rl = createInterface({
       input: process.stdin,
-      output: process.stdout
+      output: process.stdout,
     });
-    
-    rl.question('', () => {
+
+    rl.question("", () => {
       rl.close();
       console.log();
       resolve();
@@ -143,24 +143,22 @@ interface VirtualModel {
 class LLMRouterDemo {
   private readonly graphqlUrl = "http://localhost:4000/graphql";
   private readonly wsUrl = "ws://localhost:4000/ws";
-  private readonly anthropicApiUrl = "https://api.anthropic.com/v1/messages";
+  private readonly openaiApiUrl = "http://localhost:3000/v1/chat/completions";
 
   async main(): Promise<void> {
     console.log("🤖 Circuit Breaker LLM Router Demo - Smart Routing Edition");
     console.log("============================================================");
     console.log();
 
-    // Check for Anthropic API key (optional for direct API tests)
-    const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
-    if (!anthropicApiKey) {
-      console.log("ℹ️  ANTHROPIC_API_KEY not set - skipping direct Anthropic API tests");
-      console.log("💡 Server-based tests will still work without the API key");
-    } else {
-      console.log("✅ ANTHROPIC_API_KEY found - will run all tests including direct API");
-    }
+    console.log("ℹ️  API keys are managed server-side by Circuit Breaker");
+    console.log(
+      "💡 Client does not need to provide API keys - router handles authentication",
+    );
 
     console.log("📋 Prerequisites:");
-    console.log("• Circuit Breaker server must be running on ports 3000 (OpenAI API) and 4000 (GraphQL)");
+    console.log(
+      "• Circuit Breaker server must be running on ports 3000 (OpenAI API) and 4000 (GraphQL)",
+    );
     console.log("• Start with: cargo run --bin server");
     console.log("• OpenAI API: http://localhost:3000");
     console.log("• GraphiQL interface: http://localhost:4000");
@@ -171,7 +169,7 @@ class LLMRouterDemo {
     try {
       const graphqlHealth = await fetch("http://localhost:4000/health");
       const openaiHealth = await fetch("http://localhost:3000/health");
-      
+
       if (graphqlHealth.ok && openaiHealth.ok) {
         console.log("✅ Both GraphQL and OpenAI API servers are running");
       } else {
@@ -184,51 +182,65 @@ class LLMRouterDemo {
     }
 
     await waitForEnter("Ready to demonstrate smart routing capabilities?");
-    
+
     // Demo smart routing capabilities
     await this.demonstrateSmartRouting();
-    
-    await waitForEnter("Smart routing demo complete! Ready to check LLM providers?");
-    
+
+    await waitForEnter(
+      "Smart routing demo complete! Ready to check LLM providers?",
+    );
+
     await this.checkLLMProviders();
-    
-    await waitForEnter("Provider configuration shown! Ready to test direct LLM router integration?");
-    
+
+    await waitForEnter(
+      "Provider configuration shown! Ready to test direct LLM router integration?",
+    );
+
     await this.testDirectLLMRouterIntegration();
-    
-    await waitForEnter("LLM router integration tested! Ready for streaming demo?");
-    
-    if (anthropicApiKey) {
-      await this.testDirectAnthropicStreaming(anthropicApiKey);
-    } else {
-      console.log("\n⏭️  Skipping direct Anthropic streaming test (no API key)");
-    }
-    
-    await waitForEnter("Streaming demo complete! Ready to check budget management?");
-    
+
+    await waitForEnter(
+      "LLM router integration tested! Ready for streaming demo?",
+    );
+
+    await this.testCircuitBreakerStreaming();
+
+    await waitForEnter(
+      "Streaming demo complete! Ready to check budget management?",
+    );
+
     await this.checkBudgetStatus();
-    
-    await waitForEnter("Budget status checked! Ready to analyze cost analytics?");
-    
+
+    await waitForEnter(
+      "Budget status checked! Ready to analyze cost analytics?",
+    );
+
     await this.getCostAnalytics();
-    
-    await waitForEnter("Cost analytics reviewed! Ready to configure a new provider?");
-    
+
+    await waitForEnter(
+      "Cost analytics reviewed! Ready to configure a new provider?",
+    );
+
     await this.configureLLMProvider();
-    
+
     await waitForEnter("Provider configured! Ready to set budget limits?");
-    
+
     await this.setBudgetLimits();
-    
-    await waitForEnter("Budget limits set! Ready to validate WebSocket infrastructure?");
-    
+
+    await waitForEnter(
+      "Budget limits set! Ready to validate WebSocket infrastructure?",
+    );
+
     await this.validateWebSocketStreaming();
-    
-    await waitForEnter("WebSocket validation complete! Ready to test GraphQL subscriptions?");
-    
+
+    await waitForEnter(
+      "WebSocket validation complete! Ready to test GraphQL subscriptions?",
+    );
+
     await this.testGraphQLSubscriptions();
-    
-    await waitForEnter("GraphQL subscriptions tested! Ready for final integration analysis?");
+
+    await waitForEnter(
+      "GraphQL subscriptions tested! Ready for final integration analysis?",
+    );
     await this.realApiIntegrationAnalysis();
     this.printSummary();
   }
@@ -275,8 +287,12 @@ class LLMRouterDemo {
 
     console.log("\n💡 Next Steps:");
     console.log("==============");
-    console.log("• 🌐 Test WebSocket streaming: Open http://localhost:4000 (GraphiQL)");
-    console.log("• 📡 Try live subscriptions: llmStream, costUpdates, tokenUpdates");
+    console.log(
+      "• 🌐 Test WebSocket streaming: Open http://localhost:4000 (GraphiQL)",
+    );
+    console.log(
+      "• 📡 Try live subscriptions: llmStream, costUpdates, tokenUpdates",
+    );
     console.log("• 🎯 Test smart routing: Use virtual models in your apps");
     console.log("• 🔧 Add more providers: OpenAI, Google, Cohere");
     console.log("• 💰 Implement intelligent cost routing");
@@ -289,7 +305,9 @@ class LLMRouterDemo {
     console.log("• Smart Routing Guide: examples/smart_routing_examples.md");
     console.log("• 🌐 WebSocket Streaming: Test live at http://localhost:4000");
 
-    console.log("\n🎉 Circuit Breaker: Smart LLM routing + WebSocket streaming ready!");
+    console.log(
+      "\n🎉 Circuit Breaker: Smart LLM routing + WebSocket streaming ready!",
+    );
     console.log("📡 Test smart routing now: http://localhost:3000");
     console.log("📊 Test GraphQL now: http://localhost:4000");
   }
@@ -323,29 +341,38 @@ class LLMRouterDemo {
     console.log("📋 Summary:");
     console.log("   • OpenAI API compatibility: 100% maintained");
     console.log("   • Virtual models: Available for smart selection");
-    console.log("   • Smart routing: Supports cost, performance, and task optimization");
+    console.log(
+      "   • Smart routing: Supports cost, performance, and task optimization",
+    );
     console.log("   • Streaming: Works with all smart routing features");
     console.log("=" + "=".repeat(50));
-    
+
     // Show usage examples
     this.printSmartRoutingUsageGuide();
   }
 
   private async testOpenAICompatibility(): Promise<void> {
     try {
-      const response = await fetch('http://localhost:3000/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: "claude-3-haiku-20240307",  // Real model name
-          messages: [{ role: "user", content: "Say hello in a creative way!" }]
-        })
-      });
+      const response = await fetch(
+        "http://localhost:3000/v1/chat/completions",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-3-haiku-20240307", // Real model name
+            messages: [
+              { role: "user", content: "Say hello in a creative way!" },
+            ],
+          }),
+        },
+      );
 
       if (response.ok) {
         const result = await response.json();
         console.log("✅ OpenAI compatible request successful");
-        console.log(`   Response: ${result.choices[0].message.content.substring(0, 100)}...`);
+        console.log(
+          `   Response: ${result.choices[0].message.content.substring(0, 100)}...`,
+        );
       } else {
         console.log(`❌ OpenAI compatible request failed: ${response.status}`);
       }
@@ -362,37 +389,44 @@ class LLMRouterDemo {
       { name: "cb:fastest", description: "Fastest response" },
       { name: "cb:coding", description: "Best for code generation" },
       { name: "cb:analysis", description: "Best for data analysis" },
-      { name: "cb:creative", description: "Best for creative writing" }
+      { name: "cb:creative", description: "Best for creative writing" },
     ];
 
     console.log("   Testing all virtual models...");
-    
+
     for (const virtualModel of virtualModels) {
       try {
         console.log(`   🧪 ${virtualModel.name} (${virtualModel.description})`);
-        
+
         const request: OpenAIRequest = {
           model: virtualModel.name,
-          messages: [{ 
-            role: "user", 
-            content: this.getTestContentForModel(virtualModel.name)
-          }]
+          messages: [
+            {
+              role: "user",
+              content: this.getTestContentForModel(virtualModel.name),
+            },
+          ],
         };
-        
-        const response = await fetch('http://localhost:3000/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(request)
-        });
+
+        const response = await fetch(
+          "http://localhost:3000/v1/chat/completions",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+          },
+        );
 
         if (response.ok) {
-          const result = await response.json() as SmartRoutingResult;
+          const result = (await response.json()) as SmartRoutingResult;
           console.log(`   ✅ ${virtualModel.name}: Response received`);
-          console.log(`      Model used: ${result.model || 'unknown'}`);
+          console.log(`      Model used: ${result.model || "unknown"}`);
           // Use longer preview for coding model to show complete code examples
           const previewLength = virtualModel.name === "cb:coding" ? 200 : 60;
-          console.log(`      Preview: ${result.choices[0].message.content.substring(0, previewLength)}...`);
-          
+          console.log(
+            `      Preview: ${result.choices[0].message.content.substring(0, previewLength)}...`,
+          );
+
           // Show routing metadata if available
           if (result.provider_used) {
             console.log(`      Provider: ${result.provider_used}`);
@@ -402,15 +436,17 @@ class LLMRouterDemo {
           }
         } else {
           const errorText = await response.text();
-          console.log(`   ❌ ${virtualModel.name}: Failed (${response.status})`);
+          console.log(
+            `   ❌ ${virtualModel.name}: Failed (${response.status})`,
+          );
           console.log(`      Error: ${errorText.substring(0, 100)}...`);
         }
       } catch (error) {
         console.log(`   ❌ ${virtualModel.name}: Error - ${error}`);
       }
-      
+
       // Small delay between requests to avoid overwhelming the server
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
   }
 
@@ -443,44 +479,44 @@ class LLMRouterDemo {
         name: "Cost Optimized",
         config: {
           routing_strategy: "cost_optimized",
-          max_cost_per_1k_tokens: 0.002
+          max_cost_per_1k_tokens: 0.002,
         },
-        testContent: "Explain machine learning in simple terms"
+        testContent: "Explain machine learning in simple terms",
       },
       {
         name: "Performance First",
         config: {
           routing_strategy: "performance_first",
-          max_latency_ms: 2000
+          max_latency_ms: 2000,
         },
-        testContent: "Quick question: What is AI?"
+        testContent: "Quick question: What is AI?",
       },
       {
         name: "Task Specific - Coding",
         config: {
           routing_strategy: "task_specific",
-          task_type: "coding"
+          task_type: "coding",
         },
-        testContent: "Write a Python function to calculate fibonacci numbers"
+        testContent: "Write a Python function to calculate fibonacci numbers",
       },
       {
         name: "Balanced Approach",
         config: {
           routing_strategy: "balanced",
           max_cost_per_1k_tokens: 0.01,
-          max_latency_ms: 5000
+          max_latency_ms: 5000,
         },
-        testContent: "Compare different programming languages"
+        testContent: "Compare different programming languages",
       },
       {
         name: "With Fallbacks",
         config: {
           routing_strategy: "cost_optimized",
           fallback_models: ["claude-3-haiku-20240307", "gpt-3.5-turbo"],
-          max_cost_per_1k_tokens: 0.001
+          max_cost_per_1k_tokens: 0.001,
         },
-        testContent: "Explain quantum computing"
-      }
+        testContent: "Explain quantum computing",
+      },
     ];
 
     console.log("   Testing smart routing with preferences...");
@@ -488,33 +524,43 @@ class LLMRouterDemo {
     for (const test of routingTests) {
       try {
         console.log(`   🎯 ${test.name}`);
-        
+
         const request: OpenAIRequest = {
           model: "auto",
           messages: [{ role: "user", content: test.testContent }],
-          circuit_breaker: test.config
+          circuit_breaker: test.config,
         };
-        
-        const response = await fetch('http://localhost:3000/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(request)
-        });
+
+        const response = await fetch(
+          "http://localhost:3000/v1/chat/completions",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+          },
+        );
 
         if (response.ok) {
-          const result = await response.json() as SmartRoutingResult;
+          const result = (await response.json()) as SmartRoutingResult;
           console.log(`   ✅ ${test.name}: Smart routing successful`);
           console.log(`      Strategy: ${test.config.routing_strategy}`);
-          console.log(`      Model used: ${result.model || 'auto-selected'}`);
+          console.log(`      Model used: ${result.model || "auto-selected"}`);
           // Use longer preview for coding tasks to show complete code examples
           const previewLength = test.config.task_type === "coding" ? 200 : 80;
-          console.log(`      Response preview: ${result.choices[0].message.content.substring(0, previewLength)}...`);
-          
+          console.log(
+            `      Response preview: ${result.choices[0].message.content.substring(0, previewLength)}...`,
+          );
+
           // Show cost info if available
           if (result.cost_estimate) {
             const costLimit = test.config.max_cost_per_1k_tokens;
-            const costStatus = costLimit && result.cost_estimate > costLimit ? "⚠️ OVER LIMIT" : "✅ within limit";
-            console.log(`      Cost: $${result.cost_estimate.toFixed(4)} ${costStatus}`);
+            const costStatus =
+              costLimit && result.cost_estimate > costLimit
+                ? "⚠️ OVER LIMIT"
+                : "✅ within limit";
+            console.log(
+              `      Cost: $${result.cost_estimate.toFixed(4)} ${costStatus}`,
+            );
           }
         } else {
           const errorText = await response.text();
@@ -524,9 +570,9 @@ class LLMRouterDemo {
       } catch (error) {
         console.log(`   ❌ ${test.name}: Error - ${error}`);
       }
-      
+
       // Small delay between requests
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
 
@@ -536,20 +582,23 @@ class LLMRouterDemo {
         name: "Smart Chat Streaming",
         model: "cb:smart-chat",
         content: "Write a short poem about AI",
-        config: { routing_strategy: "balanced" }
+        config: { routing_strategy: "balanced" },
       },
       {
         name: "Cost-Optimal Streaming",
-        model: "cb:cost-optimal", 
+        model: "cb:cost-optimal",
         content: "Tell me a brief joke",
-        config: { routing_strategy: "cost_optimized", max_cost_per_1k_tokens: 0.001 }
+        config: {
+          routing_strategy: "cost_optimized",
+          max_cost_per_1k_tokens: 0.001,
+        },
       },
       {
         name: "Coding Task Streaming",
         model: "cb:coding",
         content: "Write a simple hello world in Python",
-        config: { routing_strategy: "task_specific", task_type: "coding" }
-      }
+        config: { routing_strategy: "task_specific", task_type: "coding" },
+      },
     ];
 
     console.log("   Testing streaming with smart routing...");
@@ -557,19 +606,22 @@ class LLMRouterDemo {
     for (const test of streamingTests) {
       try {
         console.log(`   🌊 ${test.name}`);
-        
+
         const request: OpenAIRequest = {
           model: test.model,
           messages: [{ role: "user", content: test.content }],
           stream: true,
-          circuit_breaker: test.config
+          circuit_breaker: test.config,
         };
-        
-        const response = await fetch('http://localhost:3000/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(request)
-        });
+
+        const response = await fetch(
+          "http://localhost:3000/v1/chat/completions",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+          },
+        );
 
         if (response.ok && response.body) {
           console.log(`      ✅ ${test.name} streaming started...`);
@@ -579,15 +631,15 @@ class LLMRouterDemo {
 
           // Use Node.js compatible stream handling
           const stream = response.body as any;
-          
+
           for await (const chunk of stream) {
             const text = chunk.toString();
             chunks++;
-            
+
             // Try to parse streaming data
-            const lines = text.split('\n').filter(line => line.trim());
+            const lines = text.split("\n").filter((line) => line.trim());
             for (const line of lines) {
-              if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+              if (line.startsWith("data: ") && line !== "data: [DONE]") {
                 try {
                   const data = JSON.parse(line.substring(6));
                   if (data.choices?.[0]?.delta?.content) {
@@ -598,12 +650,14 @@ class LLMRouterDemo {
                 }
               }
             }
-            
+
             if (chunks <= 3) {
-              console.log(`         Chunk ${chunks}: ${text.substring(0, 40)}...`);
+              console.log(
+                `         Chunk ${chunks}: ${text.substring(0, 40)}...`,
+              );
             }
           }
-          
+
           const streamDuration = Date.now() - firstChunkTime;
           console.log(`      ✅ ${test.name} complete:`);
           console.log(`         Chunks received: ${chunks}`);
@@ -618,48 +672,66 @@ class LLMRouterDemo {
       } catch (error) {
         console.log(`      ❌ ${test.name} error: ${error}`);
       }
-      
+
       // Delay between streaming tests
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   }
 
   private async listAvailableModels(): Promise<void> {
     try {
       console.log("   Fetching available models from API...");
-      
-      const response = await fetch('http://localhost:3000/v1/models');
-      
+
+      const response = await fetch("http://localhost:3000/v1/models");
+
       if (response.ok) {
         const data = await response.json();
         console.log(`   ✅ Found ${data.data.length} models available:`);
-        
+
         // Separate real and virtual models
-        const realModels = data.data.filter((model: any) => !model.id.startsWith('cb:') && model.id !== 'auto');
-        const virtualModels = data.data.filter((model: any) => model.id.startsWith('cb:') || model.id === 'auto');
-        
+        const realModels = data.data.filter(
+          (model: any) => !model.id.startsWith("cb:") && model.id !== "auto",
+        );
+        const virtualModels = data.data.filter(
+          (model: any) => model.id.startsWith("cb:") || model.id === "auto",
+        );
+
         console.log(`\n   📊 Real Provider Models (${realModels.length}):`);
         realModels.forEach((model: any) => {
-          console.log(`      • ${model.id} (${model.owned_by || 'unknown provider'})`);
+          console.log(
+            `      • ${model.id} (${model.owned_by || "unknown provider"})`,
+          );
         });
-        
-        console.log(`\n   🎯 Virtual Smart Routing Models (${virtualModels.length}):`);
-        virtualModels.forEach((model: any) => {
-          console.log(`      • ${model.id} - ${model.display_name || model.id}`);
-        });
-        
-        // Validate that key virtual models are present
-        const expectedVirtualModels = ['auto', 'cb:smart-chat', 'cb:cost-optimal', 'cb:fastest', 'cb:coding'];
-        const missingModels = expectedVirtualModels.filter(expected => 
-          !virtualModels.some((model: any) => model.id === expected)
+
+        console.log(
+          `\n   🎯 Virtual Smart Routing Models (${virtualModels.length}):`,
         );
-        
+        virtualModels.forEach((model: any) => {
+          console.log(
+            `      • ${model.id} - ${model.display_name || model.id}`,
+          );
+        });
+
+        // Validate that key virtual models are present
+        const expectedVirtualModels = [
+          "auto",
+          "cb:smart-chat",
+          "cb:cost-optimal",
+          "cb:fastest",
+          "cb:coding",
+        ];
+        const missingModels = expectedVirtualModels.filter(
+          (expected) =>
+            !virtualModels.some((model: any) => model.id === expected),
+        );
+
         if (missingModels.length === 0) {
           console.log("   ✅ All expected virtual models are available");
         } else {
-          console.log(`   ⚠️  Missing virtual models: ${missingModels.join(', ')}`);
+          console.log(
+            `   ⚠️  Missing virtual models: ${missingModels.join(", ")}`,
+          );
         }
-        
       } else {
         console.log(`   ❌ Failed to fetch models: ${response.status}`);
         const errorText = await response.text();
@@ -667,15 +739,15 @@ class LLMRouterDemo {
       }
     } catch (error) {
       console.log(`   ❌ Error fetching models: ${error}`);
-      }
     }
+  }
 
-    private printSmartRoutingUsageGuide(): void {
-      console.log("\n📚 Smart Routing Usage Guide");
-      console.log("=============================");
-    
-      console.log("\n🔹 Basic OpenAI Compatibility (no changes needed):");
-      console.log(`   const response = await fetch('http://localhost:3000/v1/chat/completions', {
+  private printSmartRoutingUsageGuide(): void {
+    console.log("\n📚 Smart Routing Usage Guide");
+    console.log("=============================");
+
+    console.log("\n🔹 Basic OpenAI Compatibility (no changes needed):");
+    console.log(`   const response = await fetch('http://localhost:3000/v1/chat/completions', {
        method: 'POST',
        headers: { 'Content-Type': 'application/json' },
        body: JSON.stringify({
@@ -684,8 +756,8 @@ class LLMRouterDemo {
        })
      });`);
 
-      console.log("\n🔹 Virtual Model Usage:");
-      console.log(`   // Auto-select best model
+    console.log("\n🔹 Virtual Model Usage:");
+    console.log(`   // Auto-select best model
      const response = await fetch('http://localhost:3000/v1/chat/completions', {
        body: JSON.stringify({
          model: "auto",  // or "cb:smart-chat", "cb:cost-optimal", etc.
@@ -693,8 +765,8 @@ class LLMRouterDemo {
        })
      });`);
 
-      console.log("\n🔹 Smart Routing with Preferences:");
-      console.log(`   const response = await fetch('http://localhost:3000/v1/chat/completions', {
+    console.log("\n🔹 Smart Routing with Preferences:");
+    console.log(`   const response = await fetch('http://localhost:3000/v1/chat/completions', {
        body: JSON.stringify({
          model: "auto",
          messages: [{ role: "user", content: "Write code" }],
@@ -706,112 +778,124 @@ class LLMRouterDemo {
        })
      });`);
 
-      console.log("\n🔹 Available Virtual Models:");
-      console.log("   • auto - Smart auto-selection");
-      console.log("   • cb:smart-chat - Balanced chat model");
-      console.log("   • cb:cost-optimal - Cheapest available");
-      console.log("   • cb:fastest - Fastest response");
-      console.log("   • cb:coding - Best for code generation");
-      console.log("   • cb:analysis - Best for data analysis");
-      console.log("   • cb:creative - Best for creative writing");
+    console.log("\n🔹 Available Virtual Models:");
+    console.log("   • auto - Smart auto-selection");
+    console.log("   • cb:smart-chat - Balanced chat model");
+    console.log("   • cb:cost-optimal - Cheapest available");
+    console.log("   • cb:fastest - Fastest response");
+    console.log("   • cb:coding - Best for code generation");
+    console.log("   • cb:analysis - Best for data analysis");
+    console.log("   • cb:creative - Best for creative writing");
 
-      console.log("\n🔹 Routing Strategies:");
-      console.log("   • cost_optimized - Choose cheapest provider");
-      console.log("   • performance_first - Choose fastest provider");
-      console.log("   • balanced - Balance cost and performance");
-      console.log("   • reliability_first - Choose most reliable");
-      console.log("   • task_specific - Choose based on task type");
+    console.log("\n🔹 Routing Strategies:");
+    console.log("   • cost_optimized - Choose cheapest provider");
+    console.log("   • performance_first - Choose fastest provider");
+    console.log("   • balanced - Balance cost and performance");
+    console.log("   • reliability_first - Choose most reliable");
+    console.log("   • task_specific - Choose based on task type");
 
-      console.log("\n💡 All smart routing features work with streaming too!");
-      console.log("   Just add 'stream: true' to any request.\n");
-      }
+    console.log("\n💡 All smart routing features work with streaming too!");
+    console.log("   Just add 'stream: true' to any request.\n");
+  }
 
-      private async testDirectLLMRouterIntegration(): Promise<void> {
-        console.log("\n💬 Direct LLM Router Integration Test");
-        console.log("-------------------------------------");
-      
-        console.log("   🔄 Testing real-time LLM streaming through Circuit Breaker router...");
-        console.log("   📡 Using direct integration with smart routing");
-      
-        // Test the smart routing through the REST API
-        try {
-          const streamingRequest = {
-            model: "cb:smart-chat",
-            messages: [
-              { role: "user", content: "How much wood would a woodchuck chuck if a woodchuck could chuck wood?" }
-            ],
-            stream: true,
-            circuit_breaker: {
-              routing_strategy: "balanced"
-            }
-          };
-        
-          console.log("   ✅ LLM Router request prepared with smart routing");
-        
-          const response = await fetch('http://localhost:3000/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(streamingRequest)
-          });
-        
-          if (response.ok && response.body) {
-            console.log("   🔄 Real-time streaming response:");
-            console.log("   Smart Router: ", { flush: false });
-          
-            let chunkCount = 0;
-            let responseText = '';
-          
-            // Use Node.js compatible stream handling
-            const stream = response.body as any;
-            
-            for await (const chunk of stream) {
-              const text = chunk.toString();
-              responseText += text;
-              
-              const lines = text.split('\n').filter(line => line.trim());
-              
-              for (const line of lines) {
-                if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-                  try {
-                    const data = JSON.parse(line.substring(6));
-                    if (data.choices?.[0]?.delta?.content) {
-                      process.stdout.write(data.choices[0].delta.content);
-                      chunkCount++;
-                    }
-                  } catch (e) {
-                    // Ignore parsing errors
-                  }
+  private async testDirectLLMRouterIntegration(): Promise<void> {
+    console.log("\n💬 Direct LLM Router Integration Test");
+    console.log("-------------------------------------");
+
+    console.log(
+      "   🔄 Testing real-time LLM streaming through Circuit Breaker router...",
+    );
+    console.log("   📡 Using direct integration with smart routing");
+
+    // Test the smart routing through the REST API
+    try {
+      const streamingRequest = {
+        model: "cb:smart-chat",
+        messages: [
+          {
+            role: "user",
+            content:
+              "How much wood would a woodchuck chuck if a woodchuck could chuck wood?",
+          },
+        ],
+        stream: true,
+        circuit_breaker: {
+          routing_strategy: "balanced",
+        },
+      };
+
+      console.log("   ✅ LLM Router request prepared with smart routing");
+
+      const response = await fetch(
+        "http://localhost:3000/v1/chat/completions",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(streamingRequest),
+        },
+      );
+
+      if (response.ok && response.body) {
+        console.log("   🔄 Real-time streaming response:");
+        console.log("   Smart Router: ", { flush: false });
+
+        let chunkCount = 0;
+        let responseText = "";
+
+        // Use Node.js compatible stream handling
+        const stream = response.body as any;
+
+        for await (const chunk of stream) {
+          const text = chunk.toString();
+          responseText += text;
+
+          const lines = text.split("\n").filter((line) => line.trim());
+
+          for (const line of lines) {
+            if (line.startsWith("data: ") && line !== "data: [DONE]") {
+              try {
+                const data = JSON.parse(line.substring(6));
+                if (data.choices?.[0]?.delta?.content) {
+                  process.stdout.write(data.choices[0].delta.content);
+                  chunkCount++;
                 }
+              } catch (e) {
+                // Ignore parsing errors
               }
             }
-            
-            console.log(`\n   ✅ Real-time streaming completed successfully!`);
-            console.log(`      Chunks received: ${chunkCount}`);
-            console.log("      🎯 This demonstrates the working smart routing with streaming");
-          } else {
-            console.log(`   ❌ Streaming failed: ${response.status}`);
-            console.log("      💡 This might be due to missing API key or network issues");
           }
-        
-        } catch (error) {
-          console.log(`   ❌ Failed to test LLM Router integration: ${error}`);
         }
-      
-        console.log("\n   📡 Smart Routing Infrastructure:");
-        console.log("      • Virtual models implemented ✅");
-        console.log("      • Cost optimization ready ✅");
-        console.log("      • Performance routing ready ✅");
-        console.log("      • Task-specific routing ready ✅");
-        console.log("      • Real-time streaming ready ✅");
-        console.log("      • Test in your app: http://localhost:3000 🌐");
+
+        console.log(`\n   ✅ Real-time streaming completed successfully!`);
+        console.log(`      Chunks received: ${chunkCount}`);
+        console.log(
+          "      🎯 This demonstrates the working smart routing with streaming",
+        );
+      } else {
+        console.log(`   ❌ Streaming failed: ${response.status}`);
+        console.log(
+          "      💡 This might be due to missing API key or network issues",
+        );
       }
+    } catch (error) {
+      console.log(`   ❌ Failed to test LLM Router integration: ${error}`);
+    }
 
-  private async testDirectAnthropicStreaming(anthropicApiKey: string): Promise<void> {
-    console.log("\n🌊 6. Direct Anthropic Streaming Integration");
-    console.log("-------------------------------------------");
+    console.log("\n   📡 Smart Routing Infrastructure:");
+    console.log("      • Virtual models implemented ✅");
+    console.log("      • Cost optimization ready ✅");
+    console.log("      • Performance routing ready ✅");
+    console.log("      • Task-specific routing ready ✅");
+    console.log("      • Real-time streaming ready ✅");
+    console.log("      • Test in your app: http://localhost:3000 🌐");
+  }
 
-    console.log("🔄 Testing direct Anthropic API streaming...");
-    console.log("📡 Using real Anthropic Claude API with Server-Sent Events");
+  private async testDirectAnthropicStreaming(): Promise<void> {
+    console.log("\n🌊 6. Circuit Breaker OpenAI API Streaming");
+    console.log("------------------------------------------");
+
+    console.log("🔄 Testing Circuit Breaker OpenAI API streaming...");
+    console.log("📡 Using Circuit Breaker router with server-side authentication");
 
     try {
       const streamingRequest = {
@@ -820,47 +904,48 @@ class LLMRouterDemo {
         messages: [
           {
             role: "user",
-            content: "How much wood would a woodchuck chuck if a woodchuck could chuck wood? Please be creative and fun!"
-          }
+            content:
+              "How much wood would a woodchuck chuck if a woodchuck could chuck wood? Please be creative and fun!",
+          },
         ],
-        stream: true
+        stream: true,
       };
 
-      console.log("✅ Anthropic streaming request prepared");
+      console.log("✅ Circuit Breaker streaming request prepared");
 
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch(this.openaiApiUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": anthropicApiKey,
-          "anthropic-version": "2023-06-01",
+          // No Authorization header - server manages API keys
         },
         body: JSON.stringify(streamingRequest),
       });
 
       if (response.ok && response.body) {
-        console.log("🔄 Real-time Anthropic streaming response:");
-        console.log("   Claude: ", { flush: false });
+        console.log("🔄 Real-time Circuit Breaker streaming response:");
+        console.log("   Circuit Breaker → Claude: ", { flush: false });
 
         let chunkCount = 0;
 
         // Use Node.js compatible stream handling
         const stream = response.body as any;
-        
+
         for await (const chunk of stream) {
           const text = chunk.toString();
-          const lines = text.split('\n').filter(line => line.trim());
+          const lines = text.split("\n").filter((line) => line.trim());
 
           for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              if (line === 'data: [DONE]') {
+            if (line.startsWith("data: ")) {
+              if (line === "data: [DONE]") {
                 break;
               }
 
               try {
                 const data = JSON.parse(line.substring(6));
-                if (data.type === 'content_block_delta' && data.delta?.text) {
-                  process.stdout.write(data.delta.text);
+                // Handle OpenAI-compatible format
+                if (data.choices?.[0]?.delta?.content) {
+                  process.stdout.write(data.choices[0].delta.content);
                   chunkCount++;
                 }
               } catch (e) {
@@ -870,29 +955,35 @@ class LLMRouterDemo {
           }
         }
 
-        console.log(`\n✅ Real-time Anthropic streaming completed successfully!`);
+        console.log(
+          `\n✅ Circuit Breaker streaming completed successfully!`,
+        );
         console.log(`   Chunks received: ${chunkCount}`);
-        console.log("   🎯 This demonstrates the working Anthropic SSE streaming");
+        console.log(
+          "   🎯 This demonstrates Circuit Breaker router with server-side authentication",
+        );
       } else {
-        console.log(`❌ Anthropic streaming failed: ${response.status}`);
+        console.log(`❌ Circuit Breaker streaming failed: ${response.status}`);
         const errorText = await response.text();
         console.log(`   Error: ${errorText.substring(0, 200)}...`);
-        console.log("💡 This might be due to missing API key or network issues");
+        console.log(
+          "💡 Make sure Circuit Breaker server is running with API keys configured",
+        );
       }
-
     } catch (error) {
-      console.log(`❌ Failed to test Anthropic streaming: ${error}`);
+      console.log(`❌ Failed to test Circuit Breaker streaming: ${error}`);
     }
 
-    console.log("\n📡 Anthropic Streaming Infrastructure:");
-    console.log("   • Direct API integration implemented ✅");
+    console.log("\n📡 Circuit Breaker Streaming Infrastructure:");
+    console.log("   • OpenAI-compatible API integration ✅");
+    console.log("   • Server-side API key management ✅");
     console.log("   • Server-Sent Events streaming ✅");
     console.log("   • Real-time response processing ✅");
     console.log("   • Error handling and recovery ✅");
-    console.log("   • Production-ready streaming ✅");
+    console.log("   • Production-ready routing ✅");
   }
 
-    private async checkLLMProviders(): Promise<void> {
+  private async checkLLMProviders(): Promise<void> {
     console.log("\n📊 5. Checking LLM Providers");
     console.log("----------------------------");
 
@@ -932,12 +1023,14 @@ class LLMRouterDemo {
     }
   }
 
-  private async testDirectAnthropicStreaming(apiKey: string): Promise<void> {
-    console.log("\n💬 2. Direct Anthropic SSE Streaming");
-    console.log("-----------------------------------");
+  private async testCircuitBreakerStreaming(): Promise<void> {
+    console.log("\n💬 2. Circuit Breaker OpenAI API Streaming");
+    console.log("------------------------------------------");
 
     console.log("🔄 Testing real-time SSE streaming...");
-    console.log("📡 Using direct Anthropic streaming API integration");
+    console.log(
+      "📡 Using Circuit Breaker OpenAI-compatible API (server manages authentication)",
+    );
 
     const requestBody = {
       model: "claude-sonnet-4-20250514",
@@ -948,18 +1041,17 @@ class LLMRouterDemo {
         {
           role: "user",
           content:
-            "How much wood would a woodchuck chuck if a woodchuck could chuck wood? Use as much detail as you can.",
+            "How much wood would a woodchuck chuck if a woodchuck could chuck wood? Keep it brief.",
         },
       ],
     };
 
     try {
-      const response = (await fetch(this.anthropicApiUrl, {
+      const response = (await fetch(this.openaiApiUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
+          // No Authorization header - server manages API keys
         },
         body: JSON.stringify(requestBody),
       })) as Response;
@@ -969,7 +1061,7 @@ class LLMRouterDemo {
       }
 
       console.log("🔄 Real-time SSE streaming response:");
-      process.stdout.write("   Claude 4: ");
+      process.stdout.write("   Circuit Breaker → Claude 4: ");
 
       let chunkCount = 0;
 
@@ -993,15 +1085,13 @@ class LLMRouterDemo {
               const data = line.slice(6).trim();
               if (data && data !== "[DONE]") {
                 try {
-                  const event: AnthropicStreamEvent = JSON.parse(data);
+                  const event = JSON.parse(data);
 
-                  if (
-                    event.type === "content_block_delta" &&
-                    event.delta?.text
-                  ) {
-                    process.stdout.write(event.delta.text);
+                  // Handle OpenAI-compatible format
+                  if (event.choices?.[0]?.delta?.content) {
+                    process.stdout.write(event.choices[0].delta.content);
                     chunkCount++;
-                  } else if (event.type === "message_stop") {
+                  } else if (event.choices?.[0]?.finish_reason) {
                     clearTimeout(streamTimeout);
                     break;
                   }
@@ -1022,11 +1112,13 @@ class LLMRouterDemo {
       console.log("\n✅ SSE streaming completed successfully!");
       console.log(`   Chunks received: ${chunkCount}`);
       console.log(
-        "   🎯 This demonstrates working SSE streaming infrastructure",
+        "   🎯 This demonstrates Circuit Breaker routing with server-side authentication",
       );
     } catch (error) {
-      console.log("❌ Streaming failed:", error);
-      console.log("💡 This might be due to missing API key or network issues");
+      console.log("❌ Circuit Breaker streaming failed:", error);
+      console.log(
+        "💡 Make sure the Circuit Breaker server is running on port 3000 with API keys configured",
+      );
     }
   }
 

@@ -114,6 +114,16 @@ impl OpenAIApiState {
                 cost_per_output_token: 0.000015,
             },
             ModelConfig {
+                id: "claude-sonnet-4-20250514".to_string(),
+                provider: LLMProviderType::Anthropic,
+                display_name: "Claude 4 Sonnet".to_string(),
+                context_window: 200000,
+                max_output_tokens: 8192,
+                supports_streaming: true,
+                cost_per_input_token: 0.000003,
+                cost_per_output_token: 0.000015,
+            },
+            ModelConfig {
                 id: "gpt-4".to_string(),
                 provider: LLMProviderType::OpenAI,
                 display_name: "GPT-4".to_string(),
@@ -672,6 +682,7 @@ mod tests {
         assert!(!models.is_empty());
         assert!(models.iter().any(|m| m.id == "gpt-4"));
         assert!(models.iter().any(|m| m.id == "claude-3-haiku-20240307"));
+        assert!(models.iter().any(|m| m.id == "claude-sonnet-4-20250514"));
     }
 
     #[test]
