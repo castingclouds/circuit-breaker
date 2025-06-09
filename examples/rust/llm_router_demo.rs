@@ -22,15 +22,13 @@
 //! - Provider health monitoring
 //! - Intelligent routing with retry logic
 
+use async_graphql::Request;
+use circuit_breaker::engine::{
+    graphql::create_schema_with_storage,
+    storage::{InMemoryStorage, WorkflowStorage},
+};
 use reqwest::Client;
 use serde_json::json;
-use circuit_breaker::{
-    engine::{
-        graphql::create_schema_with_storage,
-        storage::{InMemoryStorage, WorkflowStorage},
-    },
-};
-use async_graphql::Request;
 use std::io::{self, Write};
 
 /// Interactive pause for demo presentations
@@ -42,8 +40,6 @@ fn wait_for_enter(message: &str) {
     io::stdin().read_line(&mut input).unwrap();
     println!();
 }
-
-
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -65,7 +61,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!("📋 Prerequisites:");
-    println!("• Circuit Breaker server must be running on ports 3000 (OpenAI API) and 4000 (GraphQL)");
+    println!(
+        "• Circuit Breaker server must be running on ports 3000 (OpenAI API) and 4000 (GraphQL)"
+    );
     println!("• Start with: cargo run --bin server");
     println!("• OpenAI API: http://localhost:3000");
     println!("• GraphiQL interface: http://localhost:4000");
@@ -78,9 +76,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔗 Testing server connectivity...");
     let graphql_health = client.get("http://localhost:4000/health").send().await;
     let openai_health = client.get("http://localhost:3000/health").send().await;
-    
+
     match (graphql_health, openai_health) {
-        (Ok(graphql_resp), Ok(openai_resp)) if graphql_resp.status().is_success() && openai_resp.status().is_success() => {
+        (Ok(graphql_resp), Ok(openai_resp))
+            if graphql_resp.status().is_success() && openai_resp.status().is_success() =>
+        {
             println!("✅ Both GraphQL and OpenAI API servers are running");
         }
         _ => {
@@ -91,10 +91,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     wait_for_enter("Ready to demonstrate smart routing capabilities?");
-    
+
     // Demo smart routing capabilities
     demonstrate_smart_routing(&client).await?;
-    
+
     wait_for_enter("Smart routing demo complete! Ready to check LLM providers?");
 
     println!("\n📊 5. Checking LLM Providers");
@@ -137,7 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "✅ Available Providers: {}",
         serde_json::to_string_pretty(&providers_result)?
     );
-    
+
     wait_for_enter("Provider configuration shown! Ready to test real-time streaming?");
 
     println!("\n💬 6. Real Streaming LLM Integration");
@@ -145,96 +145,96 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if has_anthropic_key {
         println!("🔄 Testing real-time LLM streaming...");
-        println!("📡 Using direct Anthropic streaming API integration");
-        
+        println!("📡 Testing LLM Router streaming with Anthropic provider");
+
         // Test the actual streaming implementation through the router
-        use circuit_breaker::llm::{router::LLMRouter, LLMRequest, ChatMessage, MessageRole};
+        use circuit_breaker::llm::{router::LLMRouter, ChatMessage, LLMRequest, MessageRole};
         use uuid::Uuid;
-        
+
         match LLMRouter::new().await {
-        Ok(router) => {
-            let streaming_request = LLMRequest {
-                id: Uuid::new_v4(),
-                model: "claude-sonnet-4-20250514".to_string(),
-                messages: vec![
-                    ChatMessage {
+            Ok(router) => {
+                let streaming_request = LLMRequest {
+                    id: Uuid::new_v4(),
+                    model: "claude-sonnet-4-20250514".to_string(),
+                    messages: vec![ChatMessage {
                         role: MessageRole::User,
-                        content: "How much wood would a woodchuck chuck if a woodchuck could chuck wood?".to_string(),
+                        content:
+                            "How much wood would a woodchuck chuck if a woodchuck could chuck wood?"
+                                .to_string(),
                         name: None,
                         function_call: None,
-                    }
-                ],
-                temperature: Some(0.7),
-                max_tokens: Some(150),
-                top_p: None,
-                frequency_penalty: None,
-                presence_penalty: None,
-                stop: None,
-                stream: true,
-                functions: None,
-                function_call: None,
-                user: None,
-                metadata: std::collections::HashMap::new(),
-            };
-            
-            println!("✅ LLM Router initialized");
-            
-            match router.chat_completion_stream(streaming_request).await {
-                Ok(mut stream) => {
-                    println!("🔄 Real-time streaming response:");
-                    print!("   Claude 4: ");
-                    std::io::Write::flush(&mut std::io::stdout()).unwrap();
-                    
-                    let mut chunk_count = 0;
-                    use futures::StreamExt;
-                    
-                    while let Some(chunk_result) = stream.next().await {
-                        match chunk_result {
-                            Ok(chunk) => {
-                                for choice in &chunk.choices {
-                                    if !choice.delta.content.is_empty() {
-                                        print!("{}", choice.delta.content);
-                                        std::io::Write::flush(&mut std::io::stdout()).unwrap();
-                                        chunk_count += 1;
+                    }],
+                    temperature: Some(0.7),
+                    max_tokens: Some(150),
+                    top_p: None,
+                    frequency_penalty: None,
+                    presence_penalty: None,
+                    stop: None,
+                    stream: true,
+                    functions: None,
+                    function_call: None,
+                    user: None,
+                    metadata: std::collections::HashMap::new(),
+                };
+
+                println!("✅ LLM Router initialized");
+
+                match router.chat_completion_stream(streaming_request).await {
+                    Ok(mut stream) => {
+                        println!("🔄 Real-time streaming response:");
+                        print!("   Claude 4: ");
+                        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+
+                        let mut chunk_count = 0;
+                        use futures::StreamExt;
+
+                        while let Some(chunk_result) = stream.next().await {
+                            match chunk_result {
+                                Ok(chunk) => {
+                                    for choice in &chunk.choices {
+                                        if !choice.delta.content.is_empty() {
+                                            print!("{}", choice.delta.content);
+                                            std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                                            chunk_count += 1;
+                                        }
+                                    }
+
+                                    if chunk.choices.iter().any(|c| c.finish_reason.is_some()) {
+                                        break;
                                     }
                                 }
-                                
-                                if chunk.choices.iter().any(|c| c.finish_reason.is_some()) {
+                                Err(e) => {
+                                    println!("\n❌ Streaming error: {}", e);
                                     break;
                                 }
-                            },
-                            Err(e) => {
-                                println!("\n❌ Streaming error: {}", e);
-                                break;
                             }
                         }
+
+                        println!("\n✅ Real-time streaming completed successfully!");
+                        println!("   Chunks received: {}", chunk_count);
+                        println!("   🎯 This demonstrates the working streaming infrastructure");
                     }
-                    
-                    println!("\n✅ Real-time streaming completed successfully!");
-                    println!("   Chunks received: {}", chunk_count);
-                    println!("   🎯 This demonstrates the working streaming infrastructure");
-                },
-                Err(e) => {
-                    println!("❌ Streaming failed: {}", e);
-                    println!("💡 This might be due to missing API key or network issues");
+                    Err(e) => {
+                        println!("❌ Streaming failed: {}", e);
+                        println!("💡 This might be due to missing API key or network issues");
+                    }
                 }
             }
-        },
-        Err(e) => {
-            println!("❌ Failed to initialize LLM Router: {}", e);
+            Err(e) => {
+                println!("❌ Failed to initialize LLM Router: {}", e);
+            }
         }
-    }
     } else {
         println!("⏭️  Skipping LLM router streaming test (no API key)");
         println!("💡 This test requires ANTHROPIC_API_KEY to be set");
     }
-    
+
     println!("\n📡 WebSocket Streaming Infrastructure:");
     println!("   • GraphQL subscriptions implemented ✅");
     println!("   • WebSocket endpoint: ws://localhost:4000/ws ✅");
     println!("   • Real-time streaming ready ✅");
     println!("   • Test in GraphiQL: http://localhost:4000 🌐");
-    
+
     wait_for_enter("Streaming demo complete! Ready to check budget management?");
 
     println!("\n💰 7. Checking Budget Status");
@@ -277,7 +277,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             budget.get("message").unwrap_or(&json!("Unknown"))
         );
     }
-    
+
     wait_for_enter("Budget status checked! Ready to analyze cost analytics?");
 
     println!("\n📈 8. Getting Cost Analytics");
@@ -337,7 +337,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             serde_json::to_string_pretty(analytics.get("providerBreakdown").unwrap_or(&json!({})))?
         );
     }
-    
+
     wait_for_enter("Cost analytics reviewed! Ready to configure a new provider?");
 
     println!("\n⚙️  9. Configuring New Provider");
@@ -416,7 +416,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("   Models: {} configured", models.len());
         }
     }
-    
+
     wait_for_enter("Provider configured! Ready to set budget limits?");
 
     println!("\n💵 10. Setting Budget Limits");
@@ -466,7 +466,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             budget.get("message").unwrap_or(&json!("Unknown"))
         );
     }
-    
+
     wait_for_enter("Budget limits set! Ready to validate WebSocket infrastructure?");
 
     println!("\n🔄 11. WebSocket Streaming Implementation Validation");
@@ -474,12 +474,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Validate the streaming infrastructure is properly implemented
     println!("🔍 Validating WebSocket streaming infrastructure...");
-    
+
     let storage: Box<dyn WorkflowStorage> = Box::new(InMemoryStorage::default());
     let schema = create_schema_with_storage(storage);
-    
+
     // Verify subscription type exists
-    let introspection = schema.execute(Request::new(r#"
+    let introspection = schema
+        .execute(Request::new(
+            r#"
         query {
             __schema {
                 subscriptionType {
@@ -493,48 +495,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-    "#)).await;
-    
+    "#,
+        ))
+        .await;
+
     // Parse the response data as JSON
     if let Ok(json_str) = serde_json::to_string(&introspection.data) {
         if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&json_str) {
-            if let Some(subscription_type) = json_value.get("__schema")
+            if let Some(subscription_type) = json_value
+                .get("__schema")
                 .and_then(|schema| schema.get("subscriptionType"))
-                .and_then(|sub_type| sub_type.as_object()) {
-                
-                println!("✅ GraphQL Subscription type found: {}", 
-                    subscription_type.get("name").unwrap_or(&json!("Unknown")));
-                
+                .and_then(|sub_type| sub_type.as_object())
+            {
+                println!(
+                    "✅ GraphQL Subscription type found: {}",
+                    subscription_type.get("name").unwrap_or(&json!("Unknown"))
+                );
+
                 if let Some(fields) = subscription_type.get("fields").and_then(|f| f.as_array()) {
                     println!("📋 Available WebSocket subscription fields:");
-                    
+
                     // Check for required streaming subscriptions
-                    let field_names: Vec<&str> = fields.iter()
+                    let field_names: Vec<&str> = fields
+                        .iter()
                         .filter_map(|f| f.get("name").and_then(|n| n.as_str()))
                         .collect();
-                        
+
                     if field_names.contains(&"llmStream") {
                         println!("   ✅ llmStream - Real-time LLM response streaming");
                     } else {
                         println!("   ❌ llmStream subscription missing");
                     }
-                    
+
                     if field_names.contains(&"tokenUpdates") {
                         println!("   ✅ tokenUpdates - Workflow token state streaming");
                     } else {
                         println!("   ❌ tokenUpdates subscription missing");
                     }
-                    
+
                     if field_names.contains(&"costUpdates") {
                         println!("   ✅ costUpdates - Real-time cost monitoring");
                     } else {
                         println!("   ❌ costUpdates subscription missing");
                     }
-                    
+
                     if field_names.contains(&"agentExecutionStream") {
                         println!("   ✅ agentExecutionStream - AI agent execution streaming");
                     }
-                    
+
                     if field_names.contains(&"workflowEvents") {
                         println!("   ✅ workflowEvents - Workflow state change streaming");
                     }
@@ -548,12 +556,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         println!("❌ Failed to serialize schema response");
     }
-    
+
     println!("\n📡 WebSocket Infrastructure Status:");
     println!("   • GraphQL WebSocket endpoint: ws://localhost:4000/ws");
     println!("   • GraphiQL with subscription support: http://localhost:4000");
     println!("   • Real-time streaming ready for production");
-    
+
     println!("\n📋 Example WebSocket Subscription Queries:");
     println!("   LLM Streaming:");
     println!("   subscription {{ llmStream(requestId: \"live-demo\") }}");
@@ -563,7 +571,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   ");
     println!("   Token Updates:");
     println!("   subscription {{ tokenUpdates(tokenId: \"demo-token\") {{ id place }} }}");
-    
+
     wait_for_enter("WebSocket validation complete! Ready for final integration analysis?");
 
     println!("\n🎯 12. Real API Integration Analysis");
@@ -577,7 +585,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   • Health monitoring and latency tracking");
     println!("   • Project-scoped request routing");
     println!("   • WebSocket streaming infrastructure validation");
-    
+
     wait_for_enter("Integration analysis complete! Ready for final summary?");
 
     println!("\n🏁 Real Integration Demo Complete!");
@@ -653,44 +661,67 @@ async fn demonstrate_smart_routing(client: &Client) -> Result<(), Box<dyn std::e
 /// List and validate available models
 async fn list_available_models(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
     println!("   Fetching available models from API...");
-    
+
     let response = client.get("http://localhost:3000/v1/models").send().await?;
-    
+
     if response.status().is_success() {
         let data: serde_json::Value = response.json().await?;
         let empty_vec = vec![];
         let models = data["data"].as_array().unwrap_or(&empty_vec);
-        
+
         println!("   ✅ Found {} models available:", models.len());
-        
+
         // Separate real and virtual models
-        let real_models: Vec<_> = models.iter()
+        let real_models: Vec<_> = models
+            .iter()
             .filter(|m| !m["id"].as_str().unwrap_or("").starts_with("cb:") && m["id"] != "auto")
             .collect();
-        let virtual_models: Vec<_> = models.iter()
+        let virtual_models: Vec<_> = models
+            .iter()
             .filter(|m| m["id"].as_str().unwrap_or("").starts_with("cb:") || m["id"] == "auto")
             .collect();
-        
+
         println!("\n   📊 Real Provider Models ({}):", real_models.len());
         for model in &real_models {
-            println!("      • {} ({})", 
+            println!(
+                "      • {} ({})",
                 model["id"].as_str().unwrap_or("unknown"),
-                model["owned_by"].as_str().unwrap_or("unknown provider"));
+                model["owned_by"].as_str().unwrap_or("unknown provider")
+            );
         }
-        
-        println!("\n   🎯 Virtual Smart Routing Models ({}):", virtual_models.len());
+
+        println!(
+            "\n   🎯 Virtual Smart Routing Models ({}):",
+            virtual_models.len()
+        );
         for model in &virtual_models {
-            println!("      • {} - {}", 
+            println!(
+                "      • {} - {}",
                 model["id"].as_str().unwrap_or("unknown"),
-                model.get("display_name").and_then(|v| v.as_str()).unwrap_or("Smart routing model"));
+                model
+                    .get("display_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Smart routing model")
+            );
         }
-        
+
         // Validate expected virtual models
-        let expected_virtual_models = ["auto", "cb:smart-chat", "cb:cost-optimal", "cb:fastest", "cb:coding"];
-        let missing_models: Vec<_> = expected_virtual_models.iter()
-            .filter(|expected| !virtual_models.iter().any(|m| m["id"].as_str().unwrap_or("") == **expected))
+        let expected_virtual_models = [
+            "auto",
+            "cb:smart-chat",
+            "cb:cost-optimal",
+            "cb:fastest",
+            "cb:coding",
+        ];
+        let missing_models: Vec<_> = expected_virtual_models
+            .iter()
+            .filter(|expected| {
+                !virtual_models
+                    .iter()
+                    .any(|m| m["id"].as_str().unwrap_or("") == **expected)
+            })
             .collect();
-        
+
         if missing_models.is_empty() {
             println!("   ✅ All expected virtual models are available");
         } else {
@@ -699,26 +730,26 @@ async fn list_available_models(client: &Client) -> Result<(), Box<dyn std::error
     } else {
         println!("   ❌ Failed to fetch models: {}", response.status());
     }
-    
+
     Ok(())
 }
 
 /// Test OpenAI API compatibility
 async fn test_openai_compatibility(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
     println!("   Testing OpenAI API compatibility...");
-    
+
     let request = json!({
         "model": "claude-3-haiku-20240307",
         "messages": [{"role": "user", "content": "Say hello in a creative way!"}]
     });
-    
+
     let response = client
         .post("http://localhost:3000/v1/chat/completions")
         .header("Content-Type", "application/json")
         .json(&request)
         .send()
         .await?;
-    
+
     if response.status().is_success() {
         let result: serde_json::Value = response.json().await?;
         println!("   ✅ OpenAI compatible request successful");
@@ -726,9 +757,12 @@ async fn test_openai_compatibility(client: &Client) -> Result<(), Box<dyn std::e
             println!("      Response: {}...", &content[..content.len().min(100)]);
         }
     } else {
-        println!("   ❌ OpenAI compatible request failed: {}", response.status());
+        println!(
+            "   ❌ OpenAI compatible request failed: {}",
+            response.status()
+        );
     }
-    
+
     Ok(())
 }
 
@@ -741,31 +775,31 @@ async fn test_virtual_models(client: &Client) -> Result<(), Box<dyn std::error::
         ("cb:fastest", "Fastest response"),
         ("cb:coding", "Best for code generation"),
     ];
-    
+
     println!("   Testing virtual models...");
-    
+
     for (model_name, description) in virtual_models.iter() {
         println!("   🧪 {} ({})", model_name, description);
-        
+
         let content = match *model_name {
             "cb:coding" => "Write a Rust function to reverse a string",
             "cb:cost-optimal" => "What is 2+2? (simple question for cost testing)",
             "cb:fastest" => "Hi! (quick response test)",
             _ => "Hello! How are you today?",
         };
-        
+
         let request = json!({
             "model": model_name,
             "messages": [{"role": "user", "content": content}]
         });
-        
+
         let response = client
             .post("http://localhost:3000/v1/chat/completions")
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
             .await?;
-        
+
         if response.status().is_success() {
             let result: serde_json::Value = response.json().await?;
             println!("      ✅ {}: Response received", model_name);
@@ -775,11 +809,11 @@ async fn test_virtual_models(client: &Client) -> Result<(), Box<dyn std::error::
         } else {
             println!("      ❌ {}: Failed ({})", model_name, response.status());
         }
-        
+
         // Small delay between requests
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     }
-    
+
     Ok(())
 }
 
@@ -792,7 +826,7 @@ async fn test_smart_routing_preferences(client: &Client) -> Result<(), Box<dyn s
                 "routing_strategy": "cost_optimized",
                 "max_cost_per_1k_tokens": 0.002
             }),
-            "Explain machine learning in simple terms"
+            "Explain machine learning in simple terms",
         ),
         (
             "Performance First",
@@ -800,7 +834,7 @@ async fn test_smart_routing_preferences(client: &Client) -> Result<(), Box<dyn s
                 "routing_strategy": "performance_first",
                 "max_latency_ms": 2000
             }),
-            "Quick question: What is AI?"
+            "Quick question: What is AI?",
         ),
         (
             "Task Specific - Coding",
@@ -808,28 +842,28 @@ async fn test_smart_routing_preferences(client: &Client) -> Result<(), Box<dyn s
                 "routing_strategy": "task_specific",
                 "task_type": "coding"
             }),
-            "Write a Rust function to calculate fibonacci numbers"
+            "Write a Rust function to calculate fibonacci numbers",
         ),
     ];
-    
+
     println!("   Testing smart routing with preferences...");
-    
+
     for (test_name, config, content) in routing_tests.iter() {
         println!("   🎯 {}", test_name);
-        
+
         let request = json!({
             "model": "auto",
             "messages": [{"role": "user", "content": content}],
             "circuit_breaker": config
         });
-        
+
         let response = client
             .post("http://localhost:3000/v1/chat/completions")
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
             .await?;
-        
+
         if response.status().is_success() {
             let result: serde_json::Value = response.json().await?;
             println!("      ✅ {}: Smart routing successful", test_name);
@@ -837,15 +871,18 @@ async fn test_smart_routing_preferences(client: &Client) -> Result<(), Box<dyn s
                 println!("         Model used: {}", model);
             }
             if let Some(content) = result["choices"][0]["message"]["content"].as_str() {
-                println!("         Response preview: {}...", &content[..content.len().min(80)]);
+                println!(
+                    "         Response preview: {}...",
+                    &content[..content.len().min(80)]
+                );
             }
         } else {
             println!("      ❌ {}: Failed ({})", test_name, response.status());
         }
-        
+
         // Delay between requests
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     }
-    
+
     Ok(())
 }
