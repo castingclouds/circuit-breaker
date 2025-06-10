@@ -11,6 +11,7 @@ use std::time::Duration;
 use crate::llm::{
     LLMError, LLMRequest, LLMResponse, LLMResult, StreamingChunk,
     Choice, LLMProviderType, RoutingInfo, RoutingStrategy,
+    EmbeddingsRequest, EmbeddingsResponse,
     sse::{response_to_sse_stream, openai::openai_event_to_chunk}
 };
 
@@ -345,6 +346,15 @@ impl LLMProviderClient for OpenAIClient {
 
     fn get_config_requirements(&self) -> ProviderConfigRequirements {
         get_config_requirements()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    async fn embeddings(&self, request: &EmbeddingsRequest, api_key: &str) -> LLMResult<EmbeddingsResponse> {
+        // TODO: Implement OpenAI embeddings support
+        Err(LLMError::Provider("Embeddings not yet implemented for OpenAI provider".to_string()))
     }
 }
 

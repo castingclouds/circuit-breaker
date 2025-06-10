@@ -28,6 +28,7 @@ pub enum LLMProviderType {
     Groq,
     Together,
     Replicate,
+    Ollama,
     Custom(String),
 }
 
@@ -43,6 +44,7 @@ impl std::fmt::Display for LLMProviderType {
             LLMProviderType::Groq => write!(f, "groq"),
             LLMProviderType::Together => write!(f, "together"),
             LLMProviderType::Replicate => write!(f, "replicate"),
+            LLMProviderType::Ollama => write!(f, "ollama"),
             LLMProviderType::Custom(name) => write!(f, "custom-{}", name),
         }
     }
@@ -142,6 +144,25 @@ pub struct LLMRequest {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
+/// Embeddings request structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingsRequest {
+    pub id: Uuid,
+    pub model: String,
+    pub input: EmbeddingsInput,
+    pub user: Option<String>,
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// Input for embeddings generation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum EmbeddingsInput {
+    /// Single text string
+    Text(String),
+    /// Array of text strings
+    TextArray(Vec<String>),
+}
+
 /// Chat message structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -203,6 +224,35 @@ pub struct LLMResponse {
     pub usage: TokenUsage,
     pub provider: LLMProviderType,
     pub routing_info: RoutingInfo,
+}
+
+/// Embeddings response structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingsResponse {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub data: Vec<EmbeddingData>,
+    pub usage: EmbeddingsUsage,
+    pub provider: LLMProviderType,
+    pub routing_info: RoutingInfo,
+}
+
+/// Single embedding data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingData {
+    pub index: u32,
+    pub embedding: Vec<f64>,
+    pub object: String,
+}
+
+/// Token usage for embeddings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingsUsage {
+    pub prompt_tokens: u32,
+    pub total_tokens: u32,
+    pub estimated_cost: f64,
 }
 
 /// Response choice

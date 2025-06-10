@@ -57,6 +57,9 @@ npm run demo:graphql
 # NATS integration demonstration
 npm run demo:nats
 
+# Ollama provider testing
+npm run demo:ollama
+
 # Or run the default function demo
 npm run demo
 ```
@@ -194,6 +197,39 @@ cargo run --bin server
 **Run:**
 ```bash
 npm run demo:nats
+```
+
+### `ollama_provider_test.ts` - **Local Ollama Provider Testing**
+
+Comprehensive testing of the Ollama provider integration via Circuit Breaker, demonstrating local LLM inference capabilities.
+
+**Key Features:**
+- ✅ **Local LLM inference** with zero API costs
+- ✅ **Multiple model types**: Coding (qwen2.5-coder:3b), Text (gemma2:4b), Embeddings (nomic-embed-text)
+- ✅ **Chat completion** testing with different models
+- ✅ **Embeddings generation** for semantic search applications
+- ✅ **Real-time streaming** responses from local models
+- ✅ **Health checks** and model discovery
+- ✅ **OpenAI API compatibility** through Circuit Breaker
+- ✅ **Privacy-preserving** - no data leaves your machine
+
+**Prerequisites:**
+```bash
+# Install and start Ollama
+ollama serve
+
+# Pull required models
+ollama pull qwen2.5-coder:3b    # For coding tasks
+ollama pull gemma2:4b           # For general text
+ollama pull nomic-embed-text    # For embeddings
+
+# Start Circuit Breaker server
+cargo run --bin server
+```
+
+**Run:**
+```bash
+npm run demo:ollama
 ```
 
 ## 🏗️ Architecture Comparison
