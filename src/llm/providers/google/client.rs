@@ -412,9 +412,9 @@ impl LLMProviderClient for GoogleClient {
                                 }
                             }
                         }
-                        Err(e) => {
+                        Err(_e) => {
 
-                            return Some((Err(LLMError::Network(e.to_string())), (stream, buffer, chunk_index, request_id, model)));
+                            return Some((Err(LLMError::Network(_e.to_string())), (stream, buffer, chunk_index, request_id, model)));
                         }
                     }
                 }
@@ -604,6 +604,8 @@ mod tests {
 
     #[test]
     fn test_is_gemini_model() {
+        use crate::llm::providers::google::is_gemini_model;
+        
         assert!(is_gemini_model("gemini-pro"));
         assert!(is_gemini_model("gemini-1.5-flash"));
         assert!(is_gemini_model("gemini-2.5-flash-preview-05-20"));

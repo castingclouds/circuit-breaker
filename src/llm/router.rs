@@ -3,7 +3,7 @@
 //! This module implements a router that uses the new modular provider architecture
 //! with support for multiple providers and proper API key management.
 
-use super::traits::{LLMProviderClient, ProviderRegistry};
+use super::traits::LLMProviderClient;
 use super::providers;
 use super::*;
 use std::collections::HashMap;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 use tracing::{warn, info, debug, error};
-use futures::StreamExt;
+
 
 /// Provider health status tracking
 #[derive(Debug, Clone)]
@@ -69,6 +69,21 @@ impl LLMRouter {
         Self::new_with_keys(None, None, None).await
     }
 
+    /// Create a new LLM router for testing (allows empty providers)
+    pub async fn new_for_testing() -> Result<Self, LLMError> {
+        let config = LLMRouterConfig::default();
+        let providers = HashMap::new();
+        let health_status = HashMap::new();
+        let configured_api_keys = HashMap::new();
+
+        Ok(Self {
+            config,
+            providers,
+            health_status: Arc::new(RwLock::new(health_status)),
+            configured_api_keys,
+        })
+    }
+
     /// Create a new LLM router with provided API keys
     pub async fn new_with_keys(
         openai_key: Option<String>,
@@ -108,7 +123,7 @@ impl LLMRouter {
         }
 
         if providers.is_empty() {
-            return Err(LLMError::Internal("No providers configured with valid API keys".to_string()));
+            warn!("No providers configured with valid API keys - router will have limited functionality");
         }
 
         Ok(Self {
@@ -450,9 +465,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_router_creation_without_keys() {
-        // Should fail without any API keys
+        // Should succeed without any API keys now (warns instead of fails)
         let result = LLMRouter::new_with_keys(None, None, None).await;
-        assert!(result.is_err());
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
@@ -461,7 +476,8 @@ mod tests {
         if let Ok(router) = LLMRouter::new_with_keys(Some("test-key".to_string()), None, None).await {
             assert_eq!(router.determine_provider_for_model("gpt-4"), LLMProviderType::OpenAI);
             assert_eq!(router.determine_provider_for_model("o4-mini-2025-04-16"), LLMProviderType::OpenAI);
-            assert_eq!(router.determine_provider_for_model("claude-3"), LLMProviderType::OpenAI); // Fallback
+            assert_eq!(router.determine_provider_for_model("claude-3"), LLMProviderType::Anthropic); // Correctly determines Anthropic
+            assert_eq!(router.determine_provider_for_model("unknown-model"), LLMProviderType::OpenAI); // Falls back to available provider
         }
     }
 

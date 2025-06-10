@@ -158,7 +158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
     
     for provider_type in &provider_types {
-        let client = create_provider_client(provider_type, None);
+        let client = create_provider_client(provider_type.clone(), None);
         let actual_type = client.provider_type();
         if actual_type == *provider_type {
             println!("   ✅ {} provider client created successfully", provider_type);

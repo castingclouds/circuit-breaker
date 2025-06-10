@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::{header::HeaderMap, header::HeaderValue, header::CONTENT_TYPE, Client};
 use tracing::{debug, error};
-
+use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::llm::{
@@ -425,7 +425,9 @@ mod tests {
             stop: None,
             stream: Some(false),
             user: None,
-            project_id: None,
+            functions: None,
+            function_call: None,
+            metadata: HashMap::new(),
         };
 
         let openai_request = client.convert_request(&request).unwrap();
@@ -455,7 +457,9 @@ mod tests {
             stop: None,
             stream: Some(false),
             user: None,
-            project_id: None,
+            functions: None,
+            function_call: None,
+            metadata: HashMap::new(),
         };
 
         let openai_request = client.convert_request(&request).unwrap();
