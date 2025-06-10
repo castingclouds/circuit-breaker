@@ -70,7 +70,7 @@ impl OpenAIApiState {
     pub fn new() -> Self {
         // Create LLM router (async constructor)
         let llm_router = Arc::new(
-            futures::executor::block_on(LLMRouter::new())
+            futures::executor::block_on(LLMRouter::new_for_testing())
                 .unwrap_or_else(|_| panic!("Failed to create LLM router"))
         );
         
@@ -687,9 +687,10 @@ mod tests {
     async fn test_model_config_creation() {
         let models = OpenAIApiState::default_models();
         assert!(!models.is_empty());
-        assert!(models.iter().any(|m| m.id == "gpt-4"));
+        assert!(models.iter().any(|m| m.id == "o4-mini-2025-04-16"));
         assert!(models.iter().any(|m| m.id == "claude-3-haiku-20240307"));
         assert!(models.iter().any(|m| m.id == "claude-sonnet-4-20250514"));
+        assert!(models.iter().any(|m| m.id == "gemini-2.5-flash-preview-05-20"));
     }
 
     #[test]

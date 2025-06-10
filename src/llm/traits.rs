@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::{
-    LLMError, LLMRequest, LLMResponse, LLMResult, StreamingChunk,
-    LLMProviderType, TokenUsage, ChatMessage
+    LLMRequest, LLMResponse, LLMResult, StreamingChunk,
+    LLMProviderType, TokenUsage
 };
 
 /// Core trait that all LLM provider clients must implement

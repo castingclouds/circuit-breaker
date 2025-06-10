@@ -28,6 +28,7 @@ use serde_json::json;
 use std::io::{self, Write};
 use uuid::Uuid;
 use dotenv::dotenv;
+use futures::StreamExt;
 
 fn wait_for_enter(message: &str) {
     print!("{} (Press Enter to continue)", message);
@@ -393,74 +394,111 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     wait_for_enter("Cost comparison done! Ready to test real streaming?");
 
-    // Test streaming with available providers
+    // Test comprehensive streaming with available providers
     if has_anthropic_key || has_openai_key || has_google_key {
-        println!("🔄 Testing real-time streaming with available providers...");
+        println!("🌊 Multi-Provider Real-Time Streaming Test");
+        println!("==========================================");
         
-        // Test streaming by making HTTP requests to the server
-        let test_models = vec![
-            (has_openai_key, "o4-mini-2025-04-16", "OpenAI o4 Mini"),
-            (has_google_key, "gemini-2.5-flash-preview-05-20", "Google Gemini 2.5 Flash"),
-            (has_anthropic_key, "claude-3-haiku-20240307", "Anthropic Claude 3 Haiku"),
+        // Test with multiple models to show streaming across ALL providers
+        let streaming_models = vec![
+            (has_openai_key, "o4-mini-2025-04-16", "OpenAI GPT-4", "Count from 1 to 5 slowly.", "openai"),
+            (has_anthropic_key, "claude-3-haiku-20240307", "Anthropic Claude", "Explain quantum computing in exactly 3 sentences.", "anthropic"),
+            (has_google_key, "gemini-2.5-flash-preview-05-20", "Google Gemini", "Write a haiku about streaming.", "google"),
         ];
-        
-        for (has_key, model_id, display_name) in test_models {
+
+        for (has_key, model, provider_name, prompt, provider) in streaming_models {
             if !has_key {
-                println!("⏭️  Skipping {} (no API key)", display_name);
+                println!("⏭️  Skipping {} (no API key)", provider_name);
                 continue;
             }
-            
-            print!("🔄 Testing {} via server... ", display_name);
-            io::stdout().flush().unwrap();
-            
-            // Use higher max_tokens for OpenAI o4 models due to their internal reasoning
-            let max_tokens = if model_id.starts_with("o4-") { 1000 } else { 200 };
-            
-            let request_body = json!({
-                "model": model_id,
-                "messages": [{"role": "user", "content": "Count from 1 to 5 slowly"}],
+
+            println!("\n🌊 {} - \"{}\"", provider_name, prompt);
+            println!("Response:");
+
+            let request_body = serde_json::json!({
+                "model": model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "max_tokens": if model.contains("gemini") { 10000 } else { 300 },
                 "temperature": 0.7,
-                "max_tokens": max_tokens,
-                "stream": false
+                "stream": true,
+                "metadata": {
+                    "provider": provider
+                }
             });
-            
-            match client.post("http://0.0.0.0:3000/v1/chat/completions")
+
+            match client
+                .post("http://localhost:3000/v1/chat/completions")
                 .header("Content-Type", "application/json")
+                .header("Accept", "text/event-stream")
                 .json(&request_body)
                 .send()
                 .await
             {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        match response.json::<serde_json::Value>().await {
-                            Ok(json_response) => {
-                                println!("✅");
-                                if let Some(choices) = json_response.get("choices") {
-                                    if let Some(first_choice) = choices.get(0) {
-                                        if let Some(message) = first_choice.get("message") {
-                                            if let Some(content) = message.get("content") {
-                                                let content_str = content.as_str().unwrap_or("No content");
-                                                println!("💬 Response: {}", content_str);
+                Ok(response) if response.status().is_success() => {
+                    let mut buffer = String::new();
+                    
+                    let mut stream = response.bytes_stream();
+                    while let Some(chunk_result) = stream.next().await {
+                        match chunk_result {
+                            Ok(chunk) => {
+                                let chunk_str = String::from_utf8_lossy(&chunk);
+                                buffer.push_str(&chunk_str);
+                                
+                                // Process complete SSE events
+                                while let Some(double_newline_pos) = buffer.find("\n\n") {
+                                    let event_block = buffer[..double_newline_pos].to_string();
+                                    buffer = buffer[double_newline_pos + 2..].to_string();
+                                    
+                                    for line in event_block.lines() {
+                                        if line.starts_with("data: ") {
+                                            let data = line[6..].trim();
+                                            if data == "[DONE]" {
+                                                println!();
+                                                break;
+                                            }
+                                            
+                                            if let Ok(chunk_json) = serde_json::from_str::<serde_json::Value>(data) {
+                                                if let Some(choices) = chunk_json["choices"].as_array() {
+                                                    if let Some(choice) = choices.first() {
+                                                        if let Some(content) = choice["delta"]["content"].as_str() {
+                                                            if !content.is_empty() {
+                                                                print!("{}", content);
+                                                                io::stdout().flush().unwrap();
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
                             Err(e) => {
-                                println!("❌ Failed to parse response: {}", e);
+                                println!("\n❌ Streaming error: {}", e);
+                                break;
                             }
                         }
-                    } else {
-                        println!("❌ Server error: {}", response.status());
                     }
+                    
+                    println!();
+                }
+                Ok(response) => {
+                    println!("❌ Server error: {} {}", response.status(), response.status().canonical_reason().unwrap_or("Unknown"));
                 }
                 Err(e) => {
-                    println!("❌ Request failed: {}", e);
+                    println!("❌ {} streaming failed: {}", provider, e);
                 }
             }
         }
+        
+
     } else {
-        println!("⏭️  Skipping streaming tests (no API keys available)");
+        println!("⚠️  No API keys configured for streaming test");
     }
 
     println!();
@@ -473,12 +511,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   • Real-time streaming capabilities");
     println!("   • Unified API interface for all providers");
     println!();
+    println!("🚀 Circuit Breaker LLM Router Features:");
+    println!("   • Unified API across OpenAI, Anthropic, and Google");
+    println!("   • Real token-by-token streaming");
+    println!("   • Cost optimization and comparison");
+    println!("   • Provider health monitoring");
+    println!("   • GraphQL and REST API support");
+    println!("   • Production-ready error handling");
+    println!();
     println!("🔧 Next Steps:");
     println!("   • Set API keys to test real provider integrations");
     println!("   • Use GraphiQL at http://localhost:4000 for interactive testing");
     println!("   • Implement smart routing based on cost and performance");
     println!("   • Add budget limits and usage tracking");
-    
+
     Ok(())
 }
 
