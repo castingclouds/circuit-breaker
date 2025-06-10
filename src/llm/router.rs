@@ -503,14 +503,14 @@ mod tests {
     #[tokio::test]
     async fn test_router_creation_without_keys() {
         // Should succeed without any API keys now (warns instead of fails)
-        let result = LLMRouter::new_with_keys(None, None, None).await;
+        let result = LLMRouter::new_with_keys(None, None, None, None).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_provider_determination() {
         // Mock router with OpenAI key
-        if let Ok(router) = LLMRouter::new_with_keys(Some("test-key".to_string()), None, None).await {
+        if let Ok(router) = LLMRouter::new_with_keys(Some("test-key".to_string()), None, None, None).await {
             assert_eq!(router.determine_provider_for_model("gpt-4"), LLMProviderType::OpenAI);
             assert_eq!(router.determine_provider_for_model("o4-mini-2025-04-16"), LLMProviderType::OpenAI);
             assert_eq!(router.determine_provider_for_model("claude-3"), LLMProviderType::Anthropic); // Correctly determines Anthropic

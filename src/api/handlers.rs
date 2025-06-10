@@ -25,7 +25,7 @@ use super::types::{
 use crate::llm::{
     LLMRequest, LLMProviderType, LLMRouter,
     cost::CostOptimizer, MessageRole,
-    EmbeddingsRequest as LLMEmbeddingsRequest, EmbeddingsResponse as LLMEmbeddingsResponse,
+    EmbeddingsRequest as LLMEmbeddingsRequest,
     EmbeddingsInput as LLMEmbeddingsInput,
 };
 

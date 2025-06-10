@@ -2,7 +2,8 @@
 
 > A unified platform providing **State Managed Workflows** via GraphQL and **OpenAI-compatible LLM routing** via REST API  
 > **Generic by design** - like Dagger's engine, the backend knows nothing about your domain  
-> **OpenRouter Alternative** - BYOK (Bring Your Own Key) model with intelligent provider routing
+> **OpenRouter Alternative** - BYOK (Bring Your Own Key) model with intelligent provider routing  
+> **Local AI Support** - Full Ollama integration with automatic model detection and streaming
 
 ## 🚀 Project Vision
 
@@ -10,10 +11,13 @@ Circuit Breaker is a **distributed, high-performance platform** that combines wo
 
 1. **State Managed Workflows** - Powered by Petri Nets for mathematical rigor and formal workflow verification
 2. **LLM Provider Routing** - OpenAI-compatible API with cost optimization and intelligent failover
+3. **Local AI Integration** - Native Ollama support with automatic model discovery and async loading
+4. **Multi-Provider Support** - OpenAI, Anthropic, Google, Azure OpenAI, Ollama, and custom endpoints
 
 **Key Principles**: 
 - **Unified Server**: Single binary providing both GraphQL and REST APIs
 - **OpenAI Compatible**: Drop-in replacement for OpenRouter.ai with BYOK model
+- **Local AI First**: Native Ollama integration with zero-config model detection
 - **State Managed Workflows**: Unlike DAG-based systems, supports cycles, concurrent states, and complex relationships
 - **Mathematical Guarantees**: Petri Net formalism provides deadlock detection and state safety
 - **Polyglot First**: Any language can use either GraphQL or REST APIs
@@ -32,6 +36,12 @@ cargo build --release
 cp .env.example .env
 # Edit .env with your OpenAI, Anthropic, etc. keys
 
+# For local AI with Ollama (requires Ollama running)
+# Install Ollama: https://ollama.ai
+ollama pull qwen2.5-coder:3b
+ollama pull gemma2:2b
+ollama pull nomic-embed-text:latest
+
 # Start unified server (both GraphQL + OpenAI API)
 cargo run --bin server
 ```
@@ -43,7 +53,7 @@ The server starts two APIs:
 ### 2. Try OpenAI-Compatible API (100% Compatible)
 
 ```bash
-# Works exactly like OpenAI API
+# Works exactly like OpenAI API - with remote providers
 curl -X POST http://localhost:3000/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
@@ -51,8 +61,137 @@ curl -X POST http://localhost:3000/v1/chat/completions \
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 
+# Or with local Ollama models
+curl -X POST http://localhost:3000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "qwen2.5-coder:3b",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+
 # List all models (real + virtual)
 curl http://localhost:3000/v1/models
+
+# Try embeddings with local models
+curl -X POST http://localhost:3000/v1/embeddings \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "nomic-embed-text:latest",
+    "input": "Hello, world!"
+  }'
+```
+
+## 🤖 Ollama Integration
+
+Circuit Breaker provides **first-class Ollama support** with automatic model detection, async loading, and full OpenAI API compatibility.
+
+### Supported Models
+
+**Coding & Development**
+- `qwen2.5-coder:3b` - Lightweight coding assistant (recommended)
+- `qwen2.5-coder:7b` - Advanced coding with better context
+- `codellama:7b` - Meta's Code Llama for code generation
+
+**Text Generation**
+- `gemma2:2b` - Fast, efficient text generation
+- `llama3.1:8b` - High-quality general purpose model
+- `mistral:7b` - Balanced performance and quality
+
+**Embeddings**
+- `nomic-embed-text:latest` - Text embeddings for semantic search
+- `all-minilm:l6-v2` - Lightweight sentence embeddings
+
+### Features
+
+✅ **Automatic Model Detection** - Discovers available models on startup  
+✅ **Async Model Loading** - Non-blocking model initialization  
+✅ **Streaming Chat Completions** - Real-time response streaming  
+✅ **Embeddings Support** - Vector embeddings for semantic operations  
+✅ **OpenAI API Compatibility** - Drop-in replacement for OpenAI clients  
+✅ **Dynamic Model Management** - Hot-reload models without restart  
+✅ **Performance Optimized** - Rust async for maximum throughput  
+
+### Quick Ollama Setup
+
+```bash
+# Install Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Pull recommended models
+ollama pull qwen2.5-coder:3b      # 2GB - Coding
+ollama pull gemma2:2b             # 1.6GB - Text 
+ollama pull nomic-embed-text      # 274MB - Embeddings
+
+# Start Circuit Breaker (auto-detects models)
+cargo run --bin server
+
+# Test local AI
+curl -X POST http://localhost:3000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "qwen2.5-coder:3b",
+    "messages": [{"role": "user", "content": "Write a Rust function to calculate fibonacci"}],
+    "stream": true
+  }'
+```
+
+## 🌐 Supported AI Providers
+
+Circuit Breaker supports a comprehensive range of AI providers with unified OpenAI-compatible APIs:
+
+### Cloud Providers
+
+**OpenAI**
+- All GPT models (gpt-4, gpt-3.5-turbo, etc.)
+- Text embeddings (text-embedding-ada-002, text-embedding-3-small/large)
+- Vision and multimodal support
+
+**Anthropic**
+- Claude 3 family (claude-3-opus, claude-3-sonnet, claude-3-haiku)
+- Claude 2.1 and 2.0
+- Large context windows (up to 200k tokens)
+
+**Google**
+- Gemini Pro and Gemini Pro Vision
+- PaLM 2 models
+- Vertex AI integration
+
+**Azure OpenAI**
+- All OpenAI models via Azure
+- Custom deployment names
+- Regional availability
+
+### Local AI
+
+**Ollama** (First-class support)
+- Automatic model detection
+- Async model loading
+- Streaming responses
+- Embeddings support
+- 50+ models available
+
+**Custom Endpoints**
+- Any OpenAI-compatible API
+- Self-hosted models
+- Custom authentication
+
+### Configuration Examples
+
+```bash
+# Environment variables
+OPENAI_API_KEY=sk-your-key
+ANTHROPIC_API_KEY=sk-ant-your-key
+GOOGLE_API_KEY=your-google-key
+AZURE_OPENAI_API_KEY=your-azure-key
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+OLLAMA_BASE_URL=http://localhost:11434
+
+# Multiple keys for load balancing
+OPENAI_API_KEYS=sk-key1,sk-key2,sk-key3
+
+# Custom endpoints
+CUSTOM_LLM_ENDPOINT=https://your-api.com/v1
+CUSTOM_LLM_API_KEY=your-key
 ```
 
 ### 3. Try Smart Routing Features
@@ -219,11 +358,20 @@ token.transition_to(StateId::from("review"), TransitionId::from("submit"));
 - **Concurrency**: Native async/await with Tokio
 - **Type Safety**: Compile-time workflow validation
 
+### AI Integration
+- **Multi-Provider Support**: OpenAI, Anthropic, Google, Azure OpenAI, Ollama
+- **Local AI**: First-class Ollama integration with auto-detection
+- **OpenAI Compatibility**: Drop-in replacement for existing applications
+- **Streaming**: Real-time chat completions and embeddings
+- **BYOK Model**: Bring-your-own-key with cost optimization
+- **MCP Server**: Secure agent coordination with GitHub Apps-style auth
+
 ### Infrastructure
 - **Message Bus/Eventing**: NATS JetStream for distributed workflows and token persistence
-- **API**: GraphQL (async-graphql) for polyglot clients
-- **Web**: Axum for high-performance HTTP
+- **API**: Dual APIs - GraphQL (async-graphql) for workflows, REST for LLM routing
+- **Web**: Axum for high-performance HTTP with WebSocket support
 - **Storage**: Pluggable backends (NATS KV, PostgreSQL, etc.)
+- **Streaming**: Multi-protocol support (SSE, WebSocket, GraphQL subscriptions)
 
 **NATS Required**: The distributed workflow features require a NATS server with JetStream enabled. See [NATS Setup](#nats-server-setup-docker-with-rancher-desktop) below for quick Docker setup.
 
@@ -814,11 +962,21 @@ Each language directory will contain **client examples only**:
 
 ## 📚 Documentation
 
-- **[API Reference](docs/api.md)** - Complete GraphQL schema documentation
-- **[Architecture Guide](docs/architecture.md)** - Deep dive into Petri Net workflow engine
-- **[NATS Implementation](docs/NATS_IMPLEMENTATION.md)** - NATS JetStream integration for distributed workflows
-- **[Migration Guide](docs/migration.md)** - Moving from DAG-based systems
-- **[Performance Tuning](docs/performance.md)** - Optimization and scaling strategies
+### Core Platform
+- **[Executive Summary](docs/EXECUTIVE_SUMMARY.md)** - Complete platform overview and market positioning
+- **[Circuit Breaker Server Guide](docs/CIRCUIT_BREAKER_SERVER_GUIDE.md)** - Comprehensive server setup and configuration
+- **[NATS Comprehensive Guide](docs/NATS_COMPREHENSIVE_GUIDE.md)** - Distributed messaging and workflow persistence
+
+### AI Integration & Providers
+- **[OpenRouter Alternative](docs/OPENROUTER_ALTERNATIVE.md)** - BYOK LLM routing with multi-provider support
+- **[Agent Configuration](docs/AGENT_CONFIGURATION.md)** - Multi-agent coordination and local AI integration
+- **[MCP Tool Definitions](docs/MCP_TOOL_DEFINITIONS.md)** - Secure agent coordination and authentication
+
+### Advanced Features
+- **[Secure MCP Server](docs/SECURE_MCP_SERVER.md)** - GitHub Apps-style authentication for AI agents
+- **[Function Runner](docs/FUNCTION_RUNNER.md)** - Containerized function execution with workflow integration
+- **[Rules Engine](docs/RULES_ENGINE.md)** - Complex business logic evaluation and workflow transitions
+- **[Webhook Integration Patterns](docs/WEBHOOK_INTEGRATION_PATTERNS.md)** - Event-driven workflows and external integrations
 
 ## 🤝 Contributing
 
@@ -850,19 +1008,24 @@ open http://localhost:4000/graphql
 - [x] Production-ready server binary
 - [x] Comprehensive client examples and documentation
 
-### Phase 2: Distributed Infrastructure (🚧 In Progress)
+### Phase 2: AI Integration & Local Support (✅ Complete)
 - [x] NATS JetStream integration for persistence
 - [x] Dynamic workflow stream creation
 - [x] Token transitions via NATS messaging
-- [ ] Horizontal scaling across multiple nodes
-- [ ] Real-time subscriptions and event streaming
-- [ ] Performance benchmarking and optimization
+- [x] Ollama integration with automatic model detection
+- [x] Multi-provider LLM routing (OpenAI, Anthropic, Google, Azure)
+- [x] Secure MCP server with GitHub Apps-style authentication
+- [x] Real-time streaming with WebSocket and GraphQL subscriptions
+- [x] Local AI embeddings and chat completions
 
-### Phase 3: Agent Framework (📋 Planned)
-- [ ] AI agent orchestration and coordination
-- [ ] MCP (Model Context Protocol) integration
+### Phase 3: Advanced Agent Orchestration (🚧 In Progress)
+- [x] AI agent orchestration and coordination
+- [x] MCP (Model Context Protocol) integration
+- [x] Multi-agent workflow coordination
+- [x] Project-scoped AI operations
 - [ ] Campaign management and monitoring
 - [ ] Advanced workflow analytics
+- [ ] Agent marketplace and templates
 
 ### Phase 4: Ecosystem (🔮 Future)
 - [ ] Language-specific SDKs (Python, TypeScript, Go)
