@@ -10,6 +10,7 @@ use std::time::Duration;
 use crate::llm::{
     LLMError, LLMRequest, LLMResponse, LLMResult, StreamingChunk, StreamingChoice,
     Choice, LLMProviderType, RoutingInfo, RoutingStrategy, ChatMessage, MessageRole,
+    EmbeddingsRequest, EmbeddingsResponse,
 };
 
 use crate::llm::traits::{
@@ -481,6 +482,15 @@ impl LLMProviderClient for GoogleClient {
 
     fn get_config_requirements(&self) -> ProviderConfigRequirements {
         get_config_requirements()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    async fn embeddings(&self, _request: &EmbeddingsRequest, _api_key: &str) -> LLMResult<EmbeddingsResponse> {
+        // TODO: Implement Google embeddings support
+        Err(LLMError::Provider("Embeddings not yet implemented for Google provider".to_string()))
     }
 }
 

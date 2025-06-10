@@ -17,6 +17,7 @@
     "demo:llm": "tsx llm_router_demo.ts",
     "demo:multi_provider": "tsx multi_provider_demo.ts",
     "demo:streaming": "tsx streaming_architecture_demo.ts",
+    "demo:ollama": "tsx ollama_provider_test.ts",
     "test:setup": "tsx test_setup.ts",
     "type-check": "tsc --noEmit"
   },

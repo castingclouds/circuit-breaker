@@ -11,6 +11,7 @@ use std::time::Duration;
 use crate::llm::{
     LLMError, LLMRequest, LLMResponse, LLMResult, StreamingChunk,
     Choice, LLMProviderType, RoutingInfo, RoutingStrategy, MessageRole,
+    EmbeddingsRequest, EmbeddingsResponse,
     sse::{response_to_sse_stream, anthropic::anthropic_event_to_chunk}
 };
 
@@ -338,6 +339,15 @@ impl LLMProviderClient for AnthropicClient {
 
     fn get_config_requirements(&self) -> ProviderConfigRequirements {
         get_config_requirements()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    async fn embeddings(&self, _request: &EmbeddingsRequest, _api_key: &str) -> LLMResult<EmbeddingsResponse> {
+        // TODO: Implement Anthropic embeddings support (if they provide this service)
+        Err(LLMError::Provider("Embeddings not yet implemented for Anthropic provider".to_string()))
     }
 }
 

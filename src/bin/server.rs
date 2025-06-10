@@ -240,6 +240,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         config.openai_api_key.clone(),
         config.anthropic_api_key.clone(),
         config.google_api_key.clone(),
+        config.ollama_base_url.clone(),
     ).await.map_err(|e| {
         error!("Failed to create LLM router: {}", e);
         e
@@ -330,7 +331,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .with_streaming(config.openai_enable_streaming)
         .with_llm_router(llm_router)
         .with_cost_optimizer(cost_optimizer)
-        .build();
+        .build_async().await;
 
     // Print server information
     info!("");

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use super::{
     LLMRequest, LLMResponse, LLMResult, StreamingChunk,
-    LLMProviderType, TokenUsage
+    LLMProviderType, TokenUsage, EmbeddingsRequest, EmbeddingsResponse
 };
 
 /// Core trait that all LLM provider clients must implement
@@ -37,6 +37,12 @@ pub trait LLMProviderClient: Send + Sync {
 
     /// Get provider-specific configuration requirements
     fn get_config_requirements(&self) -> ProviderConfigRequirements;
+
+    /// Generate embeddings for the given input
+    async fn embeddings(&self, request: &EmbeddingsRequest, api_key: &str) -> LLMResult<EmbeddingsResponse>;
+
+    /// Enable downcasting to concrete types
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// Configuration requirements for a provider

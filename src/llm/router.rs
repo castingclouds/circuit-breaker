@@ -66,7 +66,7 @@ pub struct LLMRouter {
 impl LLMRouter {
     /// Create a new LLM router with default configuration
     pub async fn new() -> Result<Self, LLMError> {
-        Self::new_with_keys(None, None, None).await
+        Self::new_with_keys(None, None, None, None).await
     }
 
     /// Create a new LLM router for testing (allows empty providers)
@@ -89,6 +89,7 @@ impl LLMRouter {
         openai_key: Option<String>,
         anthropic_key: Option<String>, 
         google_key: Option<String>,
+        ollama_base_url: Option<String>,
     ) -> Result<Self, LLMError> {
         let config = LLMRouterConfig::default();
         let mut providers = HashMap::new();
@@ -120,6 +121,20 @@ impl LLMRouter {
             health_status.insert(LLMProviderType::Google, ProviderHealthStatus::default());
             configured_api_keys.insert(LLMProviderType::Google, key);
             info!("✅ Google provider initialized");
+        }
+
+        // Initialize Ollama provider if base URL is available
+        let ollama_url = ollama_base_url.or_else(|| std::env::var("OLLAMA_BASE_URL").ok()).unwrap_or_else(|| "http://localhost:11434".to_string());
+        
+        // Check if Ollama is available by trying to connect
+        if providers::ollama::check_availability(&ollama_url).await {
+            let client = providers::ollama::create_client(ollama_url.clone());
+            providers.insert(LLMProviderType::Ollama, Box::new(client) as Box<dyn LLMProviderClient>);
+            health_status.insert(LLMProviderType::Ollama, ProviderHealthStatus::default());
+            configured_api_keys.insert(LLMProviderType::Ollama, ollama_url);
+            info!("✅ Ollama provider initialized");
+        } else {
+            warn!("⚠️  Ollama not available at {} - skipping initialization", ollama_url);
         }
 
         if providers.is_empty() {
@@ -355,7 +370,17 @@ impl LLMRouter {
     pub async fn get_providers(&self) -> Vec<LLMProvider> {
         let mut providers = Vec::new();
         for (provider_type, client) in &self.providers {
-            let models = client.get_available_models();
+            let models = match provider_type {
+                LLMProviderType::Ollama => {
+                    // For Ollama, fetch actual models from the instance
+                    if let Some(ollama_client) = client.as_any().downcast_ref::<crate::llm::providers::ollama::OllamaClient>() {
+                        ollama_client.get_available_models_async().await
+                    } else {
+                        client.get_available_models()
+                    }
+                },
+                _ => client.get_available_models(),
+            };
             let llm_models: Vec<LLMModel> = models.into_iter().map(|model| LLMModel {
                 id: model.id,
                 name: model.name,
@@ -386,6 +411,7 @@ impl LLMRouter {
                     LLMProviderType::OpenAI => "https://api.openai.com/v1".to_string(),
                     LLMProviderType::Anthropic => "https://api.anthropic.com".to_string(),
                     LLMProviderType::Google => "https://generativelanguage.googleapis.com/v1beta".to_string(),
+                    LLMProviderType::Ollama => self.configured_api_keys.get(provider_type).cloned().unwrap_or_else(|| "http://localhost:11434".to_string()),
                     _ => "".to_string(),
                 },
                 api_key_id: Some(format!("{}_key", provider_type.to_string())),
@@ -422,6 +448,17 @@ impl LLMRouter {
     ) -> LLMResult<Box<dyn futures::Stream<Item = LLMResult<StreamingChunk>> + Send + Unpin>> {
         // For now, just use regular streaming
         self.stream_chat_completion(request).await
+    }
+
+    /// Generate embeddings using the appropriate provider
+    pub async fn embeddings(&self, request: &crate::llm::EmbeddingsRequest, api_key: &str) -> LLMResult<crate::llm::EmbeddingsResponse> {
+        let provider_type = self.determine_provider_for_model(&request.model);
+        
+        if let Some(client) = self.providers.get(&provider_type) {
+            client.embeddings(request, api_key).await
+        } else {
+            Err(LLMError::Provider(format!("No provider available for model: {}", request.model)))
+        }
     }
 
     /// Run health checks on all providers

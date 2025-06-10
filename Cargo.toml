@@ -124,4 +124,9 @@ path = "examples/rust/websocket_stream_test.rs"
 name = "streaming_architecture_demo"
 path = "examples/rust/streaming_architecture_demo.rs"
 
+[[example]]
+name = "ollama_provider_test"
+path = "examples/rust/ollama_provider_test.rs"
+
+
 

@@ -87,6 +87,9 @@ impl OpenAIApiServer {
             // Chat completions endpoint (both streaming and non-streaming)
             .route("/v1/chat/completions", post(chat_completions))
             
+            // Embeddings endpoint
+            .route("/v1/embeddings", post(handlers::embeddings))
+            
             // Health check
             .route("/health", get(health_check))
             .route("/v1/health", get(health_check))
@@ -189,6 +192,22 @@ impl OpenAIApiServerBuilder {
     pub fn with_cost_optimizer(mut self, optimizer: CostOptimizer) -> Self {
         self.cost_optimizer = Some(optimizer);
         self
+    }
+
+    pub async fn build_async(self) -> OpenAIApiServer {
+        let mut server = OpenAIApiServer::new(self.config);
+        
+        if let Some(router) = self.llm_router {
+            server = server.with_llm_router(router);
+            // Refresh models after setting the router
+            server.state.refresh_models().await;
+        }
+        
+        if let Some(optimizer) = self.cost_optimizer {
+            server = server.with_cost_optimizer(optimizer);
+        }
+        
+        server
     }
 
     pub fn build(self) -> OpenAIApiServer {

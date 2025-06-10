@@ -10,8 +10,7 @@
 pub mod openai;
 pub mod anthropic;
 pub mod google;
-// TODO: Add more providers as needed
-// pub mod ollama;
+pub mod ollama;
 
 use std::collections::HashMap;
 use crate::llm::{LLMProviderType, traits::{LLMProviderClient, ProviderFactory, ProviderConfig}};
@@ -20,6 +19,7 @@ use crate::llm::{LLMProviderType, traits::{LLMProviderClient, ProviderFactory, P
 pub use openai::OpenAIClient;
 pub use anthropic::AnthropicClient;
 pub use google::GoogleClient;
+pub use ollama::OllamaClient;
 
 /// Provider factory registry for creating provider clients
 pub struct ProviderRegistry {
@@ -162,6 +162,40 @@ impl ProviderFactory for GoogleFactory {
     }
 }
 
+/// Ollama provider factory
+pub struct OllamaFactory;
+
+impl ProviderFactory for OllamaFactory {
+    fn create_client(&self, config: &ProviderConfig) -> Box<dyn LLMProviderClient> {
+        let mut ollama_config = ollama::OllamaConfig::default();
+        ollama_config.base_url = config.base_url.clone();
+        ollama_config.default_model = config.default_model.clone();
+
+        // Extract optional settings from config
+        if let Some(keep_alive) = config.settings.get("keep_alive").and_then(|v| v.as_str()) {
+            ollama_config.keep_alive = keep_alive.to_string();
+        }
+
+        if let Some(verify_ssl) = config.settings.get("verify_ssl").and_then(|v| v.as_bool()) {
+            ollama_config.verify_ssl = verify_ssl;
+        }
+
+        if let Some(timeout) = config.settings.get("timeout_seconds").and_then(|v| v.as_u64()) {
+            ollama_config.timeout_seconds = timeout;
+        }
+
+        Box::new(ollama::OllamaClient::new(ollama_config))
+    }
+
+    fn provider_type(&self) -> LLMProviderType {
+        LLMProviderType::Ollama
+    }
+
+    fn default_config(&self) -> ProviderConfig {
+        ollama::get_default_config()
+    }
+}
+
 /// Create a provider registry with all available providers
 pub fn create_default_registry() -> ProviderRegistry {
     let mut registry = ProviderRegistry::new();
@@ -175,8 +209,8 @@ pub fn create_default_registry() -> ProviderRegistry {
     // Register Google factory
     registry.register_factory(Box::new(GoogleFactory));
     
-    // TODO: Add other provider factories
-    // registry.register_factory(Box::new(OllamaFactory));
+    // Register Ollama factory
+    registry.register_factory(Box::new(OllamaFactory));
     
     registry
 }
@@ -196,6 +230,10 @@ pub fn create_provider_client(provider_type: LLMProviderType, base_url: Option<S
         LLMProviderType::Google => {
             let api_key = std::env::var("GOOGLE_API_KEY").unwrap_or_default();
             Box::new(google::create_client(api_key, base_url))
+        },
+        LLMProviderType::Ollama => {
+            let base_url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
+            Box::new(ollama::create_client(base_url))
         },
         _ => panic!("Provider not yet implemented: {:?}", provider_type)
     }
@@ -226,6 +264,16 @@ mod tests {
         
         let config = factory.default_config();
         assert_eq!(config.provider_type, LLMProviderType::OpenAI);
+        assert!(!config.models.is_empty());
+    }
+
+    #[test]
+    fn test_ollama_factory() {
+        let factory = OllamaFactory;
+        assert_eq!(factory.provider_type(), LLMProviderType::Ollama);
+        
+        let config = factory.default_config();
+        assert_eq!(config.provider_type, LLMProviderType::Ollama);
         assert!(!config.models.is_empty());
     }
 }

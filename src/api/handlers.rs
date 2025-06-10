@@ -18,12 +18,15 @@ use super::types::{
     ChatCompletionRequest, ChatCompletionResponse, ChatCompletionStreamResponse,
     ChatCompletionChoice, ChatCompletionStreamChoice, ChatMessage, ChatMessageDelta,
     ChatRole, ModelsResponse, Model, ErrorResponse, Usage,
+    EmbeddingsRequest, EmbeddingsResponse, EmbeddingObject, EmbeddingsUsage, EmbeddingsInput,
     create_error_response, generate_completion_id, current_timestamp,
     CircuitBreakerConfig, is_virtual_model, get_virtual_models,
 };
 use crate::llm::{
     LLMRequest, LLMProviderType, LLMRouter,
     cost::CostOptimizer, MessageRole,
+    EmbeddingsRequest as LLMEmbeddingsRequest, EmbeddingsResponse as LLMEmbeddingsResponse,
+    EmbeddingsInput as LLMEmbeddingsInput,
 };
 
 /// Shared application state for the OpenAI API
@@ -80,6 +83,8 @@ impl OpenAIApiState {
         let cost_analyzer = Arc::new(crate::llm::cost::CostAnalyzer::new());
         let cost_optimizer = Arc::new(RwLock::new(CostOptimizer::new(budget_manager, cost_analyzer)));
         let api_keys = Arc::new(RwLock::new(HashMap::new()));
+        
+        // Initialize with default models only
         let models = Arc::new(RwLock::new(Self::default_models()));
 
         Self {
@@ -160,6 +165,41 @@ impl OpenAIApiState {
         }
 
         models
+    }
+
+    /// Get models from the LLM router (async)
+    async fn get_models_from_router(router: &LLMRouter) -> Vec<ModelConfig> {
+        let mut models = Vec::new();
+        
+        // Get providers from router
+        let providers = router.get_providers().await;
+        
+        for provider in providers {
+            for model in provider.models {
+                models.push(ModelConfig {
+                    id: model.id,
+                    provider: provider.provider_type.clone(),
+                    display_name: model.name,
+                    context_window: model.context_window,
+                    max_output_tokens: model.max_tokens,
+                    supports_streaming: model.supports_streaming,
+                    cost_per_input_token: model.cost_per_input_token,
+                    cost_per_output_token: model.cost_per_output_token,
+                });
+            }
+        }
+        
+        models
+    }
+
+    /// Refresh models from the router
+    pub async fn refresh_models(&self) {
+        let new_models = Self::get_models_from_router(&self.llm_router).await;
+        let mut models = self.models.write().await;
+        
+        // Keep default models and add router models
+        *models = Self::default_models();
+        models.extend(new_models);
     }
 
     /// Extract API key from headers
@@ -646,6 +686,65 @@ async fn handle_smart_regular_completion(
 
 
 /// Error handler for invalid routes
+/// Handle embeddings requests
+pub async fn embeddings(
+    State(state): State<OpenAIApiState>,
+    Json(request): Json<EmbeddingsRequest>,
+) -> Result<Json<EmbeddingsResponse>, ErrorResponse> {
+    debug!("Processing embeddings request for model: {}", request.model);
+
+    // Convert input to LLM format
+    let llm_input = match request.input {
+        EmbeddingsInput::Single(text) => LLMEmbeddingsInput::Text(text),
+        EmbeddingsInput::Multiple(texts) => LLMEmbeddingsInput::TextArray(texts),
+    };
+
+    let llm_request = LLMEmbeddingsRequest {
+        id: uuid::Uuid::new_v4(),
+        input: llm_input,
+        model: request.model.clone(),
+        user: request.user,
+        metadata: HashMap::new(),
+    };
+
+    // Route to appropriate provider
+    match state.llm_router.embeddings(&llm_request, "").await {
+        Ok(llm_response) => {
+            // Convert LLM response to OpenAI format
+            let data = llm_response.data.into_iter().enumerate().map(|(index, embedding)| {
+                EmbeddingObject {
+                    object: "embedding".to_string(),
+                    embedding: embedding.embedding.into_iter().map(|x| x as f32).collect(),
+                    index: index as u32,
+                }
+            }).collect();
+
+            let response = EmbeddingsResponse {
+                object: "list".to_string(),
+                data,
+                model: request.model,
+                usage: EmbeddingsUsage {
+                    prompt_tokens: llm_response.usage.prompt_tokens,
+                    total_tokens: llm_response.usage.total_tokens,
+                },
+            };
+
+            Ok(Json(response))
+        },
+        Err(e) => {
+            error!("Embeddings request failed: {}", e);
+            Err(ErrorResponse {
+                error: super::types::ErrorDetail {
+                    message: format!("Embeddings generation failed: {}", e),
+                    error_type: "internal_error".to_string(),
+                    param: Some("model".to_string()),
+                    code: None,
+                },
+            })
+        }
+    }
+}
+
 pub async fn not_found() -> impl IntoResponse {
     let error = create_error_response(
         "Not found".to_string(),
