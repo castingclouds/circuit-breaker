@@ -4,6 +4,7 @@
 use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::{header::HeaderMap, header::HeaderValue, header::CONTENT_TYPE, Client};
+use tracing::{debug, error};
 use std::time::Duration;
 
 use crate::llm::{
@@ -208,8 +209,6 @@ fn find_complete_json_object(buffer: &str) -> Option<usize> {
 fn parse_google_json_chunk(json_str: &str, request_id: &str, model: &str) -> LLMResult<Option<StreamingChunk>> {
     use super::types::GoogleResponse;
     
-    eprintln!("🔍 Parsing Google JSON: {}", if json_str.len() > 200 { &json_str[..200] } else { json_str });
-    
     let google_response: GoogleResponse = serde_json::from_str(json_str)
         .map_err(|e| LLMError::Parse(format!("Failed to parse Google JSON chunk: {}", e)))?;
     
@@ -265,11 +264,8 @@ impl LLMProviderClient for GoogleClient {
 
         let request_url = temp_client.build_request_url(&request.model, api_key);
         
-        eprintln!("🔍 Google API Request:");
-        eprintln!("   URL: {}", request_url);
-        eprintln!("   Model: {}", request.model);
-        eprintln!("   Base URL: {}", temp_client.config.base_url);
-        eprintln!("   Headers: API key: {}...", &api_key[..8.min(api_key.len())]);
+        debug!("Google API Request: URL={}, Model={}", request_url, request.model);
+        debug!("API key: {}...", &api_key[..8.min(api_key.len())]);
 
         let response = temp_client.client
             .post(&request_url)
@@ -287,7 +283,7 @@ impl LLMProviderClient for GoogleClient {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
 
-            eprintln!("❌ Google API Error: {} - {}", status, error_text);
+            error!("Google API Error: {} - {}", status, error_text);
             return Err(temp_client.handle_error_response(status.as_u16(), &error_text));
         }
 
@@ -297,24 +293,23 @@ impl LLMProviderClient for GoogleClient {
             .await
             .map_err(|e| LLMError::Network(e.to_string()))?;
         
-        eprintln!("🔍 Google API Raw Response: {}", response_text);
+        debug!("Google API Raw Response: {}", response_text);
         
         let google_response: GoogleResponse = serde_json::from_str(&response_text)
             .map_err(|e| {
-                eprintln!("❌ Google Response Deserialization Error: {}", e);
-                eprintln!("❌ Response was: {}", response_text);
+                error!("Google Response Deserialization Error: {}", e);
+                debug!("Response was: {}", response_text);
                 LLMError::Serialization(format!("Failed to parse Google response: {}", e))
             })?;
 
-        eprintln!("🔍 Parsed Google Response:");
-        eprintln!("   Candidates count: {}", google_response.candidates.len());
+        debug!("Parsed Google Response: {} candidates", google_response.candidates.len());
         for (i, candidate) in google_response.candidates.iter().enumerate() {
-            eprintln!("   Candidate {}: has_content={}, finish_reason={:?}", 
+            debug!("Candidate {}: has_content={}, finish_reason={:?}", 
                      i, candidate.content.is_some(), candidate.finish_reason);
             if let Some(content) = &candidate.content {
-                eprintln!("     Content parts count: {}", content.parts.len());
+                debug!("Content parts count: {}", content.parts.len());
                 for (j, part) in content.parts.iter().enumerate() {
-                    eprintln!("     Part {}: '{}'", j, part.text);
+                    debug!("Part {}: '{}'", j, part.text);
                 }
             }
         }
@@ -344,9 +339,7 @@ impl LLMProviderClient for GoogleClient {
             &api_key
         );
         
-        eprintln!("🔍 Google API Streaming Request:");
-        eprintln!("   URL: {}", request_url);
-        eprintln!("   Model: {}", request.model);
+
 
         let response = temp_client.client
             .post(&request_url)
@@ -364,13 +357,11 @@ impl LLMProviderClient for GoogleClient {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
 
-            eprintln!("❌ Google Streaming API Error: {} - {}", status, error_text);
-            eprintln!("   Request details: URL={}, Model={}", request_url, request.model);
+
             return Err(temp_client.handle_error_response(status.as_u16(), &error_text));
         }
 
-        eprintln!("✅ Google streaming response received, status: {}", response.status());
-        eprintln!("   Response headers: {:?}", response.headers());
+
 
         // Google uses JSON array streaming format, not SSE
         let request_id = request.id.to_string();
@@ -380,7 +371,7 @@ impl LLMProviderClient for GoogleClient {
         let buffer = String::new();
         let chunk_index = 0;
         
-        eprintln!("🔍 Google JSON Array Streaming Parser initialized");
+
 
         let google_stream = futures::stream::unfold(
             (stream, buffer, chunk_index, request_id, model),
@@ -389,8 +380,7 @@ impl LLMProviderClient for GoogleClient {
                     match chunk_result {
                         Ok(bytes) => {
                             let chunk_str = String::from_utf8_lossy(&bytes);
-                            eprintln!("📦 Google Chunk #{}: {} bytes", chunk_index, bytes.len());
-                            eprintln!("   Raw data: {:?}", if chunk_str.len() > 100 { &chunk_str[..100] } else { &chunk_str });
+
                             
                             buffer.push_str(&chunk_str);
                             chunk_index += 1;
@@ -407,15 +397,14 @@ impl LLMProviderClient for GoogleClient {
                                     if !clean_json.is_empty() {
                                         match parse_google_json_chunk(&clean_json, &request_id, &model) {
                                             Ok(Some(chunk)) => {
-                                                eprintln!("✅ Google chunk parsed successfully: {:?}", chunk.choices[0].delta.content);
-                                                eprintln!("🔄 Yielding Google chunk to client stream");
+
                                                 return Some((Ok(chunk), (stream, buffer, chunk_index, request_id, model)));
                                             }
                                             Ok(None) => {
-                                                eprintln!("⚠️ Empty Google chunk, skipping");
+
                                             }
                                             Err(e) => {
-                                                eprintln!("❌ Failed to parse Google chunk: {}", e);
+
                                                 return Some((Err(e), (stream, buffer, chunk_index, request_id, model)));
                                             }
                                         }
@@ -424,7 +413,7 @@ impl LLMProviderClient for GoogleClient {
                             }
                         }
                         Err(e) => {
-                            eprintln!("❌ Google stream error: {}", e);
+
                             return Some((Err(LLMError::Network(e.to_string())), (stream, buffer, chunk_index, request_id, model)));
                         }
                     }
@@ -436,26 +425,25 @@ impl LLMProviderClient for GoogleClient {
                     if !clean_json.is_empty() {
                         match parse_google_json_chunk(clean_json, &request_id, &model) {
                             Ok(Some(chunk)) => {
-                                eprintln!("✅ Final Google chunk parsed: {:?}", chunk.choices[0].delta.content);
-                                eprintln!("🔄 Yielding final Google chunk to client stream");
+
                                 return Some((Ok(chunk), (stream, String::new(), chunk_index, request_id, model)));
                             }
                             Ok(None) => {
-                                eprintln!("⚠️ Final chunk empty");
+
                             }
                             Err(e) => {
-                                eprintln!("❌ Failed to parse final Google chunk: {}", e);
+
                             }
                         }
                     }
                 }
                 
-                eprintln!("🏁 Google streaming completed");
+
                 None
             }
         );
 
-        eprintln!("🎯 Google streaming function returning stream to router");
+
         Ok(Box::new(Box::pin(google_stream)))
     }
 

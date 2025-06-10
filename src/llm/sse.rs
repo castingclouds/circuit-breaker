@@ -5,6 +5,7 @@
 //! provider-specific parsing functions.
 
 use futures::{Stream, StreamExt};
+use tracing::{debug, error};
 
 use crate::llm::{LLMError, LLMResult, StreamingChunk, StreamingChoice, ChatMessage, MessageRole, LLMProviderType};
 
@@ -34,10 +35,7 @@ impl SSEParser {
         let chunk_str = std::str::from_utf8(chunk)
             .map_err(|e| LLMError::Parse(format!("Invalid UTF-8 in SSE stream: {}", e)))?;
         
-        eprintln!("🔍 SSE Parser: Processing chunk_str: {:?}", chunk_str);
         self.buffer.push_str(chunk_str);
-        eprintln!("   Buffer after append (len={}): {:?}", self.buffer.len(), 
-                  if self.buffer.len() < 500 { &self.buffer } else { &self.buffer[..500] });
         
         let mut events = Vec::new();
         
@@ -46,23 +44,23 @@ impl SSEParser {
             let event_block = self.buffer[..double_newline_pos].to_string();
             self.buffer = self.buffer[double_newline_pos + 2..].to_string();
             
-            eprintln!("   Found event block: {:?}", event_block);
+            debug!("Found event block: {:?}", event_block);
             
             if !event_block.trim().is_empty() {
                 match self.parse_event_block(&event_block) {
                     Ok(event) => {
-                        eprintln!("   ✅ Parsed event: type={:?}, data={:?}", event.event_type, 
+                        debug!("Parsed event: type={:?}, data={:?}", event.event_type, 
                                  if event.data.len() < 100 { &event.data } else { &event.data[..100] });
                         events.push(event);
                     }
                     Err(e) => {
-                        eprintln!("   ❌ Failed to parse event block: {}", e);
+                        error!("Failed to parse event block: {}", e);
                     }
                 }
             }
         }
         
-        eprintln!("   Returning {} events, buffer remaining: {} chars", events.len(), self.buffer.len());
+        debug!("Returning {} events, buffer remaining: {} chars", events.len(), self.buffer.len());
         Ok(events)
     }
 
@@ -133,36 +131,20 @@ pub fn response_to_sse_stream(
 ) -> impl Stream<Item = LLMResult<SSEEvent>> + Send + Unpin {
     let byte_stream = response.bytes_stream();
     let mut parser = SSEParser::new();
-    let mut chunk_count = 0;
-    
+
     Box::pin(byte_stream.map(move |chunk_result| {
         match chunk_result {
             Ok(chunk) => {
-                chunk_count += 1;
-                eprintln!("📦 SSE Parser: Received chunk #{} with {} bytes", chunk_count, chunk.len());
-                eprintln!("   Raw data preview: {:?}", String::from_utf8_lossy(&chunk[..chunk.len().min(200)]));
-                
                 match parser.parse_chunk(&chunk) {
                     Ok(events) => {
-                        eprintln!("   ✅ Parsed {} SSE events from chunk", events.len());
-                        for (i, event) in events.iter().enumerate() {
-                            eprintln!("      Event {}: type={:?}, data_len={}", i, event.event_type, event.data.len());
-                            if event.data.len() < 200 {
-                                eprintln!("      Data: {}", event.data);
-                            } else {
-                                eprintln!("      Data preview: {}...", &event.data[..200]);
-                            }
-                        }
                         Ok(events)
                     }
                     Err(e) => {
-                        eprintln!("   ❌ Failed to parse SSE chunk: {}", e);
                         Err(e)
                     }
                 }
             }
             Err(e) => {
-                eprintln!("❌ Network error receiving SSE chunk: {}", e);
                 Err(LLMError::Network(e.to_string()))
             }
         }
@@ -170,7 +152,7 @@ pub fn response_to_sse_stream(
         match result {
             Ok(events) => {
                 if events.is_empty() {
-                    eprintln!("   ⚠️ Skipping empty event list");
+                    debug!("Skipping empty event list");
                     None
                 } else {
                     Some(Ok(events))
@@ -271,33 +253,30 @@ pub mod anthropic {
         request_id: &str,
         model: &str,
     ) -> LLMResult<Option<StreamingChunk>> {
-        eprintln!("🔍 Anthropic Parser: Processing event");
-        eprintln!("   Event type: {:?}", event.event_type);
-        eprintln!("   Data: {}", event.data);
+
         
         // Skip non-data events
         if event.data.trim().is_empty() || event.data.trim() == "[DONE]" {
-            eprintln!("   ⚠️ Skipping empty or DONE event");
+            debug!("Skipping empty or DONE event");
             return Ok(None);
         }
 
         let stream_event: AnthropicStreamEvent = serde_json::from_str(&event.data)
             .map_err(|e| {
-                eprintln!("   ❌ Failed to parse Anthropic JSON: {}", e);
-                eprintln!("   Raw data was: {}", event.data);
+                error!("Failed to parse Anthropic JSON: {}", e);
+                debug!("Raw data was: {}", event.data);
                 LLMError::Parse(format!("Failed to parse Anthropic stream event: {}", e))
             })?;
             
-        eprintln!("   ✅ Parsed stream event: {:?}", stream_event);
+
 
         match stream_event {
             AnthropicStreamEvent::Ping => {
-                eprintln!("   📡 Received ping event, ignoring");
+                debug!("Received ping event, ignoring");
                 Ok(None) // Ignore ping events
             }
             AnthropicStreamEvent::ContentBlockDelta { delta, .. } => {
                 if let Some(text) = delta.text {
-                    eprintln!("   ✅ Processing content delta with text: {:?}", text);
                     Ok(Some(StreamingChunk {
                         id: request_id.to_string(),
                         object: "chat.completion.chunk".to_string(),
@@ -316,13 +295,12 @@ pub mod anthropic {
                         provider: LLMProviderType::Anthropic,
                     }))
                 } else {
-                    eprintln!("   ⚠️ Content delta with no text");
+                    debug!("Content delta with no text");
                     Ok(None)
                 }
             }
             AnthropicStreamEvent::MessageDelta { delta } => {
                 if let Some(stop_reason) = delta.stop_reason {
-                    eprintln!("   🏁 Message finished with stop reason: {}", stop_reason);
                     Ok(Some(StreamingChunk {
                         id: request_id.to_string(),
                         object: "chat.completion.chunk".to_string(),
@@ -341,16 +319,14 @@ pub mod anthropic {
                         provider: LLMProviderType::Anthropic,
                     }))
                 } else {
-                    eprintln!("   ⚠️ Message delta with no stop reason");
+                    debug!("Message delta with no stop reason");
                     Ok(None)
                 }
             }
             AnthropicStreamEvent::Error { error } => {
-                eprintln!("   ❌ Anthropic stream error: {}", error.message);
                 Err(LLMError::Provider(format!("Anthropic stream error: {}", error.message)))
             }
             _ => {
-                eprintln!("   ⚠️ Ignoring event type: {:?}", stream_event);
                 Ok(None) // Ignore other event types for now
             }
         }

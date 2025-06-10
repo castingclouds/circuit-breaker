@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::error;
 use std::time::Duration;
 use tokio::sync::{RwLock, broadcast};
 use tokio::time::sleep;
@@ -213,7 +214,7 @@ impl AgentEngine {
             match self.execute_agent_for_config(&config, token).await {
                 Ok(execution) => executions.push(execution),
                 Err(e) => {
-                    eprintln!("Failed to execute agent {} for token {}: {}", 
+                    error!("Failed to execute agent {} for token {}: {}", 
                              config.agent_id.as_str(), token.id, e);
                 }
             }

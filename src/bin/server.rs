@@ -184,8 +184,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // In production, these would typically be set by the deployment system
     if let Err(e) = dotenv() {
         // Only warn if .env file is missing - it's optional
-        eprintln!("Warning: Could not load .env file: {}", e);
-        eprintln!("Environment variables must be set manually or via system configuration");
+        warn!("Could not load .env file: {}", e);
+        warn!("Environment variables must be set manually or via system configuration");
     }
 
     // Load configuration from environment

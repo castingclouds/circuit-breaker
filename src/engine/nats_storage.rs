@@ -39,6 +39,7 @@ use serde_json;
 use uuid::Uuid;
 use futures::StreamExt;
 use tokio::time::{sleep, timeout};
+use tracing::{error, warn};
 
 use crate::models::{Token, WorkflowDefinition, TransitionRecord};
 use crate::engine::storage::WorkflowStorage;
@@ -732,7 +733,7 @@ impl NATSStorage {
             let consumer = match stream.create_consumer(consumer_config).await {
                 Ok(consumer) => consumer,
                 Err(e) => {
-                    eprintln!("Failed to create place consumer on attempt {}: {}", attempt + 1, e);
+                    error!("Failed to create place consumer on attempt {}: {}", attempt + 1, e);
                     continue;
                 }
             };
@@ -765,10 +766,10 @@ impl NATSStorage {
             match timeout(Duration::from_secs(3), fetch_future).await {
                 Ok(Ok(tokens)) => return Ok(tokens),
                 Ok(Err(e)) => {
-                    eprintln!("Fetch error on attempt {}: {}", attempt + 1, e);
+                    warn!("Fetch error on attempt {}: {}", attempt + 1, e);
                 },
                 Err(_) => {
-                    eprintln!("Fetch timeout on attempt {}", attempt + 1);
+                    warn!("Fetch timeout on attempt {}", attempt + 1);
                 }
             }
         }

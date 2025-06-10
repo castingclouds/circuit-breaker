@@ -4,6 +4,7 @@
 use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::{header::HeaderMap, header::HeaderValue, header::CONTENT_TYPE, Client};
+use tracing::{debug, error};
 
 use std::time::Duration;
 
@@ -219,11 +220,8 @@ impl LLMProviderClient for OpenAIClient {
 
         let request_url = format!("{}/chat/completions", temp_client.config.base_url);
         
-        eprintln!("🔍 OpenAI API Request:");
-        eprintln!("   URL: {}", request_url);
-        eprintln!("   Model: {}", request.model);
-        eprintln!("   Base URL: {}", temp_client.config.base_url);
-        eprintln!("   Headers: Authorization: Bearer {}...", &api_key[..8.min(api_key.len())]);
+        debug!("OpenAI API Request: URL={}, Model={}", request_url, request.model);
+        debug!("API key: {}...", &api_key[..8.min(api_key.len())]);
 
         let response = temp_client.client
             .post(&request_url)
@@ -241,7 +239,7 @@ impl LLMProviderClient for OpenAIClient {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
 
-            eprintln!("❌ OpenAI API Error: {} - {}", status, error_text);
+            error!("OpenAI API Error: {} - {}", status, error_text);
             return Err(temp_client.handle_error_response(status.as_u16(), &error_text));
         }
 
@@ -273,9 +271,7 @@ impl LLMProviderClient for OpenAIClient {
 
         let request_url = format!("{}/chat/completions", temp_client.config.base_url);
         
-        eprintln!("🔍 OpenAI API Streaming Request:");
-        eprintln!("   URL: {}", request_url);
-        eprintln!("   Model: {}", request.model);
+
 
         let response = temp_client.client
             .post(&request_url)
@@ -293,7 +289,7 @@ impl LLMProviderClient for OpenAIClient {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
 
-            eprintln!("❌ OpenAI Streaming API Error: {} - {}", status, error_text);
+
             return Err(temp_client.handle_error_response(status.as_u16(), &error_text));
         }
 

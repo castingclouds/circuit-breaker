@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
-use tracing::{warn, info};
+use tracing::{warn, info, debug, error};
 use futures::StreamExt;
 
 /// Provider health status tracking
@@ -125,7 +125,7 @@ impl LLMRouter {
         let resolved_model = self.resolve_virtual_model(&request.model);
         let provider_type = self.determine_provider_for_model(&resolved_model);
         
-        eprintln!("🔍 Router: Model '{}' -> Resolved '{}' -> Provider '{}'", request.model, resolved_model, provider_type);
+        debug!("Router: Model '{}' -> Resolved '{}' -> Provider '{}'", request.model, resolved_model, provider_type);
         
         let provider_client = self.providers.get(&provider_type)
             .ok_or_else(|| LLMError::Internal(format!("Provider {} not available", provider_type)))?;
@@ -184,32 +184,14 @@ impl LLMRouter {
         let provider = self.determine_provider_for_model(&request.model);
         let api_key = self.get_api_key(&provider).await?;
         
-        eprintln!("🔍 Router: streaming request for model {} using provider {:?}", request.model, provider);
-        
         if let Some(client) = self.providers.get(&provider) {
-            eprintln!("🔍 Router: calling provider client for streaming");
             let stream_result = client.chat_completion_stream(request.clone(), api_key).await;
             match stream_result {
                 Ok(stream) => {
-                    eprintln!("✅ Router: provider returned stream successfully");
-                    // Wrap the stream to add debugging
-                    let debug_stream = stream.map(|chunk_result| {
-                        match &chunk_result {
-                            Ok(chunk) => {
-                                eprintln!("📦 Router: received chunk from provider: {:?}", 
-                                    chunk.choices.get(0).map(|c| &c.delta.content).unwrap_or(&"<empty>".to_string()));
-                                eprintln!("🚀 Router: forwarding chunk to client");
-                            }
-                            Err(e) => {
-                                eprintln!("❌ Router: received error from provider: {}", e);
-                            }
-                        }
-                        chunk_result
-                    });
-                    Ok(Box::new(Box::pin(debug_stream)))
+                    Ok(Box::new(Box::pin(stream)))
                 }
                 Err(e) => {
-                    eprintln!("❌ Router: provider returned error: {}", e);
+                    error!("Router: provider returned error: {}", e);
                     Err(e)
                 }
             }
@@ -273,15 +255,15 @@ impl LLMRouter {
 
     /// Get API key for provider
     async fn get_api_key(&self, provider_type: &LLMProviderType) -> LLMResult<String> {
-        eprintln!("🔍 Getting API key for provider: {}", provider_type);
-        eprintln!("   Configured keys available: {:?}", self.configured_api_keys.keys().collect::<Vec<_>>());
+        debug!("Getting API key for provider: {}", provider_type);
+        debug!("Configured keys available: {:?}", self.configured_api_keys.keys().collect::<Vec<_>>());
         
         if let Some(key) = self.configured_api_keys.get(provider_type) {
-            eprintln!("   ✅ Found configured key for {}: {}...", provider_type, &key[..8.min(key.len())]);
+            debug!("Found configured key for {}: {}...", provider_type, &key[..8.min(key.len())]);
             return Ok(key.clone());
         }
 
-        eprintln!("   ⚠️  No configured key found for {}, checking environment...", provider_type);
+        debug!("No configured key found for {}, checking environment...", provider_type);
         
         // Fallback to environment variables if not configured
         match provider_type {

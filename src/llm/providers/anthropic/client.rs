@@ -4,6 +4,7 @@
 use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::{header::HeaderMap, header::HeaderValue, header::CONTENT_TYPE, Client};
+use tracing::{debug, error};
 use serde_json::json;
 use std::time::Duration;
 
@@ -195,11 +196,8 @@ impl LLMProviderClient for AnthropicClient {
 
         let request_url = format!("{}/v1/messages", temp_client.config.base_url);
         
-        eprintln!("🔍 Anthropic API Request:");
-        eprintln!("   URL: {}", request_url);
-        eprintln!("   Model: {}", request.model);
-        eprintln!("   Base URL: {}", temp_client.config.base_url);
-        eprintln!("   Headers: x-api-key: {}...", &api_key[..8.min(api_key.len())]);
+        debug!("Anthropic API Request: URL={}, Model={}", request_url, request.model);
+        debug!("API key: {}...", &api_key[..8.min(api_key.len())]);
 
         let response = temp_client.client
             .post(&request_url)
@@ -217,7 +215,7 @@ impl LLMProviderClient for AnthropicClient {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
 
-            eprintln!("❌ Anthropic API Error: {} - {}", status, error_text);
+            error!("Anthropic API Error: {} - {}", status, error_text);
             return Err(temp_client.handle_error_response(status.as_u16(), &error_text));
         }
 
@@ -249,10 +247,6 @@ impl LLMProviderClient for AnthropicClient {
 
         let request_url = format!("{}/v1/messages", temp_client.config.base_url);
         
-        eprintln!("🔍 Anthropic API Streaming Request:");
-        eprintln!("   URL: {}", request_url);
-        eprintln!("   Model: {}", request.model);
-        eprintln!("   Headers: {:?}", headers);
 
         let response = temp_client.client
             .post(&request_url)
@@ -270,13 +264,11 @@ impl LLMProviderClient for AnthropicClient {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
 
-            eprintln!("❌ Anthropic Streaming API Error: {} - {}", status, error_text);
-            eprintln!("   Request details: URL={}, Model={}", request_url, request.model);
+
             return Err(temp_client.handle_error_response(status.as_u16(), &error_text));
         }
 
-        eprintln!("✅ Anthropic streaming response received, status: {}", response.status());
-        eprintln!("   Response headers: {:?}", response.headers());
+
 
         // Convert response to SSE stream and parse Anthropic events
         let request_id = request.id.to_string();
