@@ -12,6 +12,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
+use super::mcp_auth::{ClientInfo, MCPJWTService, MCPTokenClaims};
 use super::mcp_types::*;
 
 /// Circuit Breaker MCP Server Manager - manages multiple MCP server instances
@@ -20,30 +21,6 @@ pub struct MCPServerManager {
     pub registry: Arc<RwLock<MCPServerRegistry>>,
     pub sessions: Arc<RwLock<HashMap<String, MCPSession>>>,
     pub jwt_service: Arc<MCPJWTService>,
-}
-
-/// JWT service for MCP authentication
-pub struct MCPJWTService {
-    // Placeholder for JWT functionality - to be implemented later
-}
-
-impl MCPJWTService {
-    pub fn new() -> Self {
-        Self {}
-    }
-
-    pub async fn validate_token(&self, _token: &str) -> Result<MCPTokenClaims, String> {
-        // Placeholder implementation
-        Err("JWT validation not implemented yet".to_string())
-    }
-}
-
-/// MCP Token claims
-#[derive(Debug, Clone)]
-pub struct MCPTokenClaims {
-    pub installation_id: String,
-    pub app_id: String,
-    pub permissions: MCPPermissions,
 }
 
 impl MCPServerManager {
@@ -103,10 +80,73 @@ impl MCPServerManager {
             .and_then(|s| s.strip_prefix("Bearer "));
 
         if let Some(token) = auth_header {
-            self.jwt_service.validate_token(token).await
+            self.jwt_service
+                .validate_token(token)
+                .await
+                .map_err(|e| e.to_string())
         } else {
             Err("Missing authorization header".to_string())
         }
+    }
+
+    /// Register an app with the JWT service
+    pub async fn register_app(&self, app: MCPApp) -> Result<(), String> {
+        self.jwt_service
+            .register_app(app)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Register an installation with the JWT service
+    pub async fn register_installation(&self, installation: MCPInstallation) -> Result<(), String> {
+        self.jwt_service
+            .register_installation(installation)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Create an installation token
+    pub async fn create_installation_token(
+        &self,
+        app_id: &str,
+        installation_id: &str,
+        requested_permissions: Option<MCPPermissions>,
+    ) -> Result<super::mcp_auth::MCPInstallationToken, String> {
+        self.jwt_service
+            .create_installation_token(app_id, installation_id, requested_permissions)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Create a session token
+    pub async fn create_session_token(
+        &self,
+        installation_id: &str,
+        session_id: &str,
+        user_id: Option<String>,
+        permissions: MCPSessionPermissions,
+        project_contexts: Vec<String>,
+        client_info: ClientInfo,
+    ) -> Result<String, String> {
+        self.jwt_service
+            .create_session_token(
+                installation_id,
+                session_id,
+                user_id,
+                permissions,
+                project_contexts,
+                client_info,
+            )
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Revoke a token
+    pub async fn revoke_token(&self, token_id: &str) -> Result<(), String> {
+        self.jwt_service
+            .revoke_token(token_id)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Get default tools for a server instance
@@ -275,6 +315,18 @@ impl CircuitBreakerMCPServer {
             .route("/mcp/:instance_id/tools", get(list_tools))
             .route("/mcp/:instance_id/prompts", get(list_prompts))
             .route("/mcp/:instance_id/resources", get(list_resources))
+            // Authentication endpoints
+            .route("/mcp/auth/apps", post(register_app))
+            .route("/mcp/auth/installations", post(register_installation))
+            .route(
+                "/mcp/auth/installations/:installation_id/tokens",
+                post(create_installation_token),
+            )
+            .route(
+                "/mcp/auth/sessions/:session_id/tokens",
+                post(create_session_token),
+            )
+            .route("/mcp/auth/tokens/:token_id/revoke", post(revoke_token))
             // Add state
             .with_state(self.manager.clone())
     }
@@ -303,9 +355,25 @@ impl CircuitBreakerMCPServer {
             }
         };
 
-        // Verify authentication if required
-        if let Some(_claims) = claims {
-            // TODO: Verify permissions for this instance
+        // Verify authentication and permissions if provided
+        if let Some(claims) = &claims {
+            // Verify the claims are valid for this instance
+            if claims.installation_id != instance.installation_id {
+                return MCPResponse::error(
+                    request.id,
+                    error_codes::INVALID_REQUEST,
+                    "Token not valid for this instance".to_string(),
+                );
+            }
+
+            // Check if the app matches
+            if claims.app_id != instance.app_id {
+                return MCPResponse::error(
+                    request.id,
+                    error_codes::INVALID_REQUEST,
+                    "Token app_id does not match instance".to_string(),
+                );
+            }
         }
 
         match request.method.as_str() {
@@ -567,6 +635,9 @@ impl CircuitBreakerMCPServer {
                     });
                 }
 
+                // TODO: Check if the authenticated user has permission to access this context
+                // This would involve checking the claims.permissions.project_contexts
+
                 Ok(MCPToolResult {
                     content: vec![MCPContent::text(format!(
                         "Search completed for context {} in instance {} (placeholder)",
@@ -595,8 +666,27 @@ async fn handle_mcp_request(
     headers: HeaderMap,
     axum::Json(request): axum::Json<MCPRequest>,
 ) -> Result<axum::Json<MCPResponse>, StatusCode> {
-    // Attempt authentication (optional for some operations)
-    let claims = manager.authenticate_request(&headers).await.ok();
+    // Attempt authentication (required for most operations except initialize)
+    let claims = if request.method == "initialize" {
+        // Initialize doesn't require authentication
+        None
+    } else {
+        // All other operations require authentication
+        match manager.authenticate_request(&headers).await {
+            Ok(claims) => Some(claims),
+            Err(e) => {
+                warn!(
+                    "Authentication failed for request to {}: {}",
+                    instance_id, e
+                );
+                return Ok(axum::Json(MCPResponse::error(
+                    request.id,
+                    error_codes::INVALID_REQUEST,
+                    format!("Authentication failed: {}", e),
+                )));
+            }
+        }
+    };
 
     let server = CircuitBreakerMCPServer { manager };
     let response = server.handle_request(&instance_id, request, claims).await;
@@ -673,8 +763,17 @@ async fn handle_mcp_websocket(
     State(manager): State<MCPServerManager>,
     headers: HeaderMap,
 ) -> Result<Response, StatusCode> {
-    // Attempt authentication
-    let claims = manager.authenticate_request(&headers).await.ok();
+    // WebSocket connections require authentication
+    let claims = match manager.authenticate_request(&headers).await {
+        Ok(claims) => Some(claims),
+        Err(e) => {
+            warn!(
+                "WebSocket authentication failed for instance {}: {}",
+                instance_id, e
+            );
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+    };
 
     Ok(ws.on_upgrade(move |socket| {
         handle_websocket_connection(socket, instance_id, manager, claims)
@@ -862,6 +961,148 @@ async fn list_resources(
         }
         None => Err(StatusCode::NOT_FOUND),
     }
+}
+
+/// Register a new MCP app
+async fn register_app(
+    State(manager): State<MCPServerManager>,
+    axum::Json(app): axum::Json<MCPApp>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    match manager.register_app(app).await {
+        Ok(()) => Ok(axum::Json(serde_json::json!({"success": true}))),
+        Err(e) => {
+            error!("Failed to register app: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Register a new MCP installation
+async fn register_installation(
+    State(manager): State<MCPServerManager>,
+    axum::Json(installation): axum::Json<MCPInstallation>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    match manager.register_installation(installation).await {
+        Ok(()) => Ok(axum::Json(serde_json::json!({"success": true}))),
+        Err(e) => {
+            error!("Failed to register installation: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Create an installation token
+async fn create_installation_token(
+    State(manager): State<MCPServerManager>,
+    Path(installation_id): Path<String>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CreateInstallationTokenRequest>,
+) -> Result<axum::Json<super::mcp_auth::MCPInstallationToken>, StatusCode> {
+    // Require app authentication for creating installation tokens
+    let claims = manager
+        .authenticate_request(&headers)
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    // Verify this is an app token
+    if claims.token_type != super::mcp_auth::TokenType::App {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    match manager
+        .create_installation_token(&claims.app_id, &installation_id, request.permissions)
+        .await
+    {
+        Ok(token) => Ok(axum::Json(token)),
+        Err(e) => {
+            error!("Failed to create installation token: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Create a session token
+async fn create_session_token(
+    State(manager): State<MCPServerManager>,
+    Path(session_id): Path<String>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CreateSessionTokenRequest>,
+) -> Result<axum::Json<CreateSessionTokenResponse>, StatusCode> {
+    // Require installation token for creating session tokens
+    let claims = manager
+        .authenticate_request(&headers)
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    // Extract client info from headers
+    let client_info = ClientInfo {
+        ip_address: headers
+            .get("x-forwarded-for")
+            .or_else(|| headers.get("x-real-ip"))
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_string()),
+        user_agent: headers
+            .get("user-agent")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_string()),
+    };
+
+    match manager
+        .create_session_token(
+            &claims.installation_id,
+            &session_id,
+            request.user_id,
+            request.permissions,
+            request.project_contexts,
+            client_info,
+        )
+        .await
+    {
+        Ok(token) => Ok(axum::Json(CreateSessionTokenResponse { token })),
+        Err(e) => {
+            error!("Failed to create session token: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Revoke a token
+async fn revoke_token(
+    State(manager): State<MCPServerManager>,
+    Path(token_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    // Require authentication to revoke tokens
+    let _claims = manager
+        .authenticate_request(&headers)
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    match manager.revoke_token(&token_id).await {
+        Ok(()) => Ok(axum::Json(serde_json::json!({"success": true}))),
+        Err(e) => {
+            error!("Failed to revoke token: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Request types for authentication endpoints
+#[derive(Debug, serde::Deserialize)]
+pub struct CreateInstallationTokenRequest {
+    pub permissions: Option<MCPPermissions>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct CreateSessionTokenRequest {
+    pub user_id: Option<String>,
+    pub permissions: MCPSessionPermissions,
+    pub project_contexts: Vec<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct CreateSessionTokenResponse {
+    pub token: String,
 }
 
 #[cfg(test)]

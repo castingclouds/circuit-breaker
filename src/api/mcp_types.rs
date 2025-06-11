@@ -385,7 +385,7 @@ pub struct ResourceLimits {
 }
 
 /// Permission level
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum PermissionLevel {
     None,
     Read,
