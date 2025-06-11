@@ -105,7 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let is_streaming = chat_request.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
         
         if is_streaming {
-            match streaming_chat(&client, &openai_endpoint, &api_key, chat_request).await {
+            match streaming_chat(&client, &openai_endpoint, &api_key, chat_request.clone()).await {
                 Ok(()) => {
                     println!("✅ Streaming chat completion successful with model: {}", test_model);
                     chat_success = true;
@@ -123,28 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Check if this is a streaming request
-        let is_streaming = chat_request.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
-        
-        if is_streaming {
-            match streaming_chat(&client, &openai_endpoint, &api_key, chat_request).await {
-                Ok(()) => {
-                    println!("✅ Streaming chat completion successful with model: {}", test_model);
-                    chat_success = true;
-                    break;
-                }
-                Err(e) => {
-                    eprintln!(
-                        "❌ Streaming chat completion failed with model '{}': {}",
-                        test_model, e
-                    );
-                    if test_model == fallback_models.last().unwrap() {
-                        eprintln!("   All fallback models failed for streaming.");
-                    }
-                }
-            }
-        } else {
-            match chat_completion(&client, &openai_endpoint, &api_key, chat_request).await {
+        match chat_completion(&client, &openai_endpoint, &api_key, chat_request).await {
             Ok(response) => {
                 println!("✅ Chat completion successful with model: {}", test_model);
                 chat_success = true;
@@ -190,6 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+    }
 
     // Test embeddings (if supported)
     println!("\n🔮 Testing embeddings...");

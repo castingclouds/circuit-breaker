@@ -162,7 +162,7 @@ mod tests {
         assert!(chat_models.contains(&"microsoft/DialoGPT-medium"));
         
         let code_models = recommendations.get("code").unwrap();
-        assert!(chat_models.contains(&"codellama/CodeLlama-7b-Instruct-hf"));
+        assert!(code_models.contains(&"codellama/CodeLlama-7b-Instruct-hf"));
         
         let embedding_models = recommendations.get("embeddings").unwrap();
         assert!(embedding_models.contains(&"sentence-transformers/all-MiniLM-L6-v2"));

@@ -531,12 +531,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_provider_determination() {
-        // Mock router with OpenAI key
-        if let Ok(router) = LLMRouter::new_with_keys(Some("test-key".to_string()), None, None, None).await {
+        // Mock router with keys for all providers
+        if let Ok(router) = LLMRouter::new_with_keys(
+            Some("test-openai-key".to_string()), 
+            Some("test-anthropic-key".to_string()), 
+            Some("test-google-key".to_string()), 
+            None
+        ).await {
             assert_eq!(router.determine_provider_for_model("gpt-4"), LLMProviderType::OpenAI);
             assert_eq!(router.determine_provider_for_model("o4-mini-2025-04-16"), LLMProviderType::OpenAI);
             assert_eq!(router.determine_provider_for_model("claude-3"), LLMProviderType::Anthropic); // Correctly determines Anthropic
-            assert_eq!(router.determine_provider_for_model("unknown-model"), LLMProviderType::OpenAI); // Falls back to available provider
+            assert_eq!(router.determine_provider_for_model("unknown-model"), LLMProviderType::Ollama); // Falls back to first available provider (Ollama)
         }
     }
 
