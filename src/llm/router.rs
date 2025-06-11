@@ -541,7 +541,7 @@ mod tests {
             assert_eq!(router.determine_provider_for_model("gpt-4"), LLMProviderType::OpenAI);
             assert_eq!(router.determine_provider_for_model("o4-mini-2025-04-16"), LLMProviderType::OpenAI);
             assert_eq!(router.determine_provider_for_model("claude-3"), LLMProviderType::Anthropic); // Correctly determines Anthropic
-            assert_eq!(router.determine_provider_for_model("unknown-model"), LLMProviderType::Ollama); // Falls back to first available provider (Ollama)
+            assert_eq!(router.determine_provider_for_model("unknown-model"), LLMProviderType::OpenAI); // Falls back to first available provider (OpenAI)
         }
     }
 
