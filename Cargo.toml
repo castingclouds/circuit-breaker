@@ -52,6 +52,7 @@ base64 = "0.21"
 sha2 = "0.10"
 hmac = "0.12"
 url = "2.4"
+urlencoding = "2.1"
 
 # Error handling
 anyhow = "1.0"

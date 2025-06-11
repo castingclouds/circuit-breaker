@@ -7,6 +7,7 @@ pub mod handlers;
 pub mod mcp_auth;
 pub mod mcp_server;
 pub mod mcp_types;
+pub mod oauth;
 pub mod types;
 
 use axum::{

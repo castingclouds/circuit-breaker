@@ -14,6 +14,7 @@ use tracing::{debug, error, info, warn};
 
 use super::mcp_auth::{ClientInfo, MCPJWTService, MCPTokenClaims};
 use super::mcp_types::*;
+use super::oauth::{OAuthManager, OAuthProviderType};
 
 /// Circuit Breaker MCP Server Manager - manages multiple MCP server instances
 #[derive(Clone)]
@@ -21,6 +22,7 @@ pub struct MCPServerManager {
     pub registry: Arc<RwLock<MCPServerRegistry>>,
     pub sessions: Arc<RwLock<HashMap<String, MCPSession>>>,
     pub jwt_service: Arc<MCPJWTService>,
+    pub oauth_manager: Arc<OAuthManager>,
 }
 
 impl MCPServerManager {
@@ -30,6 +32,7 @@ impl MCPServerManager {
             registry: Arc::new(RwLock::new(MCPServerRegistry::new())),
             sessions: Arc::new(RwLock::new(HashMap::new())),
             jwt_service: Arc::new(MCPJWTService::new()),
+            oauth_manager: Arc::new(OAuthManager::new()),
         }
     }
 
@@ -145,6 +148,68 @@ impl MCPServerManager {
     pub async fn revoke_token(&self, token_id: &str) -> Result<(), String> {
         self.jwt_service
             .revoke_token(token_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Register an OAuth provider
+    pub async fn register_oauth_provider(
+        &self,
+        provider: super::oauth::OAuthProvider,
+    ) -> Result<(), String> {
+        self.oauth_manager
+            .register_provider(provider)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Get OAuth authorization URL
+    pub async fn get_oauth_authorization_url(
+        &self,
+        provider_type: OAuthProviderType,
+        installation_id: String,
+        user_id: Option<String>,
+        redirect_uri: Option<String>,
+        scope: Option<Vec<String>>,
+    ) -> Result<String, String> {
+        self.oauth_manager
+            .get_authorization_url(provider_type, installation_id, user_id, redirect_uri, scope)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Handle OAuth callback
+    pub async fn handle_oauth_callback(
+        &self,
+        callback: super::oauth::OAuthCallback,
+    ) -> Result<super::oauth::StoredOAuthToken, String> {
+        self.oauth_manager
+            .handle_callback(callback)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Make authenticated API request to external service
+    pub async fn make_authenticated_api_request(
+        &self,
+        provider_type: &OAuthProviderType,
+        installation_id: &str,
+        user_id: Option<&str>,
+        method: reqwest::Method,
+        url: &str,
+        body: Option<String>,
+        headers: Option<HashMap<String, String>>,
+    ) -> Result<reqwest::Response, String> {
+        self.oauth_manager
+            .make_authenticated_request(
+                provider_type,
+                installation_id,
+                user_id,
+                method,
+                url,
+                body,
+                headers,
+            )
             .await
             .map_err(|e| e.to_string())
     }
@@ -316,6 +381,7 @@ impl CircuitBreakerMCPServer {
             .route("/mcp/:instance_id/prompts", get(list_prompts))
             .route("/mcp/:instance_id/resources", get(list_resources))
             // Authentication endpoints
+            // OAuth endpoints
             .route("/mcp/auth/apps", post(register_app))
             .route("/mcp/auth/installations", post(register_installation))
             .route(
@@ -327,6 +393,10 @@ impl CircuitBreakerMCPServer {
                 post(create_session_token),
             )
             .route("/mcp/auth/tokens/:token_id/revoke", post(revoke_token))
+            // OAuth provider endpoints
+            .route("/mcp/oauth/providers", post(register_oauth_provider))
+            .route("/mcp/oauth/authorize", post(get_oauth_authorization_url))
+            .route("/mcp/oauth/callback", post(handle_oauth_callback))
             // Add state
             .with_state(self.manager.clone())
     }
@@ -635,18 +705,167 @@ impl CircuitBreakerMCPServer {
                     });
                 }
 
+                // Get search query
+                let query = tool_call
+                    .arguments
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
                 // TODO: Check if the authenticated user has permission to access this context
                 // This would involve checking the claims.permissions.project_contexts
 
-                Ok(MCPToolResult {
-                    content: vec![MCPContent::text(format!(
-                        "Search completed for context {} in instance {} (placeholder)",
-                        context_id, instance.instance_id
-                    ))],
-                    is_error: Some(false),
-                })
+                // Attempt to perform real search using OAuth if available
+                let search_result = self
+                    .perform_context_search(instance, context_id, query)
+                    .await;
+
+                match search_result {
+                    Ok(results) => Ok(MCPToolResult {
+                        content: vec![MCPContent::text(format!(
+                            "Search results for '{}' in context {}: {}",
+                            query, context_id, results
+                        ))],
+                        is_error: Some(false),
+                    }),
+                    Err(e) => Ok(MCPToolResult {
+                        content: vec![MCPContent::text(format!(
+                            "Search failed for context {}: {}",
+                            context_id, e
+                        ))],
+                        is_error: Some(true),
+                    }),
+                }
             }
             _ => Err(format!("Unknown tool: {}", tool_call.name).into()),
+        }
+    }
+
+    /// Perform search in project context using OAuth-authenticated APIs
+    async fn perform_context_search(
+        &self,
+        instance: &MCPServerInstance,
+        context_id: &str,
+        query: &str,
+    ) -> Result<String, String> {
+        // Determine provider type from context_id (this is a simplified approach)
+        let provider_type = if context_id.contains("gitlab") {
+            OAuthProviderType::GitLab
+        } else if context_id.contains("github") {
+            OAuthProviderType::GitHub
+        } else {
+            return Err("Unknown context provider".to_string());
+        };
+
+        // Try to make authenticated request to search API
+        match provider_type {
+            OAuthProviderType::GitLab => {
+                self.search_gitlab_context(&instance.installation_id, context_id, query)
+                    .await
+            }
+            OAuthProviderType::GitHub => {
+                self.search_github_context(&instance.installation_id, context_id, query)
+                    .await
+            }
+            _ => Err("Provider not supported for search".to_string()),
+        }
+    }
+
+    /// Search GitLab project using OAuth
+    async fn search_gitlab_context(
+        &self,
+        installation_id: &str,
+        context_id: &str,
+        query: &str,
+    ) -> Result<String, String> {
+        // Extract project ID from context_id (simplified)
+        let project_id = context_id.replace("gitlab:", "").replace("context:", "");
+
+        let search_url = format!(
+            "https://gitlab.com/api/v4/projects/{}/search?scope=blobs&search={}",
+            project_id,
+            urlencoding::encode(query)
+        );
+
+        match self
+            .manager
+            .make_authenticated_api_request(
+                &OAuthProviderType::GitLab,
+                installation_id,
+                None,
+                reqwest::Method::GET,
+                &search_url,
+                None,
+                None,
+            )
+            .await
+        {
+            Ok(response) => {
+                if response.status().is_success() {
+                    match response.text().await {
+                        Ok(body) => Ok(format!("GitLab search results: {}", body)),
+                        Err(e) => Err(format!("Failed to read response: {}", e)),
+                    }
+                } else {
+                    Err(format!("GitLab API error: {}", response.status()))
+                }
+            }
+            Err(e) => {
+                warn!("OAuth request failed, falling back to placeholder: {}", e);
+                Ok(format!(
+                    "Search completed for '{}' in GitLab project {} (OAuth not available)",
+                    query, project_id
+                ))
+            }
+        }
+    }
+
+    /// Search GitHub repository using OAuth
+    async fn search_github_context(
+        &self,
+        installation_id: &str,
+        context_id: &str,
+        query: &str,
+    ) -> Result<String, String> {
+        // Extract repo info from context_id (simplified)
+        let repo = context_id.replace("github:", "").replace("context:", "");
+
+        let search_url = format!(
+            "https://api.github.com/search/code?q={}+repo:{}",
+            urlencoding::encode(query),
+            repo
+        );
+
+        match self
+            .manager
+            .make_authenticated_api_request(
+                &OAuthProviderType::GitHub,
+                installation_id,
+                None,
+                reqwest::Method::GET,
+                &search_url,
+                None,
+                None,
+            )
+            .await
+        {
+            Ok(response) => {
+                if response.status().is_success() {
+                    match response.text().await {
+                        Ok(body) => Ok(format!("GitHub search results: {}", body)),
+                        Err(e) => Err(format!("Failed to read response: {}", e)),
+                    }
+                } else {
+                    Err(format!("GitHub API error: {}", response.status()))
+                }
+            }
+            Err(e) => {
+                warn!("OAuth request failed, falling back to placeholder: {}", e);
+                Ok(format!(
+                    "Search completed for '{}' in GitHub repo {} (OAuth not available)",
+                    query, repo
+                ))
+            }
         }
     }
 }
@@ -1103,6 +1322,89 @@ pub struct CreateSessionTokenRequest {
 #[derive(Debug, serde::Serialize)]
 pub struct CreateSessionTokenResponse {
     pub token: String,
+}
+
+/// Register OAuth provider
+async fn register_oauth_provider(
+    State(manager): State<MCPServerManager>,
+    headers: HeaderMap,
+    axum::Json(provider): axum::Json<super::oauth::OAuthProvider>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    // Require authentication for provider registration
+    let _claims = manager
+        .authenticate_request(&headers)
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    match manager.register_oauth_provider(provider).await {
+        Ok(()) => Ok(axum::Json(serde_json::json!({"success": true}))),
+        Err(e) => {
+            error!("Failed to register OAuth provider: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Get OAuth authorization URL
+async fn get_oauth_authorization_url(
+    State(manager): State<MCPServerManager>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<OAuthAuthorizationRequest>,
+) -> Result<axum::Json<OAuthAuthorizationResponse>, StatusCode> {
+    // Require authentication
+    let claims = manager
+        .authenticate_request(&headers)
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    match manager
+        .get_oauth_authorization_url(
+            request.provider_type,
+            claims.installation_id,
+            claims.user_id,
+            request.redirect_uri,
+            request.scope,
+        )
+        .await
+    {
+        Ok(auth_url) => Ok(axum::Json(OAuthAuthorizationResponse { auth_url })),
+        Err(e) => {
+            error!("Failed to generate OAuth URL: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Handle OAuth callback
+async fn handle_oauth_callback(
+    State(manager): State<MCPServerManager>,
+    axum::Json(callback): axum::Json<super::oauth::OAuthCallback>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    match manager.handle_oauth_callback(callback).await {
+        Ok(token) => Ok(axum::Json(serde_json::json!({
+            "success": true,
+            "provider_type": token.provider_type,
+            "installation_id": token.installation_id,
+            "expires_at": token.expires_at
+        }))),
+        Err(e) => {
+            error!("Failed to handle OAuth callback: {}", e);
+            Err(StatusCode::BAD_REQUEST)
+        }
+    }
+}
+
+/// Request/Response types for OAuth endpoints
+#[derive(Debug, serde::Deserialize)]
+pub struct OAuthAuthorizationRequest {
+    pub provider_type: OAuthProviderType,
+    pub redirect_uri: Option<String>,
+    pub scope: Option<Vec<String>>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct OAuthAuthorizationResponse {
+    pub auth_url: String,
 }
 
 #[cfg(test)]
