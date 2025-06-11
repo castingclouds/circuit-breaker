@@ -11,6 +11,8 @@ path = "src/bin/server.rs"
 
 
 
+
+
 [dependencies]
 # Core async runtime
 tokio = { version = "1.0", features = ["full"] }
@@ -65,6 +67,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Configuration
 config = "0.14"
 dotenv = "0.15"
+
+# CLI dependencies
+clap = { version = "4.0", features = ["derive", "env"] }
+dialoguer = "0.10"
+indicatif = "0.17"
+colored = "2.0"
+open = "5.0"
+shellexpand = "3.1"
 
 # Database support for credentials
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
@@ -136,3 +146,11 @@ path = "examples/rust/vllm_provider_test.rs"
 [[example]]
 name = "test_vllm_streaming"
 path = "examples/rust/test_vllm_streaming.rs"
+
+[[example]]
+name = "cli_usage_demo"
+path = "examples/rust/cli_usage_demo.rs"
+
+[[example]]
+name = "mcp_cli"
+path = "examples/rust/mcp_cli.rs"

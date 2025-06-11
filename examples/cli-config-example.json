@@ -1,0 +1,61 @@
+{
+  "server_url": "http://localhost:3000",
+  "current_session": "demo-session-abc123",
+  "sessions": {
+    "demo-session-abc123": {
+      "session_id": "demo-session-abc123",
+      "jwt_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJhcHAtZGVtby0xMjMiLCJpYXQiOjE3MDQwNjcyMDAsImV4cCI6MTcwNDE1MzYwMCwiaXNzIjoibWNwLXNlcnZlciIsImF1ZCI6Im1jcC1jbGllbnQiLCJhcHBfaWQiOiJhcHAtZGVtby0xMjMiLCJpbnN0YWxsYXRpb25faWQiOiJpbnN0YWxsLWRlbW8tNDU2IiwidHlwZSI6InNlc3Npb24ifQ.example-signature",
+      "installation_id": "install-demo-456",
+      "app_id": "app-demo-123",
+      "expires_at": "2024-01-02T12:00:00Z",
+      "created_at": "2024-01-01T12:00:00Z"
+    },
+    "prod-session-xyz789": {
+      "session_id": "prod-session-xyz789",
+      "jwt_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJhcHAtcHJvZC03ODkiLCJpYXQiOjE3MDQwNjcyMDAsImV4cCI6MTcwNDE1MzYwMCwiaXNzIjoibWNwLXNlcnZlciIsImF1ZCI6Im1jcC1jbGllbnQiLCJhcHBfaWQiOiJhcHAtcHJvZC03ODkiLCJpbnN0YWxsYXRpb25faWQiOiJpbnN0YWxsLXByb2QtMTIzIiwidHlwZSI6InNlc3Npb24ifQ.example-signature-2",
+      "installation_id": "install-prod-123",
+      "app_id": "app-prod-789",
+      "expires_at": "2024-01-02T18:00:00Z",
+      "created_at": "2024-01-01T18:00:00Z"
+    }
+  },
+  "oauth_tokens": {
+    "gitlab": {
+      "provider_type": "gitlab",
+      "access_token": "glpat-xxxxxxxxxxxxxxxxxxxx",
+      "refresh_token": "rt_xxxxxxxxxxxxxxxxxxxx",
+      "expires_at": "2024-01-01T16:00:00Z",
+      "scope": [
+        "read_user",
+        "read_repository",
+        "read_api"
+      ],
+      "created_at": "2024-01-01T12:00:00Z"
+    },
+    "github": {
+      "provider_type": "github",
+      "access_token": "ghp_xxxxxxxxxxxxxxxxxxxx",
+      "refresh_token": null,
+      "expires_at": null,
+      "scope": [
+        "user:read",
+        "repo:read",
+        "read:org"
+      ],
+      "created_at": "2024-01-01T13:00:00Z"
+    },
+    "google": {
+      "provider_type": "google",
+      "access_token": "ya29.xxxxxxxxxxxxxxxxxxxx",
+      "refresh_token": "1//xxxxxxxxxxxxxxxxxxxx",
+      "expires_at": "2024-01-01T15:00:00Z",
+      "scope": [
+        "openid",
+        "profile",
+        "email",
+        "https://www.googleapis.com/auth/userinfo.profile"
+      ],
+      "created_at": "2024-01-01T14:00:00Z"
+    }
+  }
+}

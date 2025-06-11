@@ -938,7 +938,8 @@ examples/
 ├── rust/              # 🦀 Rust clients
 │   ├── basic_workflow.rs  # Direct model usage
 │   ├── token_demo.rs      # Core operations demo  
-│   └── graphql_client.rs  # GraphQL client demo
+│   ├── graphql_client.rs  # GraphQL client demo
+│   └── mcp_cli.rs         # MCP CLI for authentication & OAuth
 └── typescript/        # 📜 TypeScript clients  
     ├── basic_workflow.ts  # GraphQL client demo
     ├── token_demo.ts      # Token operations demo
@@ -992,6 +993,7 @@ cargo run --bin server
 # Test client examples
 cargo run --example basic_workflow
 cargo run --example graphql_client
+cargo run --example mcp_cli -- --help
 
 # TypeScript examples
 cd examples/typescript && npm install && npm run start:basic
@@ -1052,6 +1054,7 @@ cargo run --bin server
 
 # Try client examples  
 cargo run --example basic_workflow
+cargo run --example mcp_cli -- interactive
 cd examples/typescript && npm run start:basic
 
 # Visit http://localhost:4000/graphql and start building!
