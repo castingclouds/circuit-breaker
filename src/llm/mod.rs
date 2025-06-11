@@ -29,6 +29,7 @@ pub enum LLMProviderType {
     Together,
     Replicate,
     Ollama,
+    VLLM,
     Custom(String),
 }
 
@@ -45,6 +46,7 @@ impl std::fmt::Display for LLMProviderType {
             LLMProviderType::Together => write!(f, "together"),
             LLMProviderType::Replicate => write!(f, "replicate"),
             LLMProviderType::Ollama => write!(f, "ollama"),
+            LLMProviderType::VLLM => write!(f, "vllm"),
             LLMProviderType::Custom(name) => write!(f, "custom-{}", name),
         }
     }
