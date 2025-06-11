@@ -18,6 +18,9 @@
     "demo:multi_provider": "tsx multi_provider_demo.ts",
     "demo:streaming": "tsx streaming_architecture_demo.ts",
     "demo:ollama": "tsx ollama_provider_test.ts",
+    "demo:vllm": "tsx vllm_provider_test.ts",
+    "demo:vllm-streaming": "tsx test_vllm_streaming.ts",
+    "test:vllm": "tsx run_vllm_tests.ts",
     "test:setup": "tsx test_setup.ts",
     "type-check": "tsc --noEmit"
   },

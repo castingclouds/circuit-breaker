@@ -732,15 +732,35 @@ pub async fn embeddings(
             Ok(Json(response))
         },
         Err(e) => {
-            error!("Embeddings request failed: {}", e);
-            Err(ErrorResponse {
-                error: super::types::ErrorDetail {
-                    message: format!("Embeddings generation failed: {}", e),
-                    error_type: "internal_error".to_string(),
-                    param: Some("model".to_string()),
-                    code: None,
-                },
-            })
+            let error_message = e.to_string();
+            
+            // Check if this is an embeddings disabled error
+            if error_message.contains("Embeddings API is disabled") || 
+               error_message.contains("Embedding API disabled") ||
+               error_message.contains("embeddings disabled") {
+                info!("📋 Embeddings request for model '{}' - embeddings are disabled on the provider (this is normal)", request.model);
+                debug!("Embeddings disabled details: {}", error_message);
+                
+                Err(ErrorResponse {
+                    error: super::types::ErrorDetail {
+                        message: format!("Embeddings are not available for model '{}'. The provider has embeddings disabled, which is a common configuration for chat-focused deployments.", request.model),
+                        error_type: "feature_disabled".to_string(),
+                        param: Some("model".to_string()),
+                        code: Some("embeddings_disabled".to_string()),
+                    },
+                })
+            } else {
+                // For actual errors
+                error!("Embeddings request failed: {}", e);
+                Err(ErrorResponse {
+                    error: super::types::ErrorDetail {
+                        message: format!("Embeddings generation failed: {}", e),
+                        error_type: "internal_error".to_string(),
+                        param: Some("model".to_string()),
+                        code: None,
+                    },
+                })
+            }
         }
     }
 }

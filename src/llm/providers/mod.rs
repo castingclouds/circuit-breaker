@@ -11,6 +11,7 @@ pub mod openai;
 pub mod anthropic;
 pub mod google;
 pub mod ollama;
+pub mod vllm;
 
 use std::collections::HashMap;
 use crate::llm::{LLMProviderType, traits::{LLMProviderClient, ProviderFactory, ProviderConfig}};
@@ -20,6 +21,7 @@ pub use openai::OpenAIClient;
 pub use anthropic::AnthropicClient;
 pub use google::GoogleClient;
 pub use ollama::OllamaClient;
+pub use vllm::VLLMClient;
 
 /// Provider factory registry for creating provider clients
 pub struct ProviderRegistry {
@@ -196,6 +198,41 @@ impl ProviderFactory for OllamaFactory {
     }
 }
 
+/// vLLM provider factory
+pub struct VLLMFactory;
+
+impl ProviderFactory for VLLMFactory {
+    fn create_client(&self, config: &ProviderConfig) -> Box<dyn LLMProviderClient> {
+        let mut vllm_config = vllm::VLLMConfig::default();
+        vllm_config.base_url = config.base_url.clone();
+        vllm_config.default_model = config.default_model.clone();
+
+        // Extract optional API key from config settings
+        if let Some(api_key) = config.settings.get("api_key").and_then(|v| v.as_str()) {
+            vllm_config.api_key = Some(api_key.to_string());
+        }
+
+        // Extract optional settings
+        if let Some(verify_ssl) = config.settings.get("verify_ssl").and_then(|v| v.as_bool()) {
+            vllm_config.verify_ssl = verify_ssl;
+        }
+
+        if let Some(timeout) = config.settings.get("timeout_seconds").and_then(|v| v.as_u64()) {
+            vllm_config.timeout_seconds = timeout;
+        }
+
+        Box::new(vllm::VLLMClient::new(vllm_config))
+    }
+
+    fn provider_type(&self) -> LLMProviderType {
+        LLMProviderType::VLLM
+    }
+
+    fn default_config(&self) -> ProviderConfig {
+        vllm::get_default_config()
+    }
+}
+
 /// Create a provider registry with all available providers
 pub fn create_default_registry() -> ProviderRegistry {
     let mut registry = ProviderRegistry::new();
@@ -211,6 +248,9 @@ pub fn create_default_registry() -> ProviderRegistry {
     
     // Register Ollama factory
     registry.register_factory(Box::new(OllamaFactory));
+    
+    // Register vLLM factory
+    registry.register_factory(Box::new(VLLMFactory));
     
     registry
 }
@@ -234,6 +274,10 @@ pub fn create_provider_client(provider_type: LLMProviderType, base_url: Option<S
         LLMProviderType::Ollama => {
             let base_url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
             Box::new(ollama::create_client(base_url))
+        },
+        LLMProviderType::VLLM => {
+            let base_url = base_url.unwrap_or_else(|| "http://localhost:8000".to_string());
+            Box::new(vllm::create_client(base_url))
         },
         _ => panic!("Provider not yet implemented: {:?}", provider_type)
     }

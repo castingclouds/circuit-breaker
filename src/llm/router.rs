@@ -137,6 +137,20 @@ impl LLMRouter {
             warn!("⚠️  Ollama not available at {} - skipping initialization", ollama_url);
         }
 
+        // Initialize vLLM provider if base URL is available
+        let vllm_url = std::env::var("VLLM_BASE_URL").ok().unwrap_or_else(|| "http://localhost:8000".to_string());
+        
+        // Check if vLLM is available by trying to connect
+        if providers::vllm::check_availability(&vllm_url).await {
+            let client = providers::vllm::create_client(vllm_url.clone());
+            providers.insert(LLMProviderType::VLLM, Box::new(client) as Box<dyn LLMProviderClient>);
+            health_status.insert(LLMProviderType::VLLM, ProviderHealthStatus::default());
+            configured_api_keys.insert(LLMProviderType::VLLM, vllm_url);
+            info!("✅ vLLM provider initialized");
+        } else {
+            warn!("⚠️  vLLM not available at {} - skipping initialization", vllm_url);
+        }
+
         if providers.is_empty() {
             warn!("No providers configured with valid API keys - router will have limited functionality");
         }
@@ -375,6 +389,14 @@ impl LLMRouter {
                     // For Ollama, fetch actual models from the instance
                     if let Some(ollama_client) = client.as_any().downcast_ref::<crate::llm::providers::ollama::OllamaClient>() {
                         ollama_client.get_available_models_async().await
+                    } else {
+                        client.get_available_models()
+                    }
+                },
+                LLMProviderType::VLLM => {
+                    // For vLLM, fetch actual models from the server
+                    if let Some(vllm_client) = client.as_any().downcast_ref::<crate::llm::providers::vllm::VLLMClient>() {
+                        vllm_client.get_available_models_async().await
                     } else {
                         client.get_available_models()
                     }

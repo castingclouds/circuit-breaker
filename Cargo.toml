@@ -128,5 +128,10 @@ path = "examples/rust/streaming_architecture_demo.rs"
 name = "ollama_provider_test"
 path = "examples/rust/ollama_provider_test.rs"
 
+[[example]]
+name = "vllm_provider_test"
+path = "examples/rust/vllm_provider_test.rs"
 
-
+[[example]]
+name = "test_vllm_streaming"
+path = "examples/rust/test_vllm_streaming.rs"

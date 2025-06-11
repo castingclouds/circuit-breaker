@@ -218,4 +218,7 @@ target/doc/
 .clippy/
 
 # Tarpaulin code coverage
-tarpaulin-report.html 
+tarpaulin-report.html
+
+# vllm_env
+setup/vllm_env
