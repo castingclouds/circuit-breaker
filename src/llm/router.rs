@@ -291,9 +291,13 @@ impl LLMRouter {
                 }
             }
             
-            // Default to the first available provider
-            self.providers.keys().next().cloned()
-                .unwrap_or(LLMProviderType::OpenAI)
+            // Default to OpenAI if available, otherwise first available provider
+            if self.providers.contains_key(&LLMProviderType::OpenAI) {
+                LLMProviderType::OpenAI
+            } else {
+                self.providers.keys().next().cloned()
+                    .unwrap_or(LLMProviderType::OpenAI)
+            }
         }
     }
 
