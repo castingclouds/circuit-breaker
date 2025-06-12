@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::llm::{LLMProviderType, traits::{
     ModelInfo, ProviderConfig, ProviderConfigRequirements,
-    RateLimitInfo, ParameterRestriction, ModelCapability
+    RateLimitInfo, ModelCapability
 }};
 
 /// vLLM-specific configuration

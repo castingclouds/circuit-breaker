@@ -20,6 +20,10 @@
     "demo:ollama": "tsx ollama_provider_test.ts",
     "demo:vllm": "tsx vllm_provider_test.ts",
     "demo:vllm-streaming": "tsx test_vllm_streaming.ts",
+    "demo:mcp-jwt": "tsx secure_agent_jwt.ts",
+    "demo:mcp-oauth": "tsx remote_mcp_oauth.ts",
+    "secure-agent-jwt": "tsx secure_agent_jwt.ts",
+    "remote-mcp-oauth": "tsx remote_mcp_oauth.ts",
     "test:vllm": "tsx run_vllm_tests.ts",
     "test:setup": "tsx test_setup.ts",
     "type-check": "tsc --noEmit"
@@ -29,12 +33,18 @@
     "node-fetch": "^3.3.2",
     "ws": "^8.14.2",
     "graphql-ws": "^5.14.2",
-    "uuid": "^9.0.1"
+    "uuid": "^9.0.1",
+    "commander": "^11.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "axios": "^1.6.2",
+    "express": "^4.18.2"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
     "@types/ws": "^8.5.9",
     "@types/uuid": "^9.0.7",
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/express": "^4.17.21",
     "tsx": "^4.6.0",
     "typescript": "^5.3.0"
   },

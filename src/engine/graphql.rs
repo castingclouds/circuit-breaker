@@ -1710,7 +1710,7 @@ impl Mutation {
     /// Configure LLM provider
     async fn configure_llm_provider(
         &self,
-        ctx: &Context<'_>,
+        _ctx: &Context<'_>,
         input: LLMProviderConfigInput,
     ) -> async_graphql::Result<LLMProviderGQL> {
         // Mock implementation - in real implementation this would store provider config
@@ -1746,7 +1746,7 @@ impl Mutation {
     /// Set budget limits
     async fn set_budget(
         &self,
-        ctx: &Context<'_>,
+        _ctx: &Context<'_>,
         input: BudgetInput,
     ) -> async_graphql::Result<BudgetStatusGQL> {
         // Mock implementation - in real implementation this would store budget config
