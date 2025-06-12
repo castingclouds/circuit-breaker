@@ -552,9 +552,26 @@ cargo run --example vllm_provider_test
 cd examples/typescript
 npm install
 
-# TypeScript GraphQL clients
-npm run start:basic
-npm run start:demo
+# Core workflow demonstrations
+npm run demo:basic
+npm run demo:token
+npm run demo:function
+npm run demo:rules
+npm run demo:graphql
+
+# AI and LLM integration
+npm run demo:agents
+npm run demo:llm
+npm run demo:multi_provider
+npm run demo:streaming
+
+# Local AI providers
+npm run demo:ollama
+npm run demo:vllm
+
+# MCP (Model Context Protocol) integration
+npm run demo:mcp-jwt      # JWT authentication for MCP agents
+npm run demo:mcp-oauth    # OAuth workflows for remote MCP servers
 ```
 
 ### 3. Architecture Demo

@@ -232,6 +232,92 @@ cargo run --bin server
 npm run demo:ollama
 ```
 
+### `secure_agent_jwt.ts` - **MCP JWT Authentication Demo**
+
+Demonstrates the complete JWT authentication flow for MCP (Model Context Protocol) agents, showing secure authentication with the Circuit Breaker MCP server.
+
+**Key Features:**
+- ✅ **RSA Key Generation**: 2048-bit RSA key pairs for secure JWT signing
+- ✅ **App Registration**: Create MCP applications with proper authentication
+- ✅ **JWT Generation**: Short-lived app JWTs (10 minutes) using RS256 algorithm
+- ✅ **Session Tokens**: Exchange app JWTs for longer-lived session tokens (1 hour)
+- ✅ **MCP Operations**: Test tools/list, prompts/list, resources/list endpoints
+- ✅ **Token Validation**: Verify JWT claims and expiration
+- ✅ **Session Management**: Handle token refresh and lifecycle
+- ✅ **Interactive Mode**: Step-by-step demo with user confirmation
+
+**Authentication Flow:**
+1. **App Registration**: Create MCP app with RSA key pair
+2. **App Installation**: Install app to organization/user context
+3. **JWT Generation**: Create short-lived app JWT using private key
+4. **Session Token**: Exchange app JWT for session access token
+5. **API Requests**: Use session token for MCP operations
+6. **Token Refresh**: Handle token expiration and renewal
+
+**Run:**
+```bash
+# Complete JWT authentication flow
+npm run demo:mcp-jwt demo full
+
+# JWT generation and validation only
+npm run demo:mcp-jwt demo jwt-only
+
+# Session management demo
+npm run demo:mcp-jwt demo session-mgmt
+
+# Interactive mode
+npm run demo:mcp-jwt interactive
+```
+
+### `remote_mcp_oauth.ts` - **Remote MCP OAuth Demo**
+
+Demonstrates a complete multi-tenant remote MCP server setup with OAuth integration, showing how to connect external services like GitLab through OAuth workflows.
+
+**Key Features:**
+- ✅ **Server Health Checks**: Monitor MCP server status and connectivity
+- ✅ **App Creation & Installation**: Set up MCP applications with proper permissions
+- ✅ **OAuth Provider Registration**: Register GitLab as OAuth provider
+- ✅ **Browser OAuth Flow**: Complete OAuth authorization with callback handling
+- ✅ **GitLab API Integration**: Test GitLab tools through MCP interface
+- ✅ **Project Context Discovery**: Automatically detect Git project context
+- ✅ **Multi-tenant Support**: Handle multiple installations and sessions
+- ✅ **Interactive Demos**: Step-by-step workflow with user guidance
+
+**Complete Workflow:**
+1. **Server Health Check**: Verify MCP server accessibility
+2. **MCP App Creation**: Create application for OAuth workflow
+3. **App Installation**: Install app with project context detection
+4. **OAuth Provider Setup**: Register GitLab OAuth credentials
+5. **Authentication Flow**: Browser-based OAuth with callback server
+6. **API Integration Testing**: Test GitLab tools through MCP
+7. **Project Context**: Discover and use Git repository context
+
+**Prerequisites:**
+```bash
+# Set up NgRok for OAuth callbacks (required for GitLab OAuth)
+ngrok http 8080
+
+# Set environment variables
+export NGROK_URL=https://your-ngrok-url.ngrok.io
+export GITLAB_CLIENT_ID=your_gitlab_client_id
+export GITLAB_CLIENT_SECRET=your_gitlab_client_secret
+```
+
+**Run:**
+```bash
+# Complete MCP OAuth workflow demo
+npm run demo:mcp-oauth demo full
+
+# Test GitLab integration only
+npm run demo:mcp-oauth demo gitlab
+
+# Interactive mode
+npm run demo:mcp-oauth interactive
+
+# Check server status
+npm run demo:mcp-oauth status
+```
+
 ## 🏗️ Architecture Comparison
 
 ### Direct Rust Usage (Server-Side)
