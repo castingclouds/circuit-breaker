@@ -2,9 +2,25 @@
 // This module defines the core types for multi-tenant MCP server functionality
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MCPApplicationType {
+    Local,
+    Remote(RemoteOAuthConfig),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteOAuthConfig {
+    pub provider_type: String, // "github", "gitlab", "google", "custom"
+    pub client_id: String,
+    pub client_secret: String,
+    pub auth_url: Option<String>,  // For custom providers
+    pub token_url: Option<String>, // For custom providers
+    pub scope: Vec<String>,
+}
 
 /// MCP Server Instance information - represents a single MCP server instance
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,6 +32,7 @@ pub struct MCPServerInstance {
     pub description: String,
     pub capabilities: MCPCapabilities,
     pub project_contexts: Vec<String>,
+    pub app_type: MCPApplicationType,
     pub created_at: DateTime<Utc>,
     pub last_activity: DateTime<Utc>,
     pub status: MCPServerStatus,
@@ -55,10 +72,83 @@ pub struct MCPCapabilities {
     pub logging: bool,
 }
 
+/// MCP ID that can be either string or integer
+#[derive(Debug, Clone, PartialEq)]
+pub enum MCPId {
+    String(String),
+    Number(i64),
+}
+
+impl Serialize for MCPId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            MCPId::String(s) => serializer.serialize_str(s),
+            MCPId::Number(n) => serializer.serialize_i64(*n),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for MCPId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::String(s) => Ok(MCPId::String(s)),
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    Ok(MCPId::Number(i))
+                } else {
+                    Err(serde::de::Error::custom("Expected integer ID"))
+                }
+            }
+            _ => Err(serde::de::Error::custom("ID must be string or number")),
+        }
+    }
+}
+
+impl ToString for MCPId {
+    fn to_string(&self) -> String {
+        match self {
+            MCPId::String(s) => s.clone(),
+            MCPId::Number(n) => n.to_string(),
+        }
+    }
+}
+
+impl From<String> for MCPId {
+    fn from(s: String) -> Self {
+        MCPId::String(s)
+    }
+}
+
+impl From<&str> for MCPId {
+    fn from(s: &str) -> Self {
+        MCPId::String(s.to_string())
+    }
+}
+
+impl From<i64> for MCPId {
+    fn from(n: i64) -> Self {
+        MCPId::Number(n)
+    }
+}
+
+impl From<i32> for MCPId {
+    fn from(n: i32) -> Self {
+        MCPId::Number(n as i64)
+    }
+}
+
 /// MCP Request wrapper
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MCPRequest {
-    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<MCPId>,
     pub method: String,
     pub params: Option<serde_json::Value>,
 }
@@ -66,8 +156,12 @@ pub struct MCPRequest {
 /// MCP Response wrapper
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MCPResponse {
-    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jsonrpc: Option<String>,
+    pub id: MCPId,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<MCPError>,
 }
 
@@ -184,16 +278,30 @@ pub mod error_codes {
 
 /// Helper functions for creating MCP responses
 impl MCPResponse {
-    pub fn success(id: String, result: serde_json::Value) -> Self {
+    /// Create a success response
+    pub fn success(id: MCPId, result: serde_json::Value) -> Self {
         Self {
+            jsonrpc: Some("2.0".to_string()),
             id,
             result: Some(result),
             error: None,
         }
     }
 
-    pub fn error(id: String, code: i32, message: String) -> Self {
+    /// Create a success response from an optional ID (handles notifications)
+    pub fn success_from_request(request_id: Option<MCPId>, result: serde_json::Value) -> Self {
         Self {
+            jsonrpc: Some("2.0".to_string()),
+            id: request_id.unwrap_or_else(|| MCPId::String("null".to_string())),
+            result: Some(result),
+            error: None,
+        }
+    }
+
+    /// Create an error response
+    pub fn error(id: MCPId, code: i32, message: String) -> Self {
+        Self {
+            jsonrpc: Some("2.0".to_string()),
             id,
             result: None,
             error: Some(MCPError {
@@ -204,14 +312,39 @@ impl MCPResponse {
         }
     }
 
-    pub fn error_with_data(
-        id: String,
-        code: i32,
-        message: String,
-        data: serde_json::Value,
-    ) -> Self {
+    /// Create an error response from an optional ID (handles notifications)
+    pub fn error_from_request(request_id: Option<MCPId>, code: i32, message: String) -> Self {
         Self {
+            jsonrpc: Some("2.0".to_string()),
+            id: request_id.unwrap_or_else(|| MCPId::String("null".to_string())),
+            result: None,
+            error: Some(MCPError {
+                code,
+                message,
+                data: None,
+            }),
+        }
+    }
+
+    /// Create an error response with data
+    pub fn error_with_data(id: MCPId, code: i32, message: String, data: serde_json::Value) -> Self {
+        Self {
+            jsonrpc: Some("2.0".to_string()),
             id,
+            result: None,
+            error: Some(MCPError {
+                code,
+                message,
+                data: Some(data),
+            }),
+        }
+    }
+
+    /// Create an error response with data from an optional ID (handles notifications)
+    pub fn error_with_data_from_request(request_id: Option<MCPId>, code: i32, message: String, data: serde_json::Value) -> Self {
+        Self {
+            jsonrpc: Some("2.0".to_string()),
+            id: request_id.unwrap_or_else(|| MCPId::String("null".to_string())),
             result: None,
             error: Some(MCPError {
                 code,
@@ -473,6 +606,10 @@ impl MCPServerRegistry {
     pub fn get_app(&self, app_id: &str) -> Option<&MCPApp> {
         self.apps.get(app_id)
     }
+
+    pub fn get_all_instances(&self) -> Vec<&MCPServerInstance> {
+        self.servers.values().collect()
+    }
 }
 
 impl Default for MCPServerRegistry {
@@ -488,12 +625,12 @@ mod tests {
     #[test]
     fn test_mcp_response_creation() {
         let success_response =
-            MCPResponse::success("test-id".to_string(), serde_json::json!({"status": "ok"}));
+            MCPResponse::success(MCPId::String("test-id".to_string()), serde_json::json!({"status": "ok"}));
         assert!(success_response.result.is_some());
         assert!(success_response.error.is_none());
 
         let error_response = MCPResponse::error(
-            "test-id".to_string(),
+            MCPId::String("test-id".to_string()),
             error_codes::INVALID_REQUEST,
             "Invalid request".to_string(),
         );

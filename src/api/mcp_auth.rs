@@ -700,7 +700,7 @@ Store these keys securely and provide them when creating MCP apps.
     }
 
     /// Convert session permissions to MCP permissions
-    fn session_permissions_to_mcp_permissions(
+    pub fn session_permissions_to_mcp_permissions(
         &self,
         session_perms: &MCPSessionPermissions,
     ) -> MCPPermissions {

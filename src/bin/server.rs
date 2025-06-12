@@ -73,7 +73,9 @@
 //! - External crate integration (tracing, tokio, axum)
 
 use async_nats;
+use axum::Server;
 use circuit_breaker::{
+    api::mcp_server::CircuitBreakerMCPServer,
     llm::{cost::CostOptimizer, LLMRouter},
     GraphQLServerBuilder, OpenAIApiConfig, OpenAIApiServerBuilder,
 };
@@ -85,24 +87,28 @@ use tracing_subscriber::EnvFilter;
 
 /// Configuration from environment variables
 struct ServerConfig {
-    // GraphQL Server Config
+    // GraphQL Server
     graphql_port: u16,
     graphql_host: String,
 
-    // OpenAI API Server Config
+    // OpenAI API Server
     openai_port: u16,
     openai_host: String,
     openai_cors_enabled: bool,
     openai_api_key_required: bool,
     openai_enable_streaming: bool,
 
-    // Shared Config
+    // MCP Server
+    mcp_port: u16,
+    mcp_host: String,
+
+    // Shared
     log_level: String,
     environment: String,
     storage_type: String,
     nats_url: String,
 
-    // LLM Provider Keys
+    // API Keys (optional)
     openai_api_key: Option<String>,
     anthropic_api_key: Option<String>,
     google_api_key: Option<String>,
@@ -137,6 +143,11 @@ impl ServerConfig {
                 .unwrap_or_else(|_| "true".to_string())
                 .parse()
                 .unwrap_or(true),
+            mcp_port: env::var("MCP_PORT")
+                .unwrap_or_else(|_| "8080".to_string())
+                .parse()
+                .unwrap_or(8080),
+            mcp_host: env::var("MCP_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
 
             // Shared
             log_level: env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
@@ -177,7 +188,7 @@ impl ServerConfig {
 /// - If the operation fails, return the error immediately
 /// - Much cleaner than explicit match statements for error handling
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> Result<(), String> {
     // Load environment variables from .env file
     // This will load variables for API keys, configuration, etc.
     // In production, these would typically be set by the deployment system
@@ -191,7 +202,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = ServerConfig::from_env();
 
     // Initialize structured logging for the application
-    init_logging(&config.log_level)?;
+    init_logging(&config.log_level).map_err(|e| format!("Failed to initialize logging: {}", e))?;
 
     // Print startup banner - helps identify server startup in logs
     info!("🚀 Starting Circuit Breaker Unified Server...");
@@ -208,6 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "OpenAI API Server: {}:{}",
         config.openai_host, config.openai_port
     );
+    info!("MCP Server: {}:{}", config.mcp_host, config.mcp_port);
 
     // Log storage configuration
     info!("Storage: {}", config.storage_type);
@@ -250,7 +262,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     .await
     .map_err(|e| {
         error!("Failed to create LLM router: {}", e);
-        e
+        format!("Failed to create LLM router: {}", e)
     })?;
 
     // Create cost optimizer with dependencies
@@ -304,7 +316,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     error!("💡 Make sure NATS server is running:");
                     error!("   nats-server --jetstream");
                     error!("   Or using Docker: docker run -p 4222:4222 nats:alpine --jetstream");
-                    return Err(e.into());
+                    return Err(format!("Failed to connect to NATS: {}", e));
                 }
             }
 
@@ -327,17 +339,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     }
 
-    // Build OpenAI API server
-    let openai_server = OpenAIApiServerBuilder::new()
+    // Build OpenAI API server with NATS storage if configured
+    let mut openai_builder = OpenAIApiServerBuilder::new()
         .with_port(config.openai_port)
         .with_host(config.openai_host.clone())
         .with_cors(config.openai_cors_enabled)
         .with_api_key_required(config.openai_api_key_required)
         .with_streaming(config.openai_enable_streaming)
         .with_llm_router(llm_router)
-        .with_cost_optimizer(cost_optimizer)
-        .build_async()
-        .await;
+        .with_cost_optimizer(cost_optimizer);
+
+    // Add NATS storage if configured
+    if config.storage_type == "nats" {
+        info!("🔧 Configuring OpenAI API server with NATS storage for MCP instances");
+        openai_builder = openai_builder.with_nats_storage(config.nats_url.clone());
+    }
+
+    let openai_server = openai_builder.build_async().await;
+
+    // Build MCP server for authentication (using the same storage as API server)
+    let mcp_server = if config.storage_type == "nats" {
+        info!("🔧 Configuring MCP server with NATS storage");
+        match CircuitBreakerMCPServer::with_nats_storage(&config.nats_url).await {
+            Ok(server) => server,
+            Err(e) => {
+                error!("❌ Failed to create MCP server with NATS storage: {}", e);
+                return Err(format!(
+                    "Failed to create MCP server with NATS storage: {}",
+                    e
+                ));
+            }
+        }
+    } else {
+        CircuitBreakerMCPServer::new()
+    };
 
     // Print server information
     info!("");
@@ -376,6 +411,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         config.openai_host, config.openai_port
     );
     info!("");
+    info!(
+        "🔐 MCP Authentication Server: http://{}:{}",
+        config.mcp_host, config.mcp_port
+    );
+    info!(
+        "   - Register App: POST http://{}:{}/mcp/auth/apps",
+        config.mcp_host, config.mcp_port
+    );
+    info!(
+        "   - Install App: POST http://{}:{}/mcp/auth/installations",
+        config.mcp_host, config.mcp_port
+    );
+    info!(
+        "   - Create Token: POST http://{}:{}/mcp/auth/installations/<id>/tokens",
+        config.mcp_host, config.mcp_port
+    );
+    info!(
+        "   - Register OAuth: POST http://{}:{}/mcp/oauth/providers",
+        config.mcp_host, config.mcp_port
+    );
+    info!("");
     info!("📖 Example Usage:");
     info!("   # OpenAI API");
     info!(
@@ -394,19 +450,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("     -d '{{\"model\": \"gpt-4\", \"messages\": [{{\"role\": \"user\", \"content\": \"Hello!\"}}], \"stream\": true}}'");
     info!("");
 
-    // Start both servers concurrently
+    // Start all three servers concurrently
     //
     // ## Rust Learning Notes:
     //
     // ### Concurrent Task Management
-    // We use tokio::spawn to run both servers concurrently in separate tasks.
-    // This allows both servers to run simultaneously without blocking each other.
+    // We use tokio::spawn to run all servers concurrently in separate tasks.
+    // This allows all servers to run simultaneously without blocking each other.
     //
     // ### tokio::select!
     // The select! macro waits for the first of multiple async operations to complete.
-    // In this case, we wait for either server to exit (which shouldn't happen in normal operation).
+    // In this case, we wait for any server to exit (which shouldn't happen in normal operation).
 
-    info!("🚀 Starting both servers...");
+    info!("🚀 Starting all servers...");
 
     let graphql_handle = tokio::spawn(async move {
         if let Err(e) = graphql_builder.build_and_run().await {
@@ -426,7 +482,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     });
 
-    // Wait for either server to exit (which shouldn't happen in normal operation)
+    let mcp_handle = tokio::spawn(async move {
+        let app = mcp_server.create_router();
+        let addr = format!("{}:{}", config.mcp_host, config.mcp_port);
+
+        info!("🔐 MCP server listening on {}", addr);
+
+        if let Err(e) = axum::Server::bind(&addr.parse().unwrap())
+            .serve(app.into_make_service())
+            .await
+        {
+            error!("❌ MCP server error: {}", e);
+            Err(format!("MCP server error: {}", e))
+        } else {
+            Ok(())
+        }
+    });
+
+    // Wait for any server to exit (which shouldn't happen in normal operation)
     tokio::select! {
         result = graphql_handle => {
             match result {
@@ -442,9 +515,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 Err(e) => error!("❌ OpenAI API server task error: {}", e),
             }
         }
+        result = mcp_handle => {
+            match result {
+                Ok(Ok(())) => info!("✅ MCP server shutdown gracefully"),
+                Ok(Err(e)) => error!("❌ MCP server error: {}", e),
+                Err(e) => error!("❌ MCP server task error: {}", e),
+            }
+        }
     }
 
-    info!("🏁 Circuit Breaker Unified Server shutdown complete");
+    info!("🏁 Circuit Breaker Multi-Server shutdown complete");
     Ok(())
 }
 

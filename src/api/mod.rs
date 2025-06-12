@@ -5,7 +5,9 @@
 
 pub mod handlers;
 pub mod mcp_auth;
+pub mod mcp_oauth_setup;
 pub mod mcp_server;
+pub mod mcp_storage;
 pub mod mcp_types;
 pub mod oauth;
 pub mod types;
@@ -22,7 +24,9 @@ use tracing::info;
 use crate::llm::cost::CostOptimizer;
 use crate::llm::LLMRouter;
 use handlers::{chat_completions, get_model, health_check, list_models, not_found, OpenAIApiState};
+use mcp_oauth_setup::setup_oauth_providers;
 use mcp_server::MCPServerManager;
+use tracing::warn;
 
 /// API server configuration
 #[derive(Clone, Debug)]
@@ -80,6 +84,43 @@ impl CircuitBreakerApiServer {
         }
     }
 
+    /// Create a new Circuit Breaker API server with NATS storage
+    pub async fn with_nats_storage(
+        config: ApiConfig,
+        nats_url: &str,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let openai_state = OpenAIApiState::new();
+        let mcp_manager = MCPServerManager::with_nats_storage(nats_url)
+            .await
+            .map_err(|e| {
+                Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
+                    as Box<dyn std::error::Error + Send + Sync>
+            })?;
+
+        Ok(Self {
+            config,
+            openai_state,
+            mcp_manager,
+        })
+    }
+
+    /// Initialize OAuth providers for remote MCP
+    pub async fn setup_oauth(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if self.config.enable_mcp_server {
+            match setup_oauth_providers(&self.mcp_manager).await {
+                Ok(config) => {
+                    if config.enabled && config.has_providers() {
+                        info!("✅ OAuth providers configured for remote MCP server");
+                    }
+                }
+                Err(e) => {
+                    warn!("⚠️  Failed to setup OAuth providers: {}", e);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Create server with default configuration
     pub fn with_defaults() -> Self {
         Self::new(ApiConfig::default())
@@ -126,6 +167,8 @@ impl CircuitBreakerApiServer {
                 mcp_server::CircuitBreakerMCPServer::with_manager(self.mcp_manager.clone());
             let mcp_router = mcp_server.create_router();
             app = app.merge(mcp_router);
+
+            // Remote MCP functionality is built into the main MCP router
         }
 
         // Add fallback for unknown routes
@@ -141,6 +184,9 @@ impl CircuitBreakerApiServer {
 
     /// Run the server
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Setup OAuth providers before starting the server
+        self.setup_oauth().await?;
+
         let app = self.create_router();
         let addr = format!("{}:{}", self.config.host, self.config.port);
 
@@ -160,6 +206,9 @@ impl CircuitBreakerApiServer {
             info!("     POST http://{}/mcp", addr);
             info!("     WS   http://{}/mcp/ws", addr);
             info!("     GET  http://{}/mcp/info", addr);
+            info!("   Remote MCP instances (OAuth per instance):");
+            info!("     GET  http://{}/mcp/{{instance_id}}", addr);
+            info!("     POST http://{}/mcp/{{instance_id}}", addr);
         }
 
         info!("📋 Configuration:");
@@ -183,6 +232,7 @@ pub struct CircuitBreakerApiServerBuilder {
     config: ApiConfig,
     llm_router: Option<LLMRouter>,
     cost_optimizer: Option<CostOptimizer>,
+    nats_url: Option<String>,
 }
 
 /// OpenAI API server builder (for backward compatibility)
@@ -194,6 +244,7 @@ impl CircuitBreakerApiServerBuilder {
             config: ApiConfig::default(),
             llm_router: None,
             cost_optimizer: None,
+            nats_url: None,
         }
     }
 
@@ -242,6 +293,11 @@ impl CircuitBreakerApiServerBuilder {
         self
     }
 
+    pub fn with_nats_storage(mut self, nats_url: String) -> Self {
+        self.nats_url = Some(nats_url);
+        self
+    }
+
     pub fn with_openai_api(mut self, enabled: bool) -> Self {
         self.config.enable_openai_api = enabled;
         self
@@ -253,7 +309,13 @@ impl CircuitBreakerApiServerBuilder {
     }
 
     pub async fn build_async(self) -> CircuitBreakerApiServer {
-        let mut server = CircuitBreakerApiServer::new(self.config);
+        let mut server = if let Some(nats_url) = self.nats_url {
+            CircuitBreakerApiServer::with_nats_storage(self.config, &nats_url)
+                .await
+                .expect("Failed to create server with NATS storage")
+        } else {
+            CircuitBreakerApiServer::new(self.config)
+        };
 
         if let Some(router) = self.llm_router {
             server = server.with_llm_router(router);
@@ -269,7 +331,11 @@ impl CircuitBreakerApiServerBuilder {
     }
 
     pub fn build(self) -> CircuitBreakerApiServer {
-        let mut server = CircuitBreakerApiServer::new(self.config);
+        let mut server = if self.nats_url.is_some() {
+            panic!("Cannot use NATS storage with synchronous build - use build_async() instead");
+        } else {
+            CircuitBreakerApiServer::new(self.config)
+        };
 
         if let Some(router) = self.llm_router {
             server = server.with_llm_router(router);

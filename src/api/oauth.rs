@@ -11,6 +11,8 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use url::Url;
 
+use super::mcp_storage::MCPStorage;
+
 /// OAuth provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthProvider {
@@ -82,6 +84,7 @@ pub struct OAuthManager {
     tokens: Arc<RwLock<HashMap<String, StoredOAuthToken>>>,
     pending_auths: Arc<RwLock<HashMap<String, OAuthAuthRequest>>>,
     http_client: Client,
+    storage: Option<Arc<dyn MCPStorage>>,
 }
 
 impl OAuthManager {
@@ -92,6 +95,18 @@ impl OAuthManager {
             tokens: Arc::new(RwLock::new(HashMap::new())),
             pending_auths: Arc::new(RwLock::new(HashMap::new())),
             http_client: Client::new(),
+            storage: None,
+        }
+    }
+
+    /// Create a new OAuth manager with persistent storage
+    pub fn with_storage(storage: Arc<dyn MCPStorage>) -> Self {
+        Self {
+            providers: Arc::new(RwLock::new(HashMap::new())),
+            tokens: Arc::new(RwLock::new(HashMap::new())),
+            pending_auths: Arc::new(RwLock::new(HashMap::new())),
+            http_client: Client::new(),
+            storage: Some(storage),
         }
     }
 
@@ -218,9 +233,25 @@ impl OAuthManager {
 
         // Store token
         let token_key = self.generate_token_key(&stored_token);
+        
+        // Store in memory cache
         {
             let mut tokens = self.tokens.write().await;
             tokens.insert(token_key.clone(), stored_token.clone());
+        }
+
+        // Store in persistent storage if available
+        if let Some(storage) = &self.storage {
+            info!("Attempting to store OAuth token with key: '{}'", token_key);
+            if let Err(e) = storage.store_oauth_token(&token_key, &stored_token).await {
+                error!("Failed to store OAuth token in persistent storage: {}", e);
+                error!("Token key was: '{}'", token_key);
+                error!("Token details - provider: {:?}, installation: {}, user: {:?}", 
+                       stored_token.provider_type, stored_token.installation_id, stored_token.user_id);
+                // Continue anyway - we have it in memory cache
+            } else {
+                debug!("OAuth token stored in persistent storage: {}", token_key);
+            }
         }
 
         info!(
@@ -238,25 +269,66 @@ impl OAuthManager {
         installation_id: &str,
         user_id: Option<&str>,
     ) -> Result<StoredOAuthToken> {
+        let provider_name = match provider_type {
+            OAuthProviderType::GitLab => "gitlab",
+            OAuthProviderType::GitHub => "github", 
+            OAuthProviderType::Google => "google",
+            OAuthProviderType::Custom(name) => name,
+        };
+        
+        // Use same key format as generate_token_key
+        let safe_installation_id = installation_id.replace(".", "_").replace(" ", "_");
+        let safe_user_id = user_id.unwrap_or("system").replace(".", "_").replace(" ", "_");
+        
         let token_key = format!(
-            "{:?}:{}:{}",
-            provider_type,
-            installation_id,
-            user_id.unwrap_or("system")
-        );
+            "{}_{}_{}",
+            provider_name,
+            safe_installation_id,
+            safe_user_id
+        ).trim_matches('.').to_string();
 
         let mut token = {
+            // First check memory cache
             let tokens = self.tokens.read().await;
-            tokens
-                .get(&token_key)
-                .ok_or_else(|| {
-                    anyhow!(
+            if let Some(cached_token) = tokens.get(&token_key) {
+                cached_token.clone()
+            } else {
+                // If not in memory, try persistent storage
+                drop(tokens); // Release the read lock
+                
+                if let Some(storage) = &self.storage {
+                    match storage.get_oauth_token(&token_key).await {
+                        Ok(Some(stored_token)) => {
+                            // Cache it in memory for future requests
+                            let mut tokens = self.tokens.write().await;
+                            tokens.insert(token_key.clone(), stored_token.clone());
+                            debug!("Loaded OAuth token from persistent storage: {}", token_key);
+                            stored_token
+                        }
+                        Ok(None) => {
+                            return Err(anyhow!(
+                                "Token not found for {:?}:{}",
+                                provider_type,
+                                installation_id
+                            ));
+                        }
+                        Err(e) => {
+                            error!("Failed to load OAuth token from persistent storage: {}", e);
+                            return Err(anyhow!(
+                                "Token not found for {:?}:{}",
+                                provider_type,
+                                installation_id
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(anyhow!(
                         "Token not found for {:?}:{}",
                         provider_type,
                         installation_id
-                    )
-                })?
-                .clone()
+                    ));
+                }
+            }
         };
 
         // Check if token needs refresh
@@ -317,9 +389,21 @@ impl OAuthManager {
 
         // Store updated token
         let token_key = self.generate_token_key(&token);
+        
+        // Store in memory cache
         {
             let mut tokens = self.tokens.write().await;
-            tokens.insert(token_key, token.clone());
+            tokens.insert(token_key.clone(), token.clone());
+        }
+
+        // Store in persistent storage if available
+        if let Some(storage) = &self.storage {
+            if let Err(e) = storage.store_oauth_token(&token_key, &token).await {
+                error!("Failed to store refreshed OAuth token in persistent storage: {}", e);
+                // Continue anyway - we have it in memory cache
+            } else {
+                debug!("Refreshed OAuth token stored in persistent storage: {}", token_key);
+            }
         }
 
         info!(
@@ -337,17 +421,37 @@ impl OAuthManager {
         installation_id: &str,
         user_id: Option<&str>,
     ) -> Result<()> {
+        let provider_name = match provider_type {
+            OAuthProviderType::GitLab => "gitlab",
+            OAuthProviderType::GitHub => "github", 
+            OAuthProviderType::Google => "google",
+            OAuthProviderType::Custom(name) => name,
+        };
+        
+        // Use same key format as generate_token_key
+        let safe_installation_id = installation_id.replace(".", "_").replace(" ", "_");
+        let safe_user_id = user_id.unwrap_or("system").replace(".", "_").replace(" ", "_");
+        
         let token_key = format!(
-            "{:?}:{}:{}",
-            provider_type,
-            installation_id,
-            user_id.unwrap_or("system")
-        );
+            "{}_{}_{}",
+            provider_name,
+            safe_installation_id,
+            safe_user_id
+        ).trim_matches('.').to_string();
 
         let token = {
             let mut tokens = self.tokens.write().await;
             tokens.remove(&token_key)
         };
+
+        // Also remove from persistent storage if available
+        if let Some(storage) = &self.storage {
+            if let Err(e) = storage.delete_oauth_token(&token_key).await {
+                error!("Failed to delete OAuth token from persistent storage: {}", e);
+            } else {
+                debug!("OAuth token deleted from persistent storage: {}", token_key);
+            }
+        }
 
         if let Some(token) = token {
             // Try to revoke token with provider if they support it
@@ -457,12 +561,30 @@ impl OAuthManager {
 
     /// Generate a key for storing tokens
     fn generate_token_key(&self, token: &StoredOAuthToken) -> String {
-        format!(
-            "{:?}:{}:{}",
-            token.provider_type,
-            token.installation_id,
-            token.user_id.as_deref().unwrap_or("system")
-        )
+        let provider_name = match &token.provider_type {
+            OAuthProviderType::GitLab => "gitlab",
+            OAuthProviderType::GitHub => "github", 
+            OAuthProviderType::Google => "google",
+            OAuthProviderType::Custom(name) => name,
+        };
+        
+        // NATS KV keys have restrictions: cannot be empty, start/end with '.', or contain certain chars
+        // Replace any problematic characters with underscores
+        let safe_installation_id = token.installation_id.replace(".", "_").replace(" ", "_");
+        let safe_user_id = token.user_id.as_deref().unwrap_or("system").replace(".", "_").replace(" ", "_");
+        
+        let key = format!(
+            "{}_{}_{}",
+            provider_name,
+            safe_installation_id,
+            safe_user_id
+        );
+        
+        // Ensure key doesn't start or end with '.'
+        let key = key.trim_matches('.');
+        
+        debug!("Generated OAuth token key: '{}'", key);
+        key.to_string()
     }
 
     /// Attempt to revoke token with provider
@@ -547,7 +669,7 @@ impl OAuthManager {
             client_secret,
             auth_url: format!("{}/oauth/authorize", base_url),
             token_url: format!("{}/oauth/token", base_url),
-            scope: vec!["read_api".to_string(), "read_repository".to_string()],
+            scope: vec!["api".to_string()],
             redirect_uri,
         }
     }
@@ -620,7 +742,7 @@ mod tests {
         assert_eq!(provider.provider_type, OAuthProviderType::GitLab);
         assert_eq!(provider.client_id, "test-client-id");
         assert_eq!(provider.auth_url, "https://gitlab.com/oauth/authorize");
-        assert!(provider.scope.contains(&"read_api".to_string()));
+        assert!(provider.scope.contains(&"api".to_string()));
     }
 
     #[test]
@@ -701,7 +823,7 @@ mod tests {
         };
 
         let key = manager.generate_token_key(&token);
-        assert_eq!(key, "GitLab:install-123:user-456");
+        assert_eq!(key, "gitlab_install-123_user-456");
     }
 
     #[test]

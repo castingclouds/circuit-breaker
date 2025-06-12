@@ -82,6 +82,11 @@ sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid"
 # Security and encryption
 ring = "0.16"
 jsonwebtoken = "8.3"
+rsa = "0.9"
+rand = "0.8"
+
+# Global state management
+lazy_static = "1.4"
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -148,9 +153,11 @@ name = "test_vllm_streaming"
 path = "examples/rust/test_vllm_streaming.rs"
 
 [[example]]
-name = "cli_usage_demo"
-path = "examples/rust/cli_usage_demo.rs"
+name = "secure_agent_jwt"
+path = "examples/rust/secure_agent_jwt.rs"
 
 [[example]]
-name = "mcp_cli"
-path = "examples/rust/mcp_cli.rs"
+name = "remote_mcp_oauth"
+path = "examples/rust/remote_mcp_oauth.rs"
+
+
