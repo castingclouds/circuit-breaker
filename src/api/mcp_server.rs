@@ -4,15 +4,14 @@
 use axum::{
     body::Body,
     extract::{
-        ws::{Message, WebSocket},
         Path, Query, State, WebSocketUpgrade,
     },
-    http::{HeaderMap, StatusCode, Uri},
+    http::{HeaderMap, StatusCode},
     response::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
     },
-    routing::{get, options, post},
+    routing::{get, post},
     Json, Router,
 };
 
@@ -80,8 +79,8 @@ lazy_static::lazy_static! {
 use base64::{engine::general_purpose, Engine as _};
 use chrono;
 
-use futures::{Stream, StreamExt};
-use std::{collections::HashMap, convert::Infallible, pin::Pin, sync::Arc};
+
+use std::{collections::HashMap, convert::Infallible, sync::Arc};
 use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 use uuid;
@@ -1687,37 +1686,7 @@ impl CircuitBreakerMCPServer {
                     })
                 }
             }
-            "gitlab_list_projects" => {
-                let url = "https://gitlab.com/api/v4/projects?membership=true&per_page=20";
-                match self.manager.make_authenticated_api_request(
-                    &OAuthProviderType::GitLab,
-                    &instance.installation_id,
-                    None,
-                    reqwest::Method::GET,
-                    url,
-                    None,
-                    None,
-                ).await {
-                    Ok(response) => {
-                        if response.status().is_success() {
-                            let body = response.text().await?;
-                            Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab Projects: {}", body))],
-                                is_error: Some(false),
-                            })
-                        } else {
-                            Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab API error: {}", response.status()))],
-                                is_error: Some(true),
-                            })
-                        }
-                    }
-                    Err(e) => Ok(MCPToolResult {
-                        content: vec![MCPContent::text(format!("Failed to call GitLab API: {}", e))],
-                        is_error: Some(true),
-                    })
-                }
-            }
+
             "gitlab_list_issues" => {
                 // Get project_id from arguments or use detected project context
                 let project_id = if let Some(arg_project) = tool_call.arguments.get("project_id").and_then(|v| v.as_str()) {
@@ -2739,7 +2708,7 @@ async fn handle_mcp_sse_internal(
     info!("SSE connection established, waiting for client requests");
 
     // Create a proper SSE stream that maintains connection and handles keep-alives
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<Event, Infallible>>();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<Event, Infallible>>();
     
     // Register this SSE channel with the global router for multi-tenant response routing
     if let Some(token) = auth_token.clone() {
@@ -2900,7 +2869,7 @@ async fn handle_mcp_discovery(
 }
 
 /// Handle OAuth metadata endpoint
-async fn handle_oauth_metadata(State(manager): State<MCPServerManager>) -> Response {
+async fn handle_oauth_metadata(State(_manager): State<MCPServerManager>) -> Response {
     let metadata = serde_json::json!({
         "issuer": "https://gitlab.com",
         "authorization_endpoint": "https://gitlab.com/oauth/authorize",
@@ -4075,7 +4044,7 @@ mod tests {
     async fn test_initialize_request() {
         let (server, instance_id) = create_test_server_with_instance().await;
         let request = MCPRequest {
-            id: "test-1".to_string(),
+            id: Some(MCPId::String("test-1".to_string())),
             method: "initialize".to_string(),
             params: None,
         };
@@ -4089,7 +4058,7 @@ mod tests {
     async fn test_list_tools_request() {
         let (server, instance_id) = create_test_server_with_instance().await;
         let request = MCPRequest {
-            id: "test-2".to_string(),
+            id: Some(MCPId::String("test-2".to_string())),
             method: "tools/list".to_string(),
             params: None,
         };
@@ -4103,7 +4072,7 @@ mod tests {
     async fn test_unknown_method() {
         let (server, instance_id) = create_test_server_with_instance().await;
         let request = MCPRequest {
-            id: "test-3".to_string(),
+            id: Some(MCPId::String("test-3".to_string())),
             method: "unknown_method".to_string(),
             params: None,
         };
@@ -4120,7 +4089,7 @@ mod tests {
     async fn test_nonexistent_instance() {
         let server = CircuitBreakerMCPServer::new();
         let request = MCPRequest {
-            id: "test-4".to_string(),
+            id: Some(MCPId::String("test-4".to_string())),
             method: "initialize".to_string(),
             params: None,
         };

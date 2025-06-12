@@ -5,7 +5,7 @@
 //! registers providers when the server starts.
 
 use crate::api::mcp_server::MCPServerManager;
-use crate::api::oauth::{OAuthManager, OAuthProvider, OAuthProviderType};
+use crate::api::oauth::{OAuthProvider, OAuthProviderType};
 use anyhow::{anyhow, Result};
 use std::env;
 use tracing::{debug, error, info, warn};

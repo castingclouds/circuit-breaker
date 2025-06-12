@@ -414,7 +414,7 @@ impl FunctionDefinition {
                 filter_place.is_none() || filter_place == event_place
             },
             (EventType::WorkflowCreated, EventType::WorkflowCreated) => true,
-            (EventType::Custom { event_name: filter_name }, EventType::Custom { event_name: event_name }) => {
+            (EventType::Custom { event_name: filter_name }, EventType::Custom { event_name }) => {
                 filter_name == event_name
             },
             (

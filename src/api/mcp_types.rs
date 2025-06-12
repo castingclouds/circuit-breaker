@@ -4,7 +4,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
-use uuid::Uuid;
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MCPApplicationType {

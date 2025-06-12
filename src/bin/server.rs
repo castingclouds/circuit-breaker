@@ -73,11 +73,11 @@
 //! - External crate integration (tracing, tokio, axum)
 
 use async_nats;
-use axum::Server;
+
 use circuit_breaker::{
     api::mcp_server::CircuitBreakerMCPServer,
     llm::{cost::CostOptimizer, LLMRouter},
-    GraphQLServerBuilder, OpenAIApiConfig, OpenAIApiServerBuilder,
+    GraphQLServerBuilder, OpenAIApiServerBuilder,
 };
 use dotenv::dotenv;
 use std::env;

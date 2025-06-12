@@ -4,8 +4,8 @@
 use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::{header::HeaderMap, header::HeaderValue, header::CONTENT_TYPE, Client};
-use tracing::{debug, error};
 use std::collections::HashMap;
+use tracing::{debug, error};
 use std::time::Duration;
 
 use crate::llm::{
@@ -352,7 +352,7 @@ impl LLMProviderClient for OpenAIClient {
         self
     }
 
-    async fn embeddings(&self, request: &EmbeddingsRequest, api_key: &str) -> LLMResult<EmbeddingsResponse> {
+    async fn embeddings(&self, _request: &EmbeddingsRequest, _api_key: &str) -> LLMResult<EmbeddingsResponse> {
         // TODO: Implement OpenAI embeddings support
         Err(LLMError::Provider("Embeddings not yet implemented for OpenAI provider".to_string()))
     }
