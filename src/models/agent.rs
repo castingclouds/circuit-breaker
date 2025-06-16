@@ -1,9 +1,9 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
-use crate::models::{PlaceId, Rule, TransitionId};
+use crate::models::{ActivityId, Rule, StateId};
 
 /// Unique identifier for an AI agent
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -13,7 +13,7 @@ impl AgentId {
     pub fn new(id: String) -> Self {
         Self(id)
     }
-    
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -128,9 +128,9 @@ impl Default for AgentRetryConfig {
     }
 }
 
-/// Configuration for agent execution in transitions
+/// Configuration for agent execution in activities
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentTransitionConfig {
+pub struct AgentActivityConfig {
     pub agent_id: AgentId,
     pub input_mapping: HashMap<String, String>,
     pub output_mapping: HashMap<String, String>,
@@ -141,42 +141,43 @@ pub struct AgentTransitionConfig {
 
 /// Scheduling configuration for place agents
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlaceAgentSchedule {
+pub struct StateAgentSchedule {
     pub initial_delay_seconds: Option<u64>,
     pub interval_seconds: Option<u64>,
     pub max_executions: Option<u32>,
 }
 
 /// Configuration for running agents on tokens in specific places
+/// Configuration for agents that monitor specific states
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlaceAgentConfig {
+pub struct StateAgentConfig {
     pub id: Uuid,
-    pub place_id: PlaceId,
+    pub state_id: StateId,
     pub agent_id: AgentId,
     pub llm_config: Option<LLMConfig>,
     pub trigger_conditions: Vec<Rule>,
     pub input_mapping: HashMap<String, String>,
     pub output_mapping: HashMap<String, String>,
-    pub auto_transition: Option<TransitionId>,
-    pub schedule: Option<PlaceAgentSchedule>,
+    pub auto_activity: Option<ActivityId>,
+    pub schedule: Option<StateAgentSchedule>,
     pub retry_config: Option<AgentRetryConfig>,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-impl PlaceAgentConfig {
-    pub fn new(place_id: PlaceId, agent_id: AgentId) -> Self {
+impl StateAgentConfig {
+    pub fn new(state_id: StateId, agent_id: AgentId) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
-            place_id,
+            state_id,
             agent_id,
             llm_config: None,
             trigger_conditions: vec![],
             input_mapping: HashMap::new(),
             output_mapping: HashMap::new(),
-            auto_transition: None,
+            auto_activity: None,
             schedule: None,
             retry_config: None,
             enabled: true,
@@ -202,8 +203,8 @@ pub enum AgentExecutionStatus {
 pub struct AgentExecution {
     pub id: Uuid,
     pub agent_id: AgentId,
-    pub token_id: Uuid,
-    pub place_id: PlaceId,
+    pub resource_id: Uuid,
+    pub state_id: StateId,
     pub config_id: Option<Uuid>,
     pub status: AgentExecutionStatus,
     pub input_data: serde_json::Value,
@@ -218,15 +219,15 @@ pub struct AgentExecution {
 impl AgentExecution {
     pub fn new(
         agent_id: AgentId,
-        token_id: Uuid,
-        place_id: PlaceId,
+        resource_id: Uuid,
+        state_id: StateId,
         input_data: serde_json::Value,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
             agent_id,
-            token_id,
-            place_id,
+            resource_id,
+            state_id,
             config_id: None,
             status: AgentExecutionStatus::Pending,
             input_data,
@@ -238,12 +239,12 @@ impl AgentExecution {
             retry_count: 0,
         }
     }
-    
+
     pub fn start(&mut self) {
         self.status = AgentExecutionStatus::Running;
         self.started_at = Utc::now();
     }
-    
+
     pub fn complete(&mut self, output: serde_json::Value) {
         self.status = AgentExecutionStatus::Completed;
         self.output_data = Some(output);
@@ -251,7 +252,7 @@ impl AgentExecution {
         self.completed_at = Some(now);
         self.duration_ms = Some((now - self.started_at).num_milliseconds() as u64);
     }
-    
+
     pub fn fail(&mut self, error: String) {
         self.status = AgentExecutionStatus::Failed;
         self.error_message = Some(error);

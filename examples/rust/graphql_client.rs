@@ -5,7 +5,7 @@
 
 use serde_json::json;
 
-// GraphQL endpoint 
+// GraphQL endpoint
 const GRAPHQL_ENDPOINT: &str = "http://localhost:4000/graphql";
 
 #[tokio::main]
@@ -23,67 +23,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("📋 Creating Rust System Workflow via GraphQL...");
     let workflow_definition = json!({
         "name": "Rust System Development",
-        "places": [
-            "design", "implementation", "testing", "benchmarking", 
+        "states": [
+            "design", "implementation", "testing", "benchmarking",
             "optimization", "documentation", "release", "maintenance"
         ],
-        "transitions": [
+        "activities": [
             {
-                "id": "start_implementation", 
-                "fromPlaces": ["design"], 
-                "toPlace": "implementation",
+                "id": "start_implementation",
+                "fromStates": ["design"],
+                "toState": "implementation",
                 "conditions": ["architecture_approved", "dependencies_resolved"]
             },
             {
                 "id": "start_testing",
-                "fromPlaces": ["implementation"],
-                "toPlace": "testing", 
+                "fromStates": ["implementation"],
+                "toState": "testing",
                 "conditions": ["code_complete", "unit_tests_written"]
             },
             {
                 "id": "benchmark",
-                "fromPlaces": ["testing"],
-                "toPlace": "benchmarking",
+                "fromStates": ["testing"],
+                "toState": "benchmarking",
                 "conditions": ["tests_passing", "integration_complete"]
             },
             {
                 "id": "optimize",
-                "fromPlaces": ["benchmarking"],
-                "toPlace": "optimization",
+                "fromStates": ["benchmarking"],
+                "toState": "optimization",
                 "conditions": ["performance_baseline_established"]
             },
             {
                 "id": "needs_optimization",
-                "fromPlaces": ["optimization"],
-                "toPlace": "implementation",
+                "fromStates": ["optimization"],
+                "toState": "implementation",
                 "conditions": ["performance_below_target"] // Cycle back!
             },
             {
                 "id": "document",
-                "fromPlaces": ["optimization"],
-                "toPlace": "documentation",
+                "fromStates": ["optimization"],
+                "toState": "documentation",
                 "conditions": ["performance_acceptable"]
             },
             {
                 "id": "release",
-                "fromPlaces": ["documentation"],
-                "toPlace": "release",
+                "fromStates": ["documentation"],
+                "toState": "release",
                 "conditions": ["docs_complete", "changelog_ready"]
             },
             {
                 "id": "maintain",
-                "fromPlaces": ["release"],
-                "toPlace": "maintenance",
+                "fromStates": ["release"],
+                "toState": "maintenance",
                 "conditions": ["version_published"]
             },
             {
                 "id": "next_version",
-                "fromPlaces": ["maintenance"],
-                "toPlace": "design",
+                "fromStates": ["maintenance"],
+                "toState": "design",
                 "conditions": ["new_features_requested"] // Full cycle!
             }
         ],
-        "initialPlace": "design"
+        "initialState": "design",
     });
 
     // 2. Send GraphQL mutation to create workflow
@@ -93,8 +93,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 createWorkflow(input: $input) {
                     id
                     name
-                    places
-                    initialPlace
+                    states
+                    initialState
                 }
             }
         "#,
@@ -111,20 +111,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     let workflow_result: serde_json::Value = response.json().await?;
-    
+
     if let Some(errors) = workflow_result.get("errors") {
         println!("❌ GraphQL Error: {}", errors);
         return Ok(());
     }
-    
+
     let workflow = &workflow_result["data"]["createWorkflow"];
     println!("✅ Workflow created: {}", workflow["id"]);
-    println!("   Places: {:?}", workflow["places"]);
+    println!("   States: {:?}", workflow["states"]);
     println!();
 
-    // 3. Create a token with Rust-specific data
-    println!("🎯 Creating token with Rust project data...");
-    let token_data = json!({
+    // 3. Create a resource with Rust-specific data
+    println!("🎯 Creating resource with Rust project data...");
+    let resource_data = json!({
         "project_name": "hyper-fast-json-parser",
         "language": "Rust",
         "target_performance": "10x faster than serde_json",
@@ -134,37 +134,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "estimated_completion": "2 months"
     });
 
-    let create_token_query = json!({
+    let create_resource_query = json!({
         "query": r#"
-            mutation CreateToken($input: TokenCreateInput!) {
-                createToken(input: $input) {
+            mutation CreateResource($input: ResourceCreateInput!) {
+                createResource(input: $input) {
                     id
-                    place
+                    state
                     workflowId
-                    createdAt
+                    data
                 }
             }
         "#,
         "variables": {
             "input": {
                 "workflowId": workflow["id"].as_str().unwrap(),
-                "data": token_data
+                "data": resource_data
             }
         }
     });
 
     let response = client
         .post(GRAPHQL_ENDPOINT)
-        .json(&create_token_query)
+        .json(&create_resource_query)
         .send()
         .await?;
 
-    let token_result: serde_json::Value = response.json().await?;
-    let token = &token_result["data"]["createToken"];
-    
-    println!("✅ Token created: {}", token["id"]);
-    println!("   Initial place: {}", token["place"]);
-    println!("   Project: {}", token_data["project_name"]);
+    let resource_result: serde_json::Value = response.json().await?;
+
+    if let Some(errors) = resource_result.get("errors") {
+        println!("❌ GraphQL Error creating resource: {}", errors);
+        return Ok(());
+    }
+
+    let resource = &resource_result["data"]["createResource"];
+
+    println!("✅ Resource created: {}", resource["id"]);
+    println!("   Initial state: {}", resource["state"]);
+    println!("   Project: {}", resource_data["project_name"]);
     println!();
 
     // 4. Execute Rust development workflow transitions
@@ -175,42 +181,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("benchmark", "Run performance benchmarks"),
         ("optimize", "Apply Rust-specific optimizations"),
         ("document", "Write API documentation"),
-        ("release", "Publish to crates.io")
+        ("release", "Publish to crates.io"),
     ];
 
-    let current_token_id = token["id"].as_str().unwrap().to_string();
+    let current_resource_id = resource["id"].as_str().unwrap().to_string();
 
-    for (transition_id, description) in transitions {
-        println!("   ➡️  {} ({})", description, transition_id);
-        
-        let fire_transition_query = json!({
+    for (activity_id, description) in transitions {
+        println!("   ➡️  {} ({})", description, activity_id);
+
+        let execute_activity_query = json!({
             "query": r#"
-                mutation FireTransition($input: TransitionFireInput!) {
-                    fireTransition(input: $input) {
+                mutation ExecuteActivity($input: ActivityExecuteInput!) {
+                    executeActivity(input: $input) {
                         id
-                        place
-                        updatedAt
+                        state
+                        workflowId
                     }
                 }
             "#,
             "variables": {
                 "input": {
-                    "tokenId": current_token_id,
-                    "transitionId": transition_id
+                    "resourceId": current_resource_id,
+                    "activityId": activity_id
                 }
             }
         });
 
-        match client.post(GRAPHQL_ENDPOINT).json(&fire_transition_query).send().await {
+        match client
+            .post(GRAPHQL_ENDPOINT)
+            .json(&execute_activity_query)
+            .send()
+            .await
+        {
             Ok(response) => {
-                let transition_result: serde_json::Value = response.json().await?;
-                if let Some(data) = transition_result.get("data") {
-                    let updated_token = &data["fireTransition"];
-                    println!("   ✅ New place: {}", updated_token["place"]);
-                    
+                let activity_result: serde_json::Value = response.json().await?;
+                if let Some(data) = activity_result.get("data") {
+                    let updated_resource = &data["executeActivity"];
+                    println!("   ✅ New state: {}", updated_resource["state"]);
+
                     // Simulate Rust-specific processing time
                     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                } else if let Some(errors) = transition_result.get("errors") {
+                } else if let Some(errors) = activity_result.get("errors") {
                     println!("   ❌ Transition failed: {}", errors[0]["message"]);
                 }
             }
@@ -225,45 +236,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 5. Query final token state via GraphQL
     println!("📚 Fetching final token state...");
-    let get_token_query = json!({
+    // 5. Query final resource state with history via GraphQL
+    println!("\n📊 Querying final resource state via GraphQL...");
+    let resource_query = json!({
         "query": r#"
-            query GetToken($id: String!) {
-                token(id: $id) {
+            query GetResource($id: String!) {
+                resource(id: $id) {
                     id
+                    state
                     workflowId
-                    place
                     data
+                    metadata
+                    createdAt
+                    updatedAt
                     history {
                         timestamp
-                        transition
-                        fromPlace
-                        toPlace
+                        activityId
+                        fromState
+                        toState
                     }
                 }
             }
         "#,
         "variables": {
-            "id": current_token_id
+            "id": current_resource_id
         }
     });
 
     let response = client
         .post(GRAPHQL_ENDPOINT)
-        .json(&get_token_query)
+        .json(&resource_query)
         .send()
         .await?;
 
     let history_result: serde_json::Value = response.json().await?;
-    let final_token = &history_result["data"]["token"];
+    let final_resource = &history_result["data"]["resource"];
 
+    // 6. Show complete workflow history via GraphQL
     println!("📈 Complete Workflow History:");
-    if let Some(history) = final_token["history"].as_array() {
+    if let Some(history) = final_resource["history"].as_array() {
         for (i, event) in history.iter().enumerate() {
-            println!("   {}. {} → {} via {} at {}", 
+            println!(
+                "   {}. {} → {} via {} at {}",
                 i + 1,
-                event["fromPlace"], 
-                event["toPlace"], 
-                event["transition"],
+                event["fromState"],
+                event["toState"],
+                event["activityId"],
                 event["timestamp"]
             );
         }
@@ -274,11 +292,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 6. Demonstrate the key architectural point
     println!("🏗️  Architecture Demonstration:");
     println!("   🦀 Rust Client: Uses GraphQL API (just like TypeScript)");
-    println!("   🌐 GraphQL API: Language-agnostic interface");  
+    println!("   🌐 GraphQL API: Language-agnostic interface");
     println!("   🦀 Rust Backend: Generic engine, no client knowledge");
     println!("   🔄 Same API: TypeScript, Python, Go, Java all use identical GraphQL");
     println!();
-    
+
     println!("💡 Why use GraphQL from Rust?");
     println!("   • Microservices: Rust service → Circuit Breaker service");
     println!("   • API Consistency: Same interface as all other languages");
@@ -290,4 +308,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("The same backend serves Rust, TypeScript, Python, Go, etc. identically!");
 
     Ok(())
-} 
+}

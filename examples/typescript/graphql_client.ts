@@ -27,28 +27,38 @@ interface BatchOperation {
 class AdvancedGraphQLClient {
   private baseUrl: string;
   private defaultHeaders: Record<string, string>;
-  private requestLog: Array<{ operation: string; variables: any; timestamp: number; duration: number }> = [];
+  private requestLog: Array<{
+    operation: string;
+    variables: any;
+    timestamp: number;
+    duration: number;
+  }> = [];
 
-  constructor(baseUrl: string = 'http://localhost:4000', headers: Record<string, string> = {}) {
+  constructor(
+    baseUrl: string = "http://localhost:4000",
+    headers: Record<string, string> = {},
+  ) {
     this.baseUrl = baseUrl;
     this.defaultHeaders = {
-      'Content-Type': 'application/json',
-      'User-Agent': 'Circuit-Breaker-TypeScript-Client/1.0',
-      ...headers
+      "Content-Type": "application/json",
+      "User-Agent": "Circuit-Breaker-TypeScript-Client/1.0",
+      ...headers,
     };
   }
 
-  async request<T = any>(operation: GraphQLOperation): Promise<GraphQLResponse<T>> {
+  async request<T = any>(
+    operation: GraphQLOperation,
+  ): Promise<GraphQLResponse<T>> {
     const startTime = Date.now();
-    
+
     try {
       const response = await fetch(`${this.baseUrl}/graphql`, {
-        method: 'POST',
+        method: "POST",
         headers: this.defaultHeaders,
         body: JSON.stringify({
           query: operation.query,
           variables: operation.variables,
-          operationName: operation.operationName
+          operationName: operation.operationName,
         }),
       });
 
@@ -56,25 +66,25 @@ class AdvancedGraphQLClient {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const result = await response.json() as GraphQLResponse<T>;
+      const result = (await response.json()) as GraphQLResponse<T>;
       const duration = Date.now() - startTime;
 
       // Log the request for debugging
       this.requestLog.push({
-        operation: operation.operationName || 'unnamed',
+        operation: operation.operationName || "unnamed",
         variables: operation.variables,
         timestamp: startTime,
-        duration
+        duration,
       });
 
       return result;
     } catch (error) {
       const duration = Date.now() - startTime;
       this.requestLog.push({
-        operation: operation.operationName || 'failed',
+        operation: operation.operationName || "failed",
         variables: operation.variables,
         timestamp: startTime,
-        duration
+        duration,
       });
       throw error;
     }
@@ -82,23 +92,25 @@ class AdvancedGraphQLClient {
 
   async batchRequest(operations: GraphQLOperation[]): Promise<BatchOperation> {
     const startTime = Date.now();
-    
+
     // Execute all operations in parallel
-    const promises = operations.map(op => this.request(op));
+    const promises = operations.map((op) => this.request(op));
     const results = await Promise.allSettled(promises);
-    
+
     const endTime = Date.now();
-    
+
     return {
       operations,
-      results: results.map(result => 
-        result.status === 'fulfilled' ? result.value : { errors: [{ message: (result.reason as Error).message }] }
+      results: results.map((result) =>
+        result.status === "fulfilled"
+          ? result.value
+          : { errors: [{ message: (result.reason as Error).message }] },
       ),
       timing: {
         startTime,
         endTime,
-        duration: endTime - startTime
-      }
+        duration: endTime - startTime,
+      },
     };
   }
 
@@ -208,58 +220,64 @@ class AdvancedGraphQLClient {
 
     return this.request({
       query: introspectionQuery,
-      operationName: 'IntrospectionQuery'
+      operationName: "IntrospectionQuery",
     });
   }
 
   // Performance testing utilities
   async performanceTest(operation: GraphQLOperation, iterations: number = 10) {
     const results = [];
-    
+
     console.log(`🚀 Running performance test: ${iterations} iterations`);
-    
+
     for (let i = 0; i < iterations; i++) {
       const startTime = Date.now();
       const result = await this.request(operation);
       const duration = Date.now() - startTime;
-      
+
       results.push({
         iteration: i + 1,
         duration,
         success: !result.errors,
-        errors: result.errors?.length || 0
+        errors: result.errors?.length || 0,
       });
-      
+
       if ((i + 1) % 5 === 0) {
         console.log(`  Completed ${i + 1}/${iterations} iterations`);
       }
     }
-    
-    const avgDuration = results.reduce((sum, r) => sum + r.duration, 0) / results.length;
-    const minDuration = Math.min(...results.map(r => r.duration));
-    const maxDuration = Math.max(...results.map(r => r.duration));
-    const successRate = results.filter(r => r.success).length / results.length * 100;
-    
+
+    const avgDuration =
+      results.reduce((sum, r) => sum + r.duration, 0) / results.length;
+    const minDuration = Math.min(...results.map((r) => r.duration));
+    const maxDuration = Math.max(...results.map((r) => r.duration));
+    const successRate =
+      (results.filter((r) => r.success).length / results.length) * 100;
+
     return {
       iterations,
       avgDuration: Math.round(avgDuration),
       minDuration,
       maxDuration,
       successRate: Math.round(successRate * 100) / 100,
-      results
+      results,
     };
   }
 
   // Helper methods for common operations
-  async createWorkflowQuick(name: string, places: string[], initialPlace: string) {
+  async createWorkflowQuick(
+    name: string,
+    states: string[],
+    initialState: string,
+  ) {
     return this.request({
       query: `
         mutation CreateWorkflow($input: WorkflowDefinitionInput!) {
           createWorkflow(input: $input) {
             id
             name
-            places
-            initialPlace
+            states
+            initialState
             createdAt
           }
         }
@@ -267,23 +285,23 @@ class AdvancedGraphQLClient {
       variables: {
         input: {
           name,
-          places,
-          transitions: [],
-          initialPlace
-        }
+          states,
+          activities: [],
+          initialState,
+        },
       },
-      operationName: 'CreateWorkflow'
+      operationName: "CreateWorkflow",
     });
   }
 
-  async createTokenQuick(workflowId: string, data: any = {}) {
+  async createResourceQuick(workflowId: string, data: any = {}) {
     return this.request({
       query: `
-        mutation CreateToken($input: TokenCreateInput!) {
-          createToken(input: $input) {
+        mutation CreateResource($input: ResourceCreateInput!) {
+          createResource(input: $input) {
             id
             workflowId
-            place
+            state
             data
             createdAt
           }
@@ -292,10 +310,10 @@ class AdvancedGraphQLClient {
       variables: {
         input: {
           workflowId,
-          data
-        }
+          data,
+        },
       },
-      operationName: 'CreateToken'
+      operationName: "CreateResource",
     });
   }
 
@@ -320,7 +338,7 @@ class AdvancedGraphQLClient {
         }
       `,
       variables: { id },
-      operationName: 'GetWorkflow'
+      operationName: "GetWorkflow",
     });
   }
 
@@ -342,7 +360,7 @@ class AdvancedGraphQLClient {
           }
         }
       `,
-      operationName: 'GetAllWorkflows'
+      operationName: "GetAllWorkflows",
     });
   }
 
@@ -365,7 +383,7 @@ class AdvancedGraphQLClient {
         }
       `,
       variables: { id: tokenId },
-      operationName: 'GetTokenHistory'
+      operationName: "GetTokenHistory",
     });
   }
 }
@@ -387,36 +405,38 @@ function logPerformance(message: string) {
 }
 
 async function main() {
-  console.log('🚀 Circuit Breaker Advanced GraphQL Client Demo');
-  console.log('================================================');
+  console.log("🚀 Circuit Breaker Advanced GraphQL Client Demo");
+  console.log("================================================");
   console.log();
 
-  const client = new AdvancedGraphQLClient('http://localhost:4000', {
-    'X-Client-Version': '1.0.0',
-    'X-Request-ID': `req-${Date.now()}`
+  const client = new AdvancedGraphQLClient("http://localhost:4000", {
+    "X-Client-Version": "1.0.0",
+    "X-Request-ID": `req-${Date.now()}`,
   });
 
   try {
     // 1. Schema Introspection
-    logInfo('Performing GraphQL schema introspection...');
+    logInfo("Performing GraphQL schema introspection...");
     const introspectionResult = await client.introspectSchema();
-    
+
     if (introspectionResult.errors) {
-      logError(`Schema introspection failed: ${introspectionResult.errors.map(e => e.message).join(', ')}`);
+      logError(
+        `Schema introspection failed: ${introspectionResult.errors.map((e) => e.message).join(", ")}`,
+      );
       return;
     }
 
     const schema = introspectionResult.data?.__schema;
-    logSuccess('Schema introspection completed');
+    logSuccess("Schema introspection completed");
     logInfo(`Available types: ${schema?.types?.length || 0}`);
     logInfo(`Query type: ${schema?.queryType?.name}`);
     logInfo(`Mutation type: ${schema?.mutationType?.name}`);
-    logInfo(`Subscription type: ${schema?.subscriptionType?.name || 'None'}`);
+    logInfo(`Subscription type: ${schema?.subscriptionType?.name || "None"}`);
     console.log();
 
     // 2. Batch Operations Demo
-    logInfo('Demonstrating batch operations...');
-    
+    logInfo("Demonstrating batch operations...");
+
     const batchOperations = [
       {
         query: `
@@ -428,7 +448,7 @@ async function main() {
             }
           }
         `,
-        operationName: 'GetAllWorkflows'
+        operationName: "GetAllWorkflows",
       },
       {
         query: `
@@ -442,36 +462,40 @@ async function main() {
         `,
         variables: {
           input: {
-            name: 'Batch Created Workflow',
-            places: ['start', 'middle', 'end'],
-            transitions: [
+            name: "Batch Created Workflow",
+            states: ["start", "middle", "end"],
+            activities: [
               {
-                id: 'begin',
-                fromPlaces: ['start'],
-                toPlace: 'middle',
-                conditions: []
+                id: "begin",
+                fromStates: ["start"],
+                toState: "middle",
+                conditions: [],
               },
               {
-                id: 'finish',
-                fromPlaces: ['middle'],
-                toPlace: 'end',
-                conditions: []
-              }
+                id: "finish",
+                fromStates: ["middle"],
+                toState: "end",
+                conditions: [],
+              },
             ],
-            initialPlace: 'start'
-          }
+            initialState: "start",
+          },
         },
-        operationName: 'CreateWorkflow'
-      }
+        operationName: "CreateWorkflow",
+      },
     ];
 
     const batchResult = await client.batchRequest(batchOperations);
-    logSuccess(`Batch operations completed in ${batchResult.timing.duration}ms`);
-    
+    logSuccess(
+      `Batch operations completed in ${batchResult.timing.duration}ms`,
+    );
+
     batchResult.results.forEach((result, index) => {
       const operation = batchOperations[index];
       if (result.errors) {
-        logError(`${operation.operationName} failed: ${result.errors.map(e => e.message).join(', ')}`);
+        logError(
+          `${operation.operationName} failed: ${result.errors.map((e) => e.message).join(", ")}`,
+        );
       } else {
         logSuccess(`${operation.operationName} succeeded`);
       }
@@ -479,8 +503,8 @@ async function main() {
     console.log();
 
     // 3. Performance Testing
-    logInfo('Running performance tests...');
-    
+    logInfo("Running performance tests...");
+
     const testOperation = {
       query: `
         query GetAllWorkflows {
@@ -496,7 +520,7 @@ async function main() {
           }
         }
       `,
-      operationName: 'PerformanceTest'
+      operationName: "PerformanceTest",
     };
 
     const perfResults = await client.performanceTest(testOperation, 20);
@@ -508,8 +532,8 @@ async function main() {
     console.log();
 
     // 4. Advanced Workflow Operations
-    logInfo('Demonstrating advanced workflow operations...');
-    
+    logInfo("Demonstrating advanced workflow operations...");
+
     // Create a complex workflow
     const complexWorkflow = await client.request({
       query: `
@@ -529,84 +553,156 @@ async function main() {
       `,
       variables: {
         input: {
-          name: 'Complex Multi-Stage Process',
-          places: ['planning', 'development', 'testing', 'staging', 'production', 'maintenance', 'archived'],
-          transitions: [
-            { id: 'start_dev', fromPlaces: ['planning'], toPlace: 'development', conditions: [] },
-            { id: 'to_testing', fromPlaces: ['development'], toPlace: 'testing', conditions: [] },
-            { id: 'back_to_dev', fromPlaces: ['testing'], toPlace: 'development', conditions: [] },
-            { id: 'to_staging', fromPlaces: ['testing'], toPlace: 'staging', conditions: [] },
-            { id: 'to_production', fromPlaces: ['staging'], toPlace: 'production', conditions: [] },
-            { id: 'to_maintenance', fromPlaces: ['production'], toPlace: 'maintenance', conditions: [] },
-            { id: 'archive', fromPlaces: ['maintenance'], toPlace: 'archived', conditions: [] },
-            { id: 'restart', fromPlaces: ['archived'], toPlace: 'planning', conditions: [] }
+          name: "Complex Multi-Stage Process",
+          states: [
+            "planning",
+            "development",
+            "testing",
+            "staging",
+            "production",
+            "maintenance",
+            "archived",
           ],
-          initialPlace: 'planning'
-        }
+          activities: [
+            {
+              id: "start_dev",
+              fromStates: ["planning"],
+              toState: "development",
+              conditions: [],
+            },
+            {
+              id: "to_testing",
+              fromStates: ["development"],
+              toState: "testing",
+              conditions: [],
+            },
+            {
+              id: "back_to_dev",
+              fromStates: ["testing"],
+              toState: "development",
+              conditions: [],
+            },
+            {
+              id: "to_staging",
+              fromStates: ["testing"],
+              toState: "staging",
+              conditions: [],
+            },
+            {
+              id: "to_production",
+              fromStates: ["staging"],
+              toState: "production",
+              conditions: [],
+            },
+            {
+              id: "to_maintenance",
+              fromStates: ["production"],
+              toState: "maintenance",
+              conditions: [],
+            },
+            {
+              id: "archive",
+              fromStates: ["maintenance"],
+              toState: "archived",
+              conditions: [],
+            },
+            {
+              id: "restart",
+              fromStates: ["archived"],
+              toState: "planning",
+              conditions: [],
+            },
+          ],
+          initialState: "planning",
+        },
       },
-      operationName: 'CreateComplexWorkflow'
+      operationName: "CreateComplexWorkflow",
     });
 
     if (complexWorkflow.errors) {
-      logError(`Failed to create complex workflow: ${complexWorkflow.errors.map(e => e.message).join(', ')}`);
+      logError(
+        `Failed to create complex workflow: ${complexWorkflow.errors.map((e) => e.message).join(", ")}`,
+      );
     } else {
       const workflow = complexWorkflow.data?.createWorkflow;
-      logSuccess(`Created complex workflow: ${workflow?.name} (${workflow?.id})`);
-      logInfo(`Places: ${workflow?.places?.length}`);
-      logInfo(`Transitions: ${workflow?.transitions?.length}`);
-      
+      logSuccess(
+        `Created complex workflow: ${workflow?.name} (${workflow?.id})`,
+      );
+      logInfo(`States: ${workflow?.states?.length}`);
+      logInfo(`Activities: ${workflow?.activities?.length}`);
+
       // Create multiple tokens
-      const tokenPromises = Array.from({ length: 5 }, (_, i) => 
-        client.createTokenQuick(workflow!.id, {
+      const resourcePromises = Array.from({ length: 5 }, (_, i) =>
+        client.createResourceQuick(workflow!.id, {
           featureId: `feature-${i + 1}`,
-          priority: i < 2 ? 'high' : 'medium',
+          priority: i < 2 ? "high" : "medium",
           assignee: `developer-${(i % 3) + 1}`,
-          complexity: Math.floor(Math.random() * 10) + 1
-        })
+          complexity: Math.floor(Math.random() * 10) + 1,
+        }),
       );
 
-      const tokenResults = await Promise.allSettled(tokenPromises);
-      const successfulTokens = tokenResults
-        .filter(result => result.status === 'fulfilled' && !result.value.errors)
-        .map(result => (result as PromiseFulfilledResult<any>).value.data?.createToken);
+      const resourceResults = await Promise.allSettled(resourcePromises);
+      const successfulResources = resourceResults
+        .filter(
+          (result) => result.status === "fulfilled" && !result.value.errors,
+        )
+        .map(
+          (result) =>
+            (result as PromiseFulfilledResult<any>).value.data?.createResource,
+        );
 
-      logSuccess(`Created ${successfulTokens.length} tokens successfully`);
+      logSuccess(
+        `Created ${successfulResources.length} resources successfully`,
+      );
     }
 
     // 5. Request Log Analysis
     console.log();
-    logInfo('Request Log Analysis:');
+    logInfo("Request Log Analysis:");
     const requestLog = client.getRequestLog();
     const totalRequests = requestLog.length;
-    const avgDuration = requestLog.reduce((sum, req) => sum + req.duration, 0) / totalRequests;
-    const slowestRequest = requestLog.reduce((max, req) => req.duration > max.duration ? req : max, requestLog[0]);
-    const fastestRequest = requestLog.reduce((min, req) => req.duration < min.duration ? req : min, requestLog[0]);
+    const avgDuration =
+      requestLog.reduce((sum, req) => sum + req.duration, 0) / totalRequests;
+    const slowestRequest = requestLog.reduce(
+      (max, req) => (req.duration > max.duration ? req : max),
+      requestLog[0],
+    );
+    const fastestRequest = requestLog.reduce(
+      (min, req) => (req.duration < min.duration ? req : min),
+      requestLog[0],
+    );
 
     logInfo(`Total requests made: ${totalRequests}`);
     logInfo(`Average request duration: ${Math.round(avgDuration)}ms`);
-    logInfo(`Slowest request: ${slowestRequest?.operation} (${slowestRequest?.duration}ms)`);
-    logInfo(`Fastest request: ${fastestRequest?.operation} (${fastestRequest?.duration}ms)`);
+    logInfo(
+      `Slowest request: ${slowestRequest?.operation} (${slowestRequest?.duration}ms)`,
+    );
+    logInfo(
+      `Fastest request: ${fastestRequest?.operation} (${fastestRequest?.duration}ms)`,
+    );
 
     // Group by operation type
-    const operationCounts = requestLog.reduce((acc, req) => {
-      acc[req.operation] = (acc[req.operation] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+    const operationCounts = requestLog.reduce(
+      (acc, req) => {
+        acc[req.operation] = (acc[req.operation] || 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
 
-    logInfo('Operations by type:');
+    logInfo("Operations by type:");
     Object.entries(operationCounts).forEach(([operation, count]) => {
       console.log(`  • ${operation}: ${count} requests`);
     });
 
     console.log();
-    logInfo('Advanced GraphQL Client Demo Summary:');
-    console.log('  • Schema introspection and type discovery');
-    console.log('  • Batch operations for improved performance');
-    console.log('  • Performance testing and benchmarking');
-    console.log('  • Request logging and analytics');
-    console.log('  • Complex workflow and token management');
-    console.log('  • Production-ready client patterns');
-
+    logInfo("Advanced GraphQL Client Demo Summary:");
+    console.log("  • Schema introspection and type discovery");
+    console.log("  • Batch operations for improved performance");
+    console.log("  • Performance testing and benchmarking");
+    console.log("  • Request logging and analytics");
+    console.log("  • Complex workflow and resource management");
+    console.log("  • Production-ready client patterns");
   } catch (error) {
     logError(`Demo failed: ${error}`);
     process.exit(1);
@@ -617,9 +713,9 @@ if (require.main === module) {
   main().catch(console.error);
 }
 
-export { 
-  AdvancedGraphQLClient, 
-  type GraphQLOperation, 
-  type BatchOperation, 
-  type GraphQLResponse 
-}; 
+export {
+  AdvancedGraphQLClient,
+  type GraphQLOperation,
+  type BatchOperation,
+  type GraphQLResponse,
+};

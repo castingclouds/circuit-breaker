@@ -117,9 +117,22 @@ class CircuitBreakerClient {
   }
 
   async executeActivity(input: any) {
-    tryconst mutation = `
-      mutation ExecuteActivity($input: ActivityExecuteInput!) {
-        executeActivity(input: $input) {
+    // First get the workflow to determine the target state
+    const workflow = await this.getWorkflowForResource(input.resourceId);
+    if (!workflow) {
+      throw new Error("Workflow not found for resource");
+    }
+
+    // Find the activity to get the target state
+    const activity = workflow.activities.find((a) => a.id === input.activityId);
+    if (!activity) {
+      throw new Error(`Activity ${input.activityId} not found in workflow`);
+    }
+
+    // Use executeActivityWithNats for proper NATS persistence
+    const mutation = `
+      mutation ExecuteActivityWithNats($input: ExecuteActivityWithNATSInput!) {
+        executeActivityWithNats(input: $input) {
           id
           workflowId
           state
@@ -138,7 +151,56 @@ class CircuitBreakerClient {
       }
     `;
 
-    return this.graphql<{ executeActivity: ResourceGQL }>(mutation, { input });
+    const natsInput = {
+      resourceId: input.resourceId,
+      activityId: input.activityId,
+      newState: activity.toState,
+      data: input.data,
+      triggeredBy: input.triggeredBy || "typescript-client",
+    };
+
+    return this.graphql<{ executeActivityWithNats: ResourceGQL }>(mutation, {
+      input: natsInput,
+    });
+  }
+
+  async getWorkflowForResource(resourceId: string) {
+    // Get the resource to find its workflow ID
+    const resourceQuery = `
+      query GetResource($id: String!) {
+        resource(id: $id) {
+          workflowId
+        }
+      }
+    `;
+
+    const resourceResult = await this.graphql<{
+      resource: { workflowId: string };
+    }>(resourceQuery, { id: resourceId });
+    if (!resourceResult.data?.resource) {
+      return null;
+    }
+
+    // Get the workflow
+    const workflowQuery = `
+      query GetWorkflow($id: String!) {
+        workflow(id: $id) {
+          id
+          name
+          activities {
+            id
+            fromStates
+            toState
+          }
+        }
+      }
+    `;
+
+    const workflowResult = await this.graphql<{ workflow: any }>(
+      workflowQuery,
+      { id: resourceResult.data.resource.workflowId },
+    );
+    return workflowResult.data?.workflow;
   }
 
   async getResource(id: string) {
@@ -357,7 +419,7 @@ async function main() {
         continue;
       }
 
-      currentResource = activityResult.data!.executeActivity;
+      currentResource = activityResult.data!.executeActivityWithNats;
       logSuccess(`Activity completed: ${currentResource.state}`);
 
       // Add a small delay to make the demo more realistic
