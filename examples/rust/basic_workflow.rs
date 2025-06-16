@@ -1,156 +1,295 @@
-// Basic example showing the refactored Circuit Breaker architecture
-// This demonstrates the separation between models, engine, and server
+// Basic workflow example demonstrating GraphQL API usage
+// This shows how Rust applications should interact via GraphQL for consistency
+// Run with: cargo run --example basic_workflow
 
-use circuit_breaker::{
-    // Core domain models - completely language-agnostic
-    Token, PlaceId, TransitionId, WorkflowDefinition, TransitionDefinition,
-    // Engine types - GraphQL execution layer
-    InMemoryStorage, create_schema_with_storage,
-    // Server types - deployable server implementations
-    GraphQLServerBuilder,
-};
+use serde_json::json;
+
+// GraphQL endpoint
+const GRAPHQL_ENDPOINT: &str = "http://localhost:4000/graphql";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🔄 Circuit Breaker - Refactored Architecture Demo");
+    println!("🔄 Circuit Breaker - Basic Workflow Demo (GraphQL)");
     println!("==================================================");
-    println!("📁 src/models/     → Domain-agnostic workflow state management");
-    println!("🚀 src/engine/     → GraphQL API for polyglot clients");  
-    println!("🖥️  src/server/     → Deployable server implementations");
+    println!("Demonstrating: Rust → GraphQL → NATS Backend");
+    println!("(Same API as TypeScript, Python, etc.)");
     println!();
 
-    // 1. Create a generic workflow using core models (src/models)
-    let workflow = WorkflowDefinition {
-        id: "document_review".to_string(),
-        name: "Document Review Process".to_string(),
-        places: vec![
-            PlaceId::from("init"),
-            PlaceId::from("processing"),
-            PlaceId::from("review"),
-            PlaceId::from("complete"),
-            PlaceId::from("failed"),
+    // Create HTTP client
+    let client = reqwest::Client::new();
+
+    // 1. Create a document review workflow via GraphQL
+    println!("📋 Creating Document Review Workflow via GraphQL...");
+    let workflow_definition = json!({
+        "name": "Document Review Process",
+        "states": [
+            "init", "processing", "review", "approved", "published", "rejected"
         ],
-        transitions: vec![
-            TransitionDefinition {
-                id: TransitionId::from("start_processing"),
-                from_places: vec![PlaceId::from("init")],
-                to_place: PlaceId::from("processing"),
-                conditions: vec![],
-                rules: vec![],
+        "activities": [
+            {
+                "id": "start_processing",
+                "fromStates": ["init"],
+                "toState": "processing",
+                "conditions": []
             },
-            TransitionDefinition {
-                id: TransitionId::from("submit_for_review"),
-                from_places: vec![PlaceId::from("processing")],
-                to_place: PlaceId::from("review"),
-                conditions: vec![],
-                rules: vec![],
+            {
+                "id": "submit_for_review",
+                "fromStates": ["processing"],
+                "toState": "review",
+                "conditions": []
             },
-            TransitionDefinition {
-                id: TransitionId::from("approve"),
-                from_places: vec![PlaceId::from("review")],
-                to_place: PlaceId::from("complete"),
-                conditions: vec![],
-                rules: vec![],
+            {
+                "id": "approve",
+                "fromStates": ["review"],
+                "toState": "approved",
+                "conditions": []
             },
-            TransitionDefinition {
-                id: TransitionId::from("request_changes"),
-                from_places: vec![PlaceId::from("review")],
-                to_place: PlaceId::from("processing"),
-                conditions: vec![],
-                rules: vec![],
+            {
+                "id": "reject",
+                "fromStates": ["review"],
+                "toState": "rejected",
+                "conditions": []
             },
-            TransitionDefinition {
-                id: TransitionId::from("fail"),
-                from_places: vec![PlaceId::from("processing"), PlaceId::from("review")],
-                to_place: PlaceId::from("failed"),
-                conditions: vec![],
-                rules: vec![],
-            },
+            {
+                "id": "publish",
+                "fromStates": ["approved"],
+                "toState": "published",
+                "conditions": []
+            }
         ],
-        initial_place: PlaceId::from("init"),
-    };
+        "initialState": "init"
+    });
 
-    println!("✅ Created workflow using src/models/: {}", workflow.name);
-    println!("📊 Places: {:?}", workflow.places.iter().map(|s| s.as_str()).collect::<Vec<_>>());
-    println!("🔄 Transitions: {}", workflow.transitions.len());
-    println!();
+    let create_workflow_query = json!({
+        "query": r#"
+            mutation CreateWorkflow($input: WorkflowDefinitionInput!) {
+                createWorkflow(input: $input) {
+                    id
+                    name
+                    states
+                    activities {
+                        id
+                        fromStates
+                        toState
+                    }
+                    initialState
+                }
+            }
+        "#,
+        "variables": {
+            "input": workflow_definition
+        }
+    });
 
-    // 2. Create a token using core models (src/models)
-    let mut token = Token::new(&workflow.id, workflow.initial_place.clone());
-    token.set_metadata("creator", serde_json::json!("system"));
-    token.set_metadata("priority", serde_json::json!("high"));
-    
-    println!("🎯 Created token using src/models/: {}", token.id);
-    println!("🏁 Initial place: {}", token.current_place());
-    println!();
+    let workflow_result: serde_json::Value = client
+        .post(GRAPHQL_ENDPOINT)
+        .json(&create_workflow_query)
+        .send()
+        .await?
+        .json()
+        .await?;
 
-    // 3. Execute transitions using core models (src/models)
-    println!("🔄 Executing transitions using src/models/...");
-    
-    // Start processing
-    if let Some(target) = workflow.can_transition(&token.place, &TransitionId::from("start_processing")) {
-        token.transition_to(target.clone(), TransitionId::from("start_processing"));
-        println!("   ➡️  {} -> {}", "init", token.current_place());
+    if let Some(errors) = workflow_result.get("errors") {
+        println!("❌ Failed to create workflow: {}", errors);
+        return Ok(());
     }
 
-    // Submit for review
-    if let Some(target) = workflow.can_transition(&token.place, &TransitionId::from("submit_for_review")) {
-        token.transition_to(target.clone(), TransitionId::from("submit_for_review"));
-        println!("   ➡️  {} -> {}", "processing", token.current_place());
+    let workflow = &workflow_result["data"]["createWorkflow"];
+    let workflow_id = workflow["id"].as_str().unwrap();
+    println!(
+        "✅ Created workflow: {} ({})",
+        workflow["name"], workflow_id
+    );
+    println!("   States: {:?}", workflow["states"]);
+    println!(
+        "   Activities: {}",
+        workflow["activities"].as_array().unwrap().len()
+    );
+    println!();
+
+    // 2. Create a document resource via GraphQL
+    println!("📄 Creating document resource...");
+    let resource_data = json!({
+        "title": "Technical Documentation",
+        "author": "Engineering Team",
+        "document_type": "specification",
+        "priority": "high",
+        "content": "This is a technical document that needs review.",
+        "word_count": 150
+    });
+
+    let create_resource_query = json!({
+        "query": r#"
+            mutation CreateResource($input: ResourceCreateInput!) {
+                createResource(input: $input) {
+                    id
+                    workflowId
+                    state
+                    data
+                    metadata
+                    createdAt
+                }
+            }
+        "#,
+        "variables": {
+            "input": {
+                "workflowId": workflow_id,
+                "initialState": "init",
+                "data": resource_data,
+                "metadata": {
+                    "created_by": "rust-demo",
+                    "department": "engineering"
+                }
+            }
+        }
+    });
+
+    let resource_result: serde_json::Value = client
+        .post(GRAPHQL_ENDPOINT)
+        .json(&create_resource_query)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    if let Some(errors) = resource_result.get("errors") {
+        println!("❌ Failed to create resource: {}", errors);
+        return Ok(());
     }
 
-    // Approve
-    if let Some(target) = workflow.can_transition(&token.place, &TransitionId::from("approve")) {
-        token.transition_to(target.clone(), TransitionId::from("approve"));
-        println!("   ➡️  {} -> {}", "review", token.current_place());
+    let resource = &resource_result["data"]["createResource"];
+    let resource_id = resource["id"].as_str().unwrap();
+    println!("✅ Created resource: {}", resource_id);
+    println!("   Title: {}", resource["data"]["title"]);
+    println!("   Current state: {}", resource["state"]);
+    println!();
+
+    // 3. Execute activities via GraphQL
+    println!("⚡ Executing document review workflow...");
+    let activities = vec![
+        ("start_processing", "Start Processing"),
+        ("submit_for_review", "Submit for Review"),
+        ("approve", "Approve Document"),
+        ("publish", "Publish Document"),
+    ];
+
+    let mut current_resource_id = resource_id.to_string();
+
+    for (activity_id, description) in activities {
+        println!("   ➡️  {} ({})", description, activity_id);
+
+        let execute_activity_query = json!({
+            "query": r#"
+                mutation ExecuteActivity($input: ActivityExecuteInput!) {
+                    executeActivity(input: $input) {
+                        id
+                        state
+                        workflowId
+                        data
+                        history {
+                            timestamp
+                            activity
+                            fromState
+                            toState
+                        }
+                    }
+                }
+            "#,
+            "variables": {
+                "input": {
+                    "resourceId": current_resource_id,
+                    "activityId": activity_id,
+                    "data": {
+                        "timestamp": chrono::Utc::now().to_rfc3339(),
+                        "performed_by": "rust-demo"
+                    }
+                }
+            }
+        });
+
+        match client
+            .post(GRAPHQL_ENDPOINT)
+            .json(&execute_activity_query)
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?
+        {
+            activity_result => {
+                if let Some(data) = activity_result.get("data") {
+                    let updated_resource = &data["executeActivity"];
+                    println!("   ✅ New state: {}", updated_resource["state"]);
+
+                    // Simulate processing time
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                } else if let Some(errors) = activity_result.get("errors") {
+                    println!("   ❌ Activity failed: {}", errors[0]["message"]);
+                    break;
+                }
+            }
+        }
     }
-    
+
+    // 4. Query final resource state
     println!();
-    println!("📈 Transition history:");
-    for (i, event) in token.history.iter().enumerate() {
-        println!("   {}. {} -> {} via {} ({})", 
-            i + 1,
-            event.from.as_str(), 
-            event.to.as_str(), 
-            event.transition.as_str(),
-            event.timestamp.format("%H:%M:%S")
-        );
+    println!("📊 Querying final resource state...");
+    let get_resource_query = json!({
+        "query": r#"
+            query GetResource($id: String!) {
+                resource(id: $id) {
+                    id
+                    state
+                    data
+                    history {
+                        timestamp
+                        activity
+                        fromState
+                        toState
+                    }
+                }
+            }
+        "#,
+        "variables": {
+            "id": current_resource_id
+        }
+    });
+
+    let final_result: serde_json::Value = client
+        .post(GRAPHQL_ENDPOINT)
+        .json(&get_resource_query)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    if let Some(final_resource) = final_result["data"]["resource"].as_object() {
+        println!("✅ Final resource state:");
+        println!("   ID: {}", final_resource["id"]);
+        println!("   State: {}", final_resource["state"]);
+        println!("   Title: {}", final_resource["data"]["title"]);
+
+        if let Some(history) = final_resource["history"].as_array() {
+            println!("   History ({} events):", history.len());
+            for (i, event) in history.iter().enumerate() {
+                println!(
+                    "     {}. {} → {} via {}",
+                    i + 1,
+                    event["fromState"],
+                    event["toState"],
+                    event["activity"]
+                );
+            }
+        }
     }
-    println!();
 
-    // 4. Demonstrate engine layer (src/engine)
-    println!("🚀 Creating GraphQL engine using src/engine/...");
-    let storage = Box::new(InMemoryStorage::default());
-    let _schema = create_schema_with_storage(storage);
-    println!("   ✅ GraphQL schema ready for polyglot clients");
-    println!("   📋 Query: workflows, tokens, availableTransitions");
-    println!("   ✏️  Mutation: createWorkflow, createToken, fireTransition");
-    println!("   📡 Subscription: tokenUpdates, workflowEvents (TODO)");
     println!();
-
-    // 5. Demonstrate server layer (src/server)
-    println!("🖥️  Creating server using src/server/...");
-    let _server_builder = GraphQLServerBuilder::new()
-        .with_port(4000);
-    println!("   ✅ GraphQLServer configured and ready to deploy");
-    println!("   🌐 Would serve GraphQL API at http://localhost:4000/graphql");
-    println!("   📊 Includes GraphQL Playground for interactive testing");
-    println!();
-
-    // 6. Show the complete architecture benefits
-    println!("🏗️  Complete Architecture Benefits:");
-    println!("   📦 src/models/  → Pure domain logic, zero external dependencies");
-    println!("   🚀 src/engine/  → GraphQL interface, swappable for gRPC, REST, etc.");
-    println!("   🖥️  src/server/  → Production-ready servers with config, logging, CORS");
-    println!("   🌍 Polyglot     → Any language can define workflows via GraphQL");
-    println!("   🔌 Pluggable    → Different storage backends (NATS, PostgreSQL, etc.)");
-    println!("   📚 Organized    → Standard Rust project structure for teams");
-    println!();
-    
-    println!("💡 Next steps:");
-    println!("   → Run: cargo run --bin server");
-    println!("   → Visit: http://localhost:4000/graphql");
-    println!("   → Try the example GraphQL queries in the playground!");
+    println!("🎯 Basic Workflow Demo demonstrates:");
+    println!("   • Workflow creation via GraphQL API");
+    println!("   • Resource lifecycle management");
+    println!("   • Activity execution with state transitions");
+    println!("   • Audit trail and history tracking");
+    println!("   • Consistent API across all languages");
+    println!("   • NATS-backed persistent storage");
 
     Ok(())
-} 
+}

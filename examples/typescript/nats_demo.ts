@@ -12,26 +12,26 @@ interface GraphQLResponse<T = any> {
 interface WorkflowGQL {
   id: string;
   name: string;
-  places: string[];
-  transitions: TransitionGQL[];
-  initialPlace: string;
+  states: string[];
+  activities: ActivityGQL[];
+  initialState: string;
   createdAt: string;
   updatedAt: string;
 }
 
-interface TransitionGQL {
+interface ActivityGQL {
   id: string;
   name?: string;
-  fromPlaces: string[];
-  toPlace: string;
+  fromStates: string[];
+  toState: string;
   conditions: string[];
   description?: string;
 }
 
-interface NATSTokenGQL {
+interface NATSResourceGQL {
   id: string;
   workflowId: string;
-  place: string;
+  state: string;
   data: any;
   metadata: any;
   createdAt: string;
@@ -40,13 +40,13 @@ interface NATSTokenGQL {
   natsSequence?: string;
   natsTimestamp?: string;
   natsSubject?: string;
-  transitionHistory: TransitionRecordGQL[];
+  activityHistory: ActivityRecordGQL[];
 }
 
-interface TransitionRecordGQL {
-  fromPlace: string;
-  toPlace: string;
-  transitionId: string;
+interface ActivityRecordGQL {
+  fromState: string;
+  toState: string;
+  activityId: string;
   timestamp: string;
   triggeredBy?: string;
   natsSequence?: string;
@@ -55,9 +55,9 @@ interface TransitionRecordGQL {
 
 interface HistoryEventGQL {
   timestamp: string;
-  transition: string;
-  fromPlace: string;
-  toPlace: string;
+  activity: string;
+  fromState: string;
+  toState: string;
   data?: any;
 }
 
@@ -68,33 +68,36 @@ interface CreateWorkflowInstanceInput {
   triggeredBy?: string;
 }
 
-interface TransitionTokenWithNATSInput {
-  tokenId: string;
-  transitionId: string;
-  newPlace: string;
+interface ExecuteActivityWithNATSInput {
+  resourceId: string;
+  activityId: string;
+  newState: string;
   triggeredBy?: string;
   data?: any;
 }
 
 class CircuitBreakerNATSClient {
-  constructor(private baseUrl: string = 'http://localhost:4000') {}
+  constructor(private baseUrl: string = "http://localhost:4000") {}
 
   // Helper function to pause for demonstrations
   private async pauseForDemo(message: string): Promise<void> {
     console.log(`\n⏸️  ${message}`);
-    console.log('   Press Enter to continue...');
-    
+    console.log("   Press Enter to continue...");
+
     // Wait for user input
-    await new Promise(resolve => {
-      process.stdin.once('data', () => resolve(void 0));
+    await new Promise((resolve) => {
+      process.stdin.once("data", () => resolve(void 0));
     });
   }
 
-  private async graphqlRequest<T>(query: string, variables?: any): Promise<GraphQLResponse<T>> {
+  private async graphqlRequest<T>(
+    query: string,
+    variables?: any,
+  ): Promise<GraphQLResponse<T>> {
     const response = await fetch(`${this.baseUrl}/graphql`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({ query, variables }),
     });
@@ -111,7 +114,7 @@ class CircuitBreakerNATSClient {
       throw new Error(`GraphQL errors: ${JSON.stringify(response.errors)}`);
     }
     if (!response.data) {
-      throw new Error('No data in GraphQL response');
+      throw new Error("No data in GraphQL response");
     }
     return response.data;
   }
@@ -119,12 +122,12 @@ class CircuitBreakerNATSClient {
   async createWorkflow(input: {
     name: string;
     description?: string;
-    places: string[];
-    initialPlace: string;
-    transitions: Array<{
+    states: string[];
+    initialState: string;
+    activities: Array<{
       id: string;
-      fromPlaces: string[];
-      toPlace: string;
+      fromStates: string[];
+      toState: string;
       conditions?: string[];
       description?: string;
     }>;
@@ -134,12 +137,12 @@ class CircuitBreakerNATSClient {
         createWorkflow(input: $input) {
           id
           name
-          places
-          initialPlace
-          transitions {
+          states
+          initialState
+          activities {
             id
-            fromPlaces
-            toPlace
+            fromStates
+            toState
             conditions
             description
           }
@@ -149,17 +152,22 @@ class CircuitBreakerNATSClient {
       }
     `;
 
-    const response = await this.graphqlRequest<{ createWorkflow: WorkflowGQL }>(query, { input });
+    const response = await this.graphqlRequest<{ createWorkflow: WorkflowGQL }>(
+      query,
+      { input },
+    );
     return this.handleErrors(response).createWorkflow;
   }
 
-  async createWorkflowInstance(input: CreateWorkflowInstanceInput): Promise<NATSTokenGQL> {
+  async createWorkflowInstance(
+    input: CreateWorkflowInstanceInput,
+  ): Promise<NATSResourceGQL> {
     const query = `
       mutation CreateWorkflowInstance($input: CreateWorkflowInstanceInput!) {
         createWorkflowInstance(input: $input) {
           id
           workflowId
-          place
+          state
           data
           metadata
           createdAt
@@ -167,10 +175,10 @@ class CircuitBreakerNATSClient {
           natsSequence
           natsTimestamp
           natsSubject
-          transitionHistory {
-            fromPlace
-            toPlace
-            transitionId
+          activityHistory {
+            fromState
+            toState
+            activityId
             timestamp
             triggeredBy
             natsSequence
@@ -180,23 +188,27 @@ class CircuitBreakerNATSClient {
       }
     `;
 
-    const response = await this.graphqlRequest<{ createWorkflowInstance: NATSTokenGQL }>(query, { input });
+    const response = await this.graphqlRequest<{
+      createWorkflowInstance: NATSResourceGQL;
+    }>(query, { input });
     return this.handleErrors(response).createWorkflowInstance;
   }
 
-  async transitionTokenWithNats(input: TransitionTokenWithNATSInput): Promise<NATSTokenGQL> {
+  async executeActivityWithNats(
+    input: ExecuteActivityWithNATSInput,
+  ): Promise<NATSResourceGQL> {
     const query = `
-      mutation TransitionTokenWithNATS($input: TransitionTokenWithNATSInput!) {
-        transitionTokenWithNats(input: $input) {
+      mutation ExecuteActivityWithNATS($input: ExecuteActivityWithNATSInput!) {
+        executeActivityWithNats(input: $input) {
           id
-          place
+          state
           data
           natsSequence
           natsTimestamp
-          transitionHistory {
-            fromPlace
-            toPlace
-            transitionId
+          activityHistory {
+            fromState
+            toState
+            activityId
             timestamp
             triggeredBy
             natsSequence
@@ -205,22 +217,27 @@ class CircuitBreakerNATSClient {
       }
     `;
 
-    const response = await this.graphqlRequest<{ transitionTokenWithNats: NATSTokenGQL }>(query, { input });
-    return this.handleErrors(response).transitionTokenWithNats;
+    const response = await this.graphqlRequest<{
+      executeActivityWithNats: NATSResourceGQL;
+    }>(query, { input });
+    return this.handleErrors(response).executeActivityWithNats;
   }
 
-  async getTokensInPlace(workflowId: string, placeId: string): Promise<NATSTokenGQL[]> {
+  async getResourcesInState(
+    workflowId: string,
+    stateId: string,
+  ): Promise<NATSResourceGQL[]> {
     const query = `
-      query TokensInPlace($workflowId: String!, $placeId: String!) {
-        tokensInPlace(workflowId: $workflowId, placeId: $placeId) {
+      query ResourcesInState($workflowId: String!, $stateId: String!) {
+        resourcesInState(workflowId: $workflowId, stateId: $stateId) {
           id
-          place
+          state
           data
           natsSequence
           natsSubject
-          transitionHistory {
-            fromPlace
-            toPlace
+          activityHistory {
+            fromState
+            toState
             timestamp
             triggeredBy
           }
@@ -228,28 +245,30 @@ class CircuitBreakerNATSClient {
       }
     `;
 
-    const response = await this.graphqlRequest<{ tokensInPlace: NATSTokenGQL[] }>(query, { 
-      workflowId, 
-      placeId 
+    const response = await this.graphqlRequest<{
+      resourcesInState: NATSResourceGQL[];
+    }>(query, {
+      workflowId,
+      stateId,
     });
-    return this.handleErrors(response).tokensInPlace;
+    return this.handleErrors(response).resourcesInState;
   }
 
-  async getNATSToken(id: string): Promise<NATSTokenGQL | null> {
+  async getNATSResource(id: string): Promise<NATSResourceGQL | null> {
     const query = `
-      query GetNATSToken($id: String!) {
-        natsToken(id: $id) {
+      query GetNATSResource($id: String!) {
+        natsResource(id: $id) {
           id
           workflowId
-          place
+          state
           data
           natsSequence
           natsTimestamp
           natsSubject
-          transitionHistory {
-            fromPlace
-            toPlace
-            transitionId
+          activityHistory {
+            fromState
+            toState
+            activityId
             timestamp
             triggeredBy
             natsSequence
@@ -259,15 +278,19 @@ class CircuitBreakerNATSClient {
       }
     `;
 
-    const response = await this.graphqlRequest<{ natsToken: NATSTokenGQL | null }>(query, { id });
-    return this.handleErrors(response).natsToken;
+    const response = await this.graphqlRequest<{
+      natsResource: NATSResourceGQL | null;
+    }>(query, { id });
+    return this.handleErrors(response).natsResource;
   }
 }
 
 async function runNATSWorkflowDemo(): Promise<void> {
-  console.log('📋 Creating workflow with NATS storage backend...');
-  console.log('This demo will walk you through each step of NATS integration.\n');
-  
+  console.log("📋 Creating workflow with NATS storage backend...");
+  console.log(
+    "This demo will walk you through each step of NATS integration.\n",
+  );
+
   const client = new CircuitBreakerNATSClient();
 
   // Enable raw mode for better input handling
@@ -278,362 +301,450 @@ async function runNATSWorkflowDemo(): Promise<void> {
   try {
     // Step 1: Create a workflow definition
     const workflow = await client.createWorkflow({
-      name: 'NATS Document Review Process (TypeScript)',
-      description: 'A document review workflow using NATS streaming backend',
-      places: ['draft', 'review', 'approved', 'published', 'rejected'],
-      initialPlace: 'draft',
-      transitions: [
+      name: "NATS Document Review Process (TypeScript)",
+      description: "A document review workflow using NATS streaming backend",
+      states: ["draft", "review", "approved", "published", "rejected"],
+      initialState: "draft",
+      activities: [
         {
-          id: 'submit_for_review',
-          fromPlaces: ['draft'],
-          toPlace: 'review',
+          id: "submit_for_review",
+          fromStates: ["draft"],
+          toState: "review",
           conditions: [],
-          description: 'Submit document for review'
+          description: "Submit document for review",
         },
         {
-          id: 'approve',
-          fromPlaces: ['review'],
-          toPlace: 'approved',
+          id: "approve",
+          fromStates: ["review"],
+          toState: "approved",
           conditions: [],
-          description: 'Approve the document'
+          description: "Approve the document",
         },
         {
-          id: 'reject',
-          fromPlaces: ['review'],
-          toPlace: 'rejected',
+          id: "reject",
+          fromStates: ["review"],
+          toState: "rejected",
           conditions: [],
-          description: 'Reject the document'
+          description: "Reject the document",
         },
         {
-          id: 'publish',
-          fromPlaces: ['approved'],
-          toPlace: 'published',
+          id: "publish",
+          fromStates: ["approved"],
+          toState: "published",
           conditions: [],
-          description: 'Publish the document'
-        }
-      ]
+          description: "Publish the document",
+        },
+      ],
     });
 
     console.log(`✅ Created workflow: "${workflow.name}" (ID: ${workflow.id})`);
-    console.log('\n🔍 What just happened:');
-    console.log('   • Workflow definition was sent via GraphQL to the Circuit Breaker server');
-    console.log('   • Server stored the workflow in NATS JetStream with subject: cb.workflows.{id}.definition');
-    console.log('   • NATS stream "CIRCUIT_BREAKER_GLOBAL" now contains this workflow definition');
-    
-    await (client as any).pauseForDemo('STEP 1 COMPLETE: Workflow created and stored in NATS');
+    console.log("🔍 What just happened:");
+    console.log(
+      "   • Workflow definition was sent via GraphQL to the Circuit Breaker server",
+    );
+    console.log(
+      "   • Server stored the workflow in NATS JetStream with subject: cb.workflows.{id}.definition",
+    );
+    console.log(
+      '   • NATS stream "CIRCUIT_BREAKER_GLOBAL" now contains this workflow definition',
+    );
+
+    await (client as any).pauseForDemo(
+      "STEP 1 COMPLETE: Workflow created and stored in NATS",
+    );
 
     // Brief delay to ensure workflow is fully persisted in NATS
-    console.log('⏳ Waiting for NATS persistence...');
-    await new Promise(resolve => setTimeout(resolve, 500));
+    console.log("⏳ Waiting for NATS persistence...");
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
     // Step 2: Create workflow instances using NATS-enhanced mutations
-    console.log('\n📄 Creating workflow instances with NATS tracking...');
-    console.log('🔍 About to demonstrate:');
-    console.log('   • NATS-enhanced GraphQL mutation: createWorkflowInstance');
-    console.log('   • Each token will be stored as a message in NATS with metadata');
-    console.log('   • Real-time event publishing to NATS subjects');
-    
-    await (client as any).pauseForDemo('Ready to create workflow instances with NATS tracking');
+    console.log("\n📄 Creating workflow instances with NATS tracking...");
+    console.log("🔍 About to demonstrate:");
+    console.log("   • NATS-enhanced GraphQL mutation: createWorkflowInstance");
+    console.log(
+      "   • Each resource will be stored as a message in NATS with metadata",
+    );
+    console.log("   • Real-time event publishing to NATS subjects");
+
+    await (client as any).pauseForDemo(
+      "Ready to create workflow instances with NATS tracking",
+    );
 
     const instances = [
-      { title: 'TypeScript Technical Specification', department: 'engineering' },
-      { title: 'TypeScript Marketing Proposal', department: 'marketing' },
-      { title: 'TypeScript Legal Contract', department: 'legal' }
+      {
+        title: "TypeScript Technical Specification",
+        department: "engineering",
+      },
+      { title: "TypeScript Marketing Proposal", department: "marketing" },
+      { title: "TypeScript Legal Contract", department: "legal" },
     ];
 
-    const tokenIds: string[] = [];
+    const resourceIds: string[] = [];
 
     for (const { title, department } of instances) {
       try {
-        const token = await client.createWorkflowInstance({
+        const resource = await client.createWorkflowInstance({
           workflowId: workflow.id,
           initialData: {
             title,
             content: `This is the TypeScript content for ${title}`,
-            priority: 'medium'
+            priority: "medium",
           },
           metadata: {
             department,
-            created_by: 'typescript_demo_user',
-            urgency: 'normal'
+            created_by: "typescript_demo_user",
+            urgency: "normal",
           },
-          triggeredBy: 'typescript_nats_demo'
+          triggeredBy: "typescript_nats_demo",
         });
 
-        tokenIds.push(token.id);
+        resourceIds.push(resource.id);
 
-        console.log(`📝 Created instance: ${title} (Token: ${token.id})`);
-        console.log(`   📍 Place: ${token.place}`);
-        console.log(`   🔗 NATS Subject: ${token.natsSubject || 'N/A'}`);
-        
-        if (token.natsSequence) {
-          console.log(`   📊 NATS Sequence: ${token.natsSequence}`);
+        console.log(`📝 Created instance: ${title} (Resource: ${resource.id})`);
+        console.log(`   📍 State: ${resource.state}`);
+        console.log(`   🔗 NATS Subject: ${resource.natsSubject || "N/A"}`);
+
+        if (resource.natsSequence) {
+          console.log(`   📊 NATS Sequence: ${resource.natsSequence}`);
         }
-        
-        console.log(`   🔍 Debug: Token ID added to list: ${token.id}`);
-        console.log('   ✨ This token is now persisted in NATS JetStream!');
+
+        console.log(`   🔍 Debug: Resource ID added to list: ${resource.id}`);
+        console.log("   ✨ This resource is now persisted in NATS JetStream!");
       } catch (error) {
         console.error(`❌ Failed to create instance for ${title}:`, error);
       }
     }
 
     // Add verification step
-    console.log('\n🔍 Verifying all tokens were created successfully...');
-    console.log(`📊 Created ${tokenIds.length} tokens with IDs:`);
-    tokenIds.forEach((id, index) => {
+    console.log("\n🔍 Verifying all resources were created successfully...");
+    console.log(`📊 Created ${resourceIds.length} resources with IDs:`);
+    resourceIds.forEach((id, index) => {
       console.log(`   ${index + 1}. ${id}`);
     });
 
-    await (client as any).pauseForDemo('STEP 2 COMPLETE: All workflow instances created and stored in NATS');
+    await (client as any).pauseForDemo(
+      "STEP 2 COMPLETE: All workflow instances created and stored in NATS",
+    );
 
-    // Step 3: Query tokens in specific places using NATS-optimized queries
-    console.log('\n🔍 Querying tokens in \'draft\' place using NATS...');
-    console.log('🔍 About to demonstrate:');
-    console.log('   • NATS-optimized GraphQL query: tokensInPlace');
-    console.log('   • Efficient filtering using NATS subject patterns');
-    console.log('   • Retrieving tokens from specific workflow places');
-    
-    await (client as any).pauseForDemo('Ready to query tokens using NATS-optimized operations');
+    // Step 3: Query resources in specific states using NATS-optimized queries
+    console.log("\n🔍 Querying resources in 'draft' state using NATS...");
+    console.log("🔍 About to demonstrate:");
+    console.log("   • NATS-optimized GraphQL query: resourcesInState");
+    console.log("   • Efficient filtering using NATS subject patterns");
+    console.log("   • Retrieving resources from specific workflow states");
+
+    await (client as any).pauseForDemo(
+      "Ready to query resources using NATS-optimized operations",
+    );
 
     try {
-      const tokensInDraft = await client.getTokensInPlace(workflow.id, 'draft');
-      console.log(`📊 Found ${tokensInDraft.length} tokens in 'draft' place`);
+      const resourcesInDraft = await client.getResourcesInState(
+        workflow.id,
+        "draft",
+      );
+      console.log(
+        `📊 Found ${resourcesInDraft.length} resources in 'draft' state`,
+      );
 
-      for (const token of tokensInDraft) {
-        const title = token.data?.title || 'Unknown';
-        console.log(`   🎫 Token ${token.id}: ${title}`);
+      for (const resource of resourcesInDraft) {
+        const title = resource.data?.title || "Unknown";
+        console.log(`   🎫 Resource ${resource.id}: ${title}`);
       }
-      
-      console.log('\n✨ These results came directly from NATS JetStream!');
-      console.log('   • Query used NATS subject filtering: cb.workflows.{id}.places.draft.tokens');
-      console.log('   • Much faster than scanning all tokens in traditional databases');
+
+      console.log("\n✨ These results came directly from NATS JetStream!");
+      console.log(
+        "   • Query used NATS subject filtering: cb.workflows.{id}.states.draft.resources",
+      );
+      console.log(
+        "   • Much faster than scanning all resources in traditional databases",
+      );
     } catch (error) {
-      console.error('❌ Failed to query tokens in place:', error);
+      console.error("❌ Failed to query resources in state:", error);
     }
 
-    await (client as any).pauseForDemo('STEP 3 COMPLETE: Successfully queried tokens using NATS');
+    await (client as any).pauseForDemo(
+      "STEP 3 COMPLETE: Successfully queried tokens using NATS",
+    );
 
     // Step 4: Perform transitions with NATS event tracking
-    console.log('\n⚡ Performing transitions with NATS event tracking...');
-    console.log('🔍 About to demonstrate:');
-    console.log('   • NATS-enhanced transition: transitionTokenWithNats');
-    console.log('   • Real-time event publishing to transition event streams');
-    console.log('   • Automatic NATS metadata tracking (sequences, timestamps)');
+    console.log("\n⚡ Performing transitions with NATS event tracking...");
+    console.log("🔍 About to demonstrate:");
+    console.log("   • NATS-enhanced activity: executeActivityWithNats");
+    console.log("   • Real-time event publishing to transition event streams");
+    console.log(
+      "   • Automatic NATS metadata tracking (sequences, timestamps)",
+    );
     console.log('   • Moving the FIRST token from "draft" to "review" place');
-    console.log('   • (Note: Only transitioning one token to keep demo focused)');
-    
-    await (client as any).pauseForDemo('Ready to perform a NATS-tracked token transition on the first token');
+    console.log(
+      "   • (Note: Only transitioning one token to keep demo focused)",
+    );
 
-    if (tokenIds.length > 0) {
-      const firstTokenId = tokenIds[0];
-      console.log(`🔍 Debug: Attempting to transition the first token ID: ${firstTokenId}`);
-      
+    await (client as any).pauseForDemo(
+      "Ready to perform a NATS-tracked token transition on the first token",
+    );
+
+    if (resourceIds.length > 0) {
+      const firstTokenId = resourceIds[0];
+      console.log(
+        `🔍 Debug: Attempting to transition the first token ID: ${firstTokenId}`,
+      );
+
       // Add a small delay to ensure token is fully persisted
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
       try {
         // First, let's verify the token exists by querying it
-        console.log('🔍 Verifying token exists before transition...');
-        const existingToken = await client.getNATSToken(firstTokenId);
-        
-        let transitionedToken: NATSTokenGQL;
+        console.log(
+          "🔍 Verifying resource exists before activity execution...",
+        );
+        const existingResource = await client.getNATSResource(firstTokenId);
+
+        let transitionedResource: NATSResourceGQL;
         let actualTokenId = firstTokenId;
-        
-        if (!existingToken) {
-          console.log('❌ Token not found in NATS storage. Available tokens:');
-          const allDraftTokens = await client.getTokensInPlace(workflow.id, 'draft');
-          allDraftTokens.forEach(token => {
-            console.log(`   🎫 Available token: ${token.id}`);
+
+        if (!existingResource) {
+          console.log(
+            "❌ Resource not found in NATS storage. Available resources:",
+          );
+          const allDraftResources = await client.getResourcesInState(
+            workflow.id,
+            "draft",
+          );
+          allDraftResources.forEach((resource) => {
+            console.log(`   🎫 Available resource: ${resource.id}`);
           });
-          
-          if (allDraftTokens.length > 0) {
-            console.log('🔄 Using first available token from place query instead...');
-            actualTokenId = allDraftTokens[0].id;
-            tokenIds[0] = actualTokenId; // Update our list
-            
-            transitionedToken = await client.transitionTokenWithNats({
-              tokenId: actualTokenId,
-              transitionId: 'submit_for_review',
-              newPlace: 'review',
-              triggeredBy: 'typescript_nats_demo_transition',
+
+          if (allDraftResources.length > 0) {
+            console.log(
+              "🔄 Using first available resource from state query instead...",
+            );
+            actualTokenId = allDraftResources[0].id;
+            resourceIds[0] = actualTokenId; // Update our list
+
+            transitionedResource = await client.executeActivityWithNats({
+              resourceId: actualTokenId,
+              activityId: "submit_for_review",
+              newState: "review",
+              triggeredBy: "typescript_nats_demo_transition",
               data: {
-                reviewed_by: 'typescript_demo_reviewer',
-                review_notes: 'Ready for review from TypeScript'
-              }
+                reviewed_by: "typescript_demo_reviewer",
+                review_notes: "Ready for review from TypeScript",
+              },
             });
           } else {
-            throw new Error('No tokens available for transition');
+            throw new Error("No resources available for activity execution");
           }
         } else {
-          console.log('✅ Token found, proceeding with transition...');
-          transitionedToken = await client.transitionTokenWithNats({
-            tokenId: firstTokenId,
-            transitionId: 'submit_for_review',
-            newPlace: 'review',
-            triggeredBy: 'typescript_nats_demo_transition',
+          console.log(
+            "✅ Resource found, proceeding with activity execution...",
+          );
+          transitionedResource = await client.executeActivityWithNats({
+            resourceId: firstTokenId,
+            activityId: "submit_for_review",
+            newState: "review",
+            triggeredBy: "typescript_nats_demo_transition",
             data: {
-              reviewed_by: 'typescript_demo_reviewer',
-              review_notes: 'Ready for review from TypeScript'
-            }
+              reviewed_by: "typescript_demo_reviewer",
+              review_notes: "Ready for review from TypeScript",
+            },
           });
         }
 
-        console.log(`✅ Transitioned token ${actualTokenId} to place: ${transitionedToken.place}`);
+        console.log(
+          `✅ Executed activity on resource ${actualTokenId} to state: ${transitionedResource.state}`,
+        );
 
-        const history = transitionedToken.transitionHistory;
+        const history = transitionedResource.activityHistory;
         if (history && history.length > 0) {
-          const lastTransition = history[history.length - 1];
-          console.log(`   📈 Transition: ${lastTransition.fromPlace} → ${lastTransition.toPlace}`);
-          console.log(`   👤 Triggered by: ${lastTransition.triggeredBy || 'Unknown'}`);
-          if (lastTransition.natsSequence) {
-            console.log(`   📊 NATS Sequence: ${lastTransition.natsSequence}`);
-          }
+          const lastActivity = history[history.length - 1];
+          console.log(
+            `📝 Last activity: ${lastActivity.fromState} → ${lastActivity.toState}`,
+          );
+        } else {
+          console.log("   📈 No activity history found");
         }
-        
-        console.log('\n✨ Transition completed with full NATS event tracking!');
-        console.log('   • Transition event published to: cb.workflows.{id}.events.transitions');
-        console.log('   • Token moved to new NATS subject: cb.workflows.{id}.places.review.tokens');
-        console.log('   • All changes are now persistent in NATS JetStream');
-        console.log('   • NOTE: The other tokens remain in "draft" state (only first token was transitioned)');
+
+        console.log("\n✨ Transition completed with full NATS event tracking!");
+        console.log(
+          "   • Transition event published to: cb.workflows.{id}.events.transitions",
+        );
+        console.log(
+          "   • Token moved to new NATS subject: cb.workflows.{id}.places.review.tokens",
+        );
+        console.log("   • All changes are now persistent in NATS JetStream");
+        console.log(
+          '   • NOTE: The other tokens remain in "draft" state (only first token was transitioned)',
+        );
       } catch (error) {
-        console.error('❌ Failed to perform transition:', error);
-        console.log('💡 This might be due to timing issues with NATS persistence or token ID mismatch');
+        console.error("❌ Failed to perform transition:", error);
+        console.log(
+          "💡 This might be due to timing issues with NATS persistence or token ID mismatch",
+        );
       }
     }
 
-    await (client as any).pauseForDemo('STEP 4 COMPLETE: Token transition with NATS event tracking');
+    await (client as any).pauseForDemo(
+      "STEP 4 COMPLETE: Token transition with NATS event tracking",
+    );
 
     // Step 5: Demonstrate NATS-enhanced token retrieval
-    console.log('\n🔎 Retrieving token with NATS metadata...');
-    console.log('🔍 About to demonstrate:');
-    console.log('   • Enhanced token retrieval with full NATS metadata');
-    console.log('   • Complete transition history with NATS sequences');
-    console.log('   • Real-time timestamps from NATS JetStream');
-    
-    await (client as any).pauseForDemo('Ready to retrieve token with complete NATS metadata');
+    console.log("\n🔎 Retrieving token with NATS metadata...");
+    console.log("🔍 About to demonstrate:");
+    console.log("   • Enhanced token retrieval with full NATS metadata");
+    console.log("   • Complete transition history with NATS sequences");
+    console.log("   • Real-time timestamps from NATS JetStream");
 
-    if (tokenIds.length > 0) {
-      const tokenId = tokenIds[0];
+    await (client as any).pauseForDemo(
+      "Ready to retrieve token with complete NATS metadata",
+    );
+
+    if (resourceIds.length > 0) {
+      const tokenId = resourceIds[0];
       try {
-        const natsToken = await client.getNATSToken(tokenId);
-        if (natsToken) {
-          console.log('🎫 NATS Token Details:');
-          console.log(`   📋 ID: ${natsToken.id}`);
-          console.log(`   📍 Current Place: ${natsToken.place}`);
-          console.log(`   🔗 NATS Subject: ${natsToken.natsSubject || 'N/A'}`);
-          
-          if (natsToken.natsSequence) {
-            console.log(`   📊 NATS Sequence: ${natsToken.natsSequence}`);
+        const natsResource = await client.getNATSResource(tokenId);
+        if (natsResource) {
+          console.log("🎫 NATS Resource Details:");
+          console.log(`   📋 ID: ${natsResource.id}`);
+          console.log(`   📍 Current State: ${natsResource.state}`);
+          console.log(
+            `   🔗 NATS Subject: ${natsResource.natsSubject || "N/A"}`,
+          );
+
+          if (natsResource.natsSequence) {
+            console.log(`   📊 NATS Sequence: ${natsResource.natsSequence}`);
           }
-          
-          if (natsToken.natsTimestamp) {
-            console.log(`   ⏰ NATS Timestamp: ${natsToken.natsTimestamp}`);
+
+          if (natsResource.natsTimestamp) {
+            console.log(`   🕒 NATS Timestamp: ${natsResource.natsTimestamp}`);
           }
-          
-          const history = natsToken.transitionHistory || [];
-          console.log(`   📈 Transition History (${history.length} events):`);
-          
-          history.forEach((transition, i) => {
-            console.log(`      ${i + 1}. ${transition.fromPlace} → ${transition.toPlace} (${transition.transitionId})`);
-            if (transition.triggeredBy) {
-              console.log(`         👤 Triggered by: ${transition.triggeredBy}`);
-            }
-            if (transition.natsSequence) {
-              console.log(`         📊 NATS Sequence: ${transition.natsSequence}`);
+
+          const history = natsResource.activityHistory || [];
+          console.log(`   📈 Activity History (${history.length} events):`);
+
+          history.forEach((activity, i) => {
+            console.log(
+              `      ${i + 1}. ${activity.fromState} → ${activity.toState} (${activity.activityId})`,
+            );
+            if (activity.timestamp) {
+              console.log(
+                `         🕒 At: ${new Date(activity.timestamp).toLocaleString()}`,
+              );
             }
           });
-          
-          console.log('\n✨ Complete audit trail stored in NATS!');
-          console.log('   • Every transition is immutably recorded');
-          console.log('   • NATS sequence numbers provide ordering guarantees');
-          console.log('   • Distributed teams can see real-time workflow progress');
+
+          console.log("\n✨ Complete audit trail stored in NATS!");
+          console.log("   • Every transition is immutably recorded");
+          console.log("   • NATS sequence numbers provide ordering guarantees");
+          console.log(
+            "   • Distributed teams can see real-time workflow progress",
+          );
         } else {
-          console.log('❌ Token not found');
+          console.log("❌ Token not found");
         }
       } catch (error) {
-        console.error('❌ Failed to get NATS token:', error);
+        console.error("❌ Failed to get NATS token:", error);
       }
     }
 
-    await (client as any).pauseForDemo('STEP 5 COMPLETE: Retrieved token with full NATS metadata');
+    await (client as any).pauseForDemo(
+      "STEP 5 COMPLETE: Retrieved token with full NATS metadata",
+    );
 
-    console.log('\n🎉 TypeScript NATS Integration Demo Features Demonstrated:');
-    console.log('   ✅ NATS JetStream storage backend (server-side)');
-    console.log('   ✅ Automatic stream creation per workflow');
-    console.log('   ✅ Enhanced token tracking with NATS metadata');
-    console.log('   ✅ Event-driven transition recording');
-    console.log('   ✅ Efficient place-based token queries');
-    console.log('   ✅ Real-time transition history with NATS sequences');
-    console.log('   ✅ GraphQL API integration with NATS storage');
-    console.log('   ✅ TypeScript client library for NATS workflows');
-    
-    console.log('\n🚀 NATS Benefits Demonstrated:');
-    console.log('   🔄 Distributed: Multiple services can connect to the same NATS cluster');
-    console.log('   💾 Persistent: All data survives server restarts');
-    console.log('   ⚡ Fast: Subject-based filtering is extremely efficient');
-    console.log('   🔒 Reliable: Built-in acknowledgments and replay capability');
-    console.log('   📈 Scalable: Handles millions of messages per second');
-    
-    await (client as any).pauseForDemo('DEMO COMPLETE: All NATS integration features demonstrated');
+    console.log("\n🎉 TypeScript NATS Integration Demo Features Demonstrated:");
+    console.log("   ✅ NATS JetStream storage backend (server-side)");
+    console.log("   ✅ Automatic stream creation per workflow");
+    console.log("   ✅ Enhanced token tracking with NATS metadata");
+    console.log("   ✅ Event-driven transition recording");
+    console.log("   ✅ Efficient place-based token queries");
+    console.log("   ✅ Real-time transition history with NATS sequences");
+    console.log("   ✅ GraphQL API integration with NATS storage");
+    console.log("   ✅ TypeScript client library for NATS workflows");
 
+    console.log("\n🚀 NATS Benefits Demonstrated:");
+    console.log(
+      "   🔄 Distributed: Multiple services can connect to the same NATS cluster",
+    );
+    console.log("   💾 Persistent: All data survives server restarts");
+    console.log("   ⚡ Fast: Subject-based filtering is extremely efficient");
+    console.log(
+      "   🔒 Reliable: Built-in acknowledgments and replay capability",
+    );
+    console.log("   📈 Scalable: Handles millions of messages per second");
+
+    await (client as any).pauseForDemo(
+      "DEMO COMPLETE: All NATS integration features demonstrated",
+    );
   } catch (error) {
-    console.error('❌ Demo failed:', error);
+    console.error("❌ Demo failed:", error);
     throw error;
   }
 }
 
 async function main(): Promise<void> {
-  console.log('🚀 Circuit Breaker NATS Integration Demo (TypeScript Client)');
-  console.log('=============================================================');
-  console.log('This interactive demo will walk you through NATS integration step-by-step.');
-  console.log('');
-  console.log('📋 Prerequisites:');
-  console.log('   1. NATS server running: docker run -p 4222:4222 -p 8222:8222 nats:alpine --jetstream --http_port 8222');
-  console.log('   2. Circuit Breaker server with NATS: export STORAGE_BACKEND=nats && cargo run --bin server');
-  console.log('   3. Server should be running on localhost:4000');
-  console.log('');
-  console.log('🎯 What you\'ll see:');
-  console.log('   • Live workflow creation and storage in NATS JetStream');
-  console.log('   • Real-time token operations with NATS metadata tracking');
-  console.log('   • Efficient place-based queries using NATS subject patterns');
-  console.log('   • Event-driven transitions with complete audit trails');
-  console.log('   • Polyglot architecture: TypeScript client → GraphQL → NATS-powered Rust backend');
-  console.log('');
-  console.log('⏸️  Ready to begin the demo?');
-  console.log('   Press Enter to start...');
-  
+  console.log("🚀 Circuit Breaker NATS Integration Demo (TypeScript Client)");
+  console.log("=============================================================");
+  console.log(
+    "This interactive demo will walk you through NATS integration step-by-step.",
+  );
+  console.log("");
+  console.log("📋 Prerequisites:");
+  console.log(
+    "   1. NATS server running: docker run -p 4222:4222 -p 8222:8222 nats:alpine --jetstream --http_port 8222",
+  );
+  console.log(
+    "   2. Circuit Breaker server with NATS: export STORAGE_BACKEND=nats && cargo run --bin server",
+  );
+  console.log("   3. Server should be running on localhost:4000");
+  console.log("");
+  console.log("🎯 What you'll see:");
+  console.log("   • Live workflow creation and storage in NATS JetStream");
+  console.log("   • Real-time token operations with NATS metadata tracking");
+  console.log("   • Efficient place-based queries using NATS subject patterns");
+  console.log("   • Event-driven transitions with complete audit trails");
+  console.log(
+    "   • Polyglot architecture: TypeScript client → GraphQL → NATS-powered Rust backend",
+  );
+  console.log("");
+  console.log("⏸️  Ready to begin the demo?");
+  console.log("   Press Enter to start...");
+
   // Wait for user input to start
-  await new Promise(resolve => {
-    process.stdin.once('data', () => resolve(void 0));
+  await new Promise((resolve) => {
+    process.stdin.once("data", () => resolve(void 0));
   });
 
   try {
     await runNATSWorkflowDemo();
-    console.log('\n✅ TypeScript NATS integration demo completed successfully!');
-    console.log('');
-    console.log('🎓 What you learned:');
-    console.log('   • How NATS JetStream provides distributed workflow storage');
-    console.log('   • Real-time event publishing and consumption patterns');
-    console.log('   • Efficient querying using NATS subject hierarchies');
-    console.log('   • Complete audit trails with immutable event sequences');
-    console.log('   • Polyglot workflow architecture benefits');
-    console.log('');
-    console.log('🔗 Next Steps:');
-    console.log('   • Explore the NATS admin interface: http://localhost:8222');
-    console.log('   • Try the Rust demo: cargo run --example nats_demo');
-    console.log('   • Check the documentation: docs/NATS_IMPLEMENTATION.md');
-    console.log('');
-    console.log('⏸️  Demo session ending...');
-    console.log('   Press Enter to exit.');
-    
+    console.log(
+      "\n✅ TypeScript NATS integration demo completed successfully!",
+    );
+    console.log("");
+    console.log("🎓 What you learned:");
+    console.log(
+      "   • How NATS JetStream provides distributed workflow storage",
+    );
+    console.log("   • Real-time event publishing and consumption patterns");
+    console.log("   • Efficient querying using NATS subject hierarchies");
+    console.log("   • Complete audit trails with immutable event sequences");
+    console.log("   • Polyglot workflow architecture benefits");
+    console.log("");
+    console.log("🔗 Next Steps:");
+    console.log("   • Explore the NATS admin interface: http://localhost:8222");
+    console.log("   • Try the Rust demo: cargo run --example nats_demo");
+    console.log("   • Check the documentation: docs/NATS_IMPLEMENTATION.md");
+    console.log("");
+    console.log("⏸️  Demo session ending...");
+    console.log("   Press Enter to exit.");
+
     // Final pause
-    await new Promise(resolve => {
-      process.stdin.once('data', () => resolve(void 0));
+    await new Promise((resolve) => {
+      process.stdin.once("data", () => resolve(void 0));
     });
-    
   } catch (error) {
-    console.error('\n❌ Demo failed:', error);
-    console.log('💡 Make sure the Circuit Breaker server is running on localhost:4000 with NATS storage');
+    console.error("\n❌ Demo failed:", error);
+    console.log(
+      "💡 Make sure the Circuit Breaker server is running on localhost:4000 with NATS storage",
+    );
     process.exit(1);
   }
 }

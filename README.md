@@ -5,11 +5,49 @@
 > **OpenRouter Alternative** - BYOK (Bring Your Own Key) model with intelligent provider routing  
 > **Local AI Support** - Full Ollama integration with automatic model detection and streaming
 
+## 🧠 Understanding Circuit Breaker Workflows
+
+Circuit Breaker uses an intuitive workflow model that anyone can understand:
+
+### **Resources** flow through **States** via **Activities**
+
+- **🏷️ Resources**: The things being worked on (Documents, Issues, Orders, Health Records, etc.)
+- **📍 States**: Where resources currently are (Draft, Review, Approved, Published, etc.)  
+- **⚡ Activities**: Actions that move resources between states (Submit, Approve, Deploy, etc.)
+
+### **Activities** are powerful workflow steps that:
+- **Check Rules**: Verify conditions before executing (permissions, validation, business rules)
+- **Execute Functions**: Perform the actual work (notifications, processing, integrations)
+- **Transition Resources**: Move resources to their new state
+
+### **Real-World Examples**:
+
+**Document Workflow**:
+```
+Document Resource: "User Manual v2.1"
+States: Draft → Review → Approved → Published
+Activities: 
+- Submit: Rules(required fields), Functions(notify reviewers)
+- Approve: Rules(reviewer permissions), Functions(send notifications, log approval)
+- Publish: Rules(final approval), Functions(deploy to website, update catalogs)
+```
+
+**Issue Tracking**:
+```
+Issue Resource: "Login Bug #1234"  
+States: Open → In Progress → Testing → Closed
+Activities:
+- Assign: Rules(valid assignee), Functions(notify developer, update metrics)
+- Resolve: Rules(code review passed), Functions(deploy fix, update status)
+```
+
+This model is **mathematically rigorous** (based on Petri Net theory) yet **intuitively understood** by business users.
+
 ## 🚀 Project Vision
 
 Circuit Breaker is a **distributed, high-performance platform** that combines workflow orchestration with intelligent LLM routing. It provides two complementary APIs:
 
-1. **State Managed Workflows** - Powered by Petri Nets for mathematical rigor and formal workflow verification
+1. **State Managed Workflows** - Resources, States, and Activities with mathematical rigor and formal verification
 2. **LLM Provider Routing** - OpenAI-compatible API with cost optimization and intelligent failover
 3. **Local AI Integration** - Native Ollama support with automatic model discovery and async loading
 4. **Multi-Provider Support** - OpenAI, Anthropic, Google, Azure OpenAI, Ollama, and custom endpoints
@@ -18,7 +56,7 @@ Circuit Breaker is a **distributed, high-performance platform** that combines wo
 - **Unified Server**: Single binary providing both GraphQL and REST APIs
 - **OpenAI Compatible**: Drop-in replacement for OpenRouter.ai with BYOK model
 - **Local AI First**: Native Ollama integration with zero-config model detection
-- **State Managed Workflows**: Unlike DAG-based systems, supports cycles, concurrent states, and complex relationships
+- **Intuitive Workflows**: Resources, States, Activities - concepts anyone can understand
 - **Mathematical Guarantees**: Petri Net formalism provides deadlock detection and state safety
 - **Polyglot First**: Any language can use either GraphQL or REST APIs
 
@@ -236,7 +274,7 @@ Visit http://localhost:4000 for the GraphiQL interface, or:
 curl -X POST http://localhost:4000/graphql \
   -H 'Content-Type: application/json' \
   -d '{
-    "query": "mutation { createWorkflow(input: {name: \"Test\", places: [\"start\", \"end\"], transitions: [{id: \"go\", from_places: [\"start\"], to_place: \"end\"}]}) { id name } }"
+    "query": "mutation { createWorkflow(input: {name: \"Test\", states: [\"start\", \"end\"], activities: [{id: \"go\", fromStates: [\"start\"], toState: \"end\"}]}) { id name } }"
   }'
 
 # Create and manage AI agents
@@ -254,8 +292,8 @@ curl -X POST http://localhost:4000/graphql \
 ```
 src/
 ├── models/           # 📦 Core domain logic (language-agnostic)
-│   ├── token.rs      # Generic token and history tracking
-│   └── workflow.rs   # Generic state and transition definitions
+│   ├── resource.rs   # Generic resource and history tracking
+│   └── workflow.rs   # Generic state and activity definitions
 ├── engine/           # 🚀 Execution engines and APIs  
 │   ├── graphql.rs    # GraphQL API implementation
 │   └── storage.rs    # Storage abstraction (NATS, PostgreSQL, etc.)
@@ -269,11 +307,11 @@ src/
 examples/             # 📚 Client examples only (no servers!)
 ├── rust/             # Rust client examples
 │   ├── basic_workflow.rs # Direct model usage (server-side style)
-│   ├── token_demo.rs     # Core token operations
+│   ├── token_demo.rs     # Core resource operations
 │   └── graphql_client.rs # Rust as GraphQL client (distributed style)
 └── typescript/       # TypeScript client examples
     ├── basic_workflow.ts # GraphQL client demo
-    ├── token_demo.ts     # Token operations via GraphQL
+    ├── token_demo.ts     # Resource operations via GraphQL
     └── README.md         # TypeScript setup instructions
 ```
 
@@ -315,7 +353,7 @@ examples/             # 📚 Client examples only (no servers!)
 | Feature | **State Managed Workflows** | **DAG-Based Systems** |
 |---------|------------------------------|------------------------|
 | **Cycles** | ✅ Revision loops, retries | ❌ Acyclic by definition |
-| **Concurrent States** | ✅ Multiple tokens parallel | ❌ Single execution path |
+| **Concurrent States** | ✅ Multiple resources parallel | ❌ Single execution path |
 | **Rollbacks** | ✅ Natural state reversions | ❌ Requires restart |
 | **Complex Joins** | ✅ Petri Net synchronization | ⚠️ Limited patterns |
 | **State Persistence** | ✅ Durable state management | ⚠️ Task-based only |
@@ -367,7 +405,7 @@ token.transition_to(StateId::from("review"), TransitionId::from("submit"));
 - **MCP Server**: Secure agent coordination with GitHub Apps-style auth
 
 ### Infrastructure
-- **Message Bus/Eventing**: NATS JetStream for distributed workflows and token persistence
+- **Message Bus/Eventing**: NATS JetStream for distributed workflows and resource persistence
 - **API**: Dual APIs - GraphQL (async-graphql) for workflows, REST for LLM routing
 - **Web**: Axum for high-performance HTTP with WebSocket support
 - **Storage**: Pluggable backends (NATS KV, PostgreSQL, etc.)
@@ -552,9 +590,9 @@ cargo run --example llm_router_demo
 🖥️  src/server/     → Deployable server implementations
 
 ✅ Created workflow using src/models/: Example Process
-🎯 Created token using src/models/: uuid-here
+🎯 Created resource using src/models/: uuid-here
 
-🔄 Executing transitions using src/models/...
+🔄 Executing activities using src/models/...
    ➡️  init -> processing
    ➡️  processing -> review  
    ➡️  review -> complete
@@ -576,7 +614,7 @@ query {
     id
     name
     states
-    transitions {
+    activities {
       id
       fromStates
       toState
@@ -584,7 +622,7 @@ query {
   }
 }
 
-# Create a token in a workflow
+# Create a resource in a workflow
 mutation {
   createToken(input: {
     workflowId: "document_approval_v1"
@@ -608,7 +646,7 @@ mutation {
     id
     state
     history {
-      transition
+      activityId
       fromState
       toState
       timestamp
@@ -689,8 +727,8 @@ const workflow = await client.request(gql`
 // examples/rust/basic_workflow.rs
 use circuit_breaker::{Token, StateId, WorkflowDefinition};
 
-let mut token = Token::new("workflow_id", StateId::from("initial"));
-token.transition_to(StateId::from("target"), TransitionId::from("transition"));
+let mut resource = Resource::new("workflow_id", StateId::from("initial"));
+resource.execute_activity(StateId::from("target"), ActivityId::from("activity"));
 ```
 
 **Option B: Rust GraphQL Client (distributed)**
@@ -698,7 +736,7 @@ token.transition_to(StateId::from("target"), TransitionId::from("transition"));
 // examples/rust/graphql_client.rs
 let client = reqwest::Client::new();
 let response = client.post("http://localhost:4000/graphql")
-    .json(&create_token_query)
+    .json(&create_resource_query)
     .send().await?;
 ```
 
@@ -716,28 +754,28 @@ const result = await client.request(gql`mutation { ... }`);
 ```rust
 use circuit_breaker::{Token, StateId, TransitionId};
 
-// Create a token in any workflow
-let mut token = Token::new("workflow_id", StateId::from("initial_state"));
+// Create a resource in any workflow
+let mut resource = Resource::new("workflow_id", StateId::from("initial_state"));
 
-// Set arbitrary data and metadata
-token.data = serde_json::json!({
+// Add any data
+resource.data = serde_json::json!({
     "title": "My Item",
     "priority": "high"
 });
-token.set_metadata("department", serde_json::json!("engineering"));
+resource.metadata.insert("department".to_string(), serde_json::json!("engineering"));
 
-// Transition to any state via any transition
-token.transition_to(
+// Execute activity to any state via any activity
+resource.execute_activity(
     StateId::from("target_state"), 
-    TransitionId::from("transition_name")
+    ActivityId::from("activity_name")
 );
 
 // Full audit trail automatically maintained
-for event in &token.history {
+for event in &resource.history {
     println!("{} -> {} via {}", 
         event.from.as_str(), 
         event.to.as_str(), 
-        event.transition.as_str()
+        event.activity_id.as_str()
     );
 }
 ```
@@ -755,7 +793,7 @@ let workflow = WorkflowDefinition {
         StateId::from("middle"), 
         StateId::from("end")
     ],
-    transitions: vec![
+    activities: vec![
         TransitionDefinition {
             id: TransitionId::from("begin"),
             from_states: vec![StateId::from("start")],
@@ -769,8 +807,8 @@ let workflow = WorkflowDefinition {
 // Validate workflow structure
 workflow.validate()?;
 
-// Check valid transitions
-let available = workflow.available_transitions(&StateId::from("start"));
+// Check valid activities
+let available = workflow.available_activities(&StateId::from("start"));
 ```
 
 ## 🎛️ Engine & Server API
@@ -785,9 +823,9 @@ let storage = Box::new(InMemoryStorage::default());
 let schema = create_schema_with_storage(storage);
 
 // Available operations:
-// - Query: workflows, tokens, availableTransitions
+// - Query: workflows, resources, availableActivities
 // - Mutation: createWorkflow, createToken, fireTransition  
-// - Subscription: tokenUpdates, workflowEvents (coming soon)
+// - Subscription: resourceUpdates, workflowEvents (coming soon)
 ```
 
 ### Production Server
@@ -816,9 +854,9 @@ server.start().await?;
 
 ### Benchmarks
 
-- **Token Creation**: ~100,000 tokens/second
-- **State Transitions**: ~10,000 transitions/second  
-- **Memory Usage**: <1MB per 10,000 active tokens
+- **Resource Creation**: ~100,000 resources/second
+- **State Activities**: ~10,000 activities/second
+- **Memory Usage**: <1MB per 10,000 active resources
 - **Startup Time**: <100ms cold start
 
 ### Distributed Architecture Ready
@@ -892,9 +930,9 @@ func DocumentWorkflow(ctx workflow.Context) error {
 
 ```rust
 // Circuit Breaker - Declarative state management  
-let mut token = Token::new("document_workflow", StateId::from("draft"));
-token.transition_to(StateId::from("review"), TransitionId::from("submit"));
-// Rich state history and concurrent token support
+let mut resource = Resource::new("document_workflow", StateId::from("draft"));
+resource.execute_activity(StateId::from("review"), ActivityId::from("submit"));
+// Rich state history and concurrent resource support
 ```
 
 ## 🧠 AI Agent Campaign Use Cases
@@ -917,14 +955,14 @@ mutation CreateContentCampaign {
       { id: "fact_check", fromStates: ["draft"], toState: "fact_check" }
       { id: "needs_revision", fromStates: ["fact_check"], toState: "draft" }  # Revision loop
       { id: "approve_facts", fromStates: ["fact_check"], toState: "edit" }
-      # ... more transitions
+      # ... more activities
     ]
   })
 }
 ```
 
 **Agent Coordination Benefits:**
-- **Parallel Processing**: Multiple agents can work on different tokens simultaneously
+- **Parallel Processing**: Multiple agents can work on different resources simultaneously
 - **Revision Loops**: Natural support for agent feedback and iteration  
 - **State Persistence**: Agents can pause/resume work with full context
 - **Audit Trail**: Complete history of which agents performed what actions
@@ -937,11 +975,11 @@ mutation CreateContentCampaign {
 examples/
 ├── rust/              # 🦀 Rust clients
 │   ├── basic_workflow.rs  # Direct model usage
-│   ├── token_demo.rs      # Core operations demo  
+│   ├── token_demo.rs      # Core operations demo
 │   └── graphql_client.rs  # GraphQL client demo
 └── typescript/        # 📜 TypeScript clients  
     ├── basic_workflow.ts  # GraphQL client demo
-    ├── token_demo.ts      # Token operations demo
+    ├── token_demo.ts      # Resource operations demo
     └── README.md          # Setup instructions
 ```
 
@@ -975,7 +1013,7 @@ Each language directory will contain **client examples only**:
 ### Advanced Features
 - **[Secure MCP Server](docs/SECURE_MCP_SERVER.md)** - GitHub Apps-style authentication for AI agents
 - **[Function Runner](docs/FUNCTION_RUNNER.md)** - Containerized function execution with workflow integration
-- **[Rules Engine](docs/RULES_ENGINE.md)** - Complex business logic evaluation and workflow transitions
+- **[Rules Engine](docs/RULES_ENGINE.md)** - Complex business logic evaluation and workflow activities
 - **[Webhook Integration Patterns](docs/WEBHOOK_INTEGRATION_PATTERNS.md)** - Event-driven workflows and external integrations
 
 ## 🤝 Contributing
@@ -1003,7 +1041,7 @@ open http://localhost:4000/graphql
 ## 📈 Roadmap
 
 ### Phase 1: Core Engine (✅ Complete)
-- [x] Generic token and workflow models  
+- [x] Generic resource and workflow models
 - [x] GraphQL API with full CRUD operations
 - [x] Production-ready server binary
 - [x] Comprehensive client examples and documentation
@@ -1011,7 +1049,7 @@ open http://localhost:4000/graphql
 ### Phase 2: AI Integration & Local Support (✅ Complete)
 - [x] NATS JetStream integration for persistence
 - [x] Dynamic workflow stream creation
-- [x] Token transitions via NATS messaging
+- [x] Resource activities via NATS messaging
 - [x] Ollama integration with automatic model detection
 - [x] Multi-provider LLM routing (OpenAI, Anthropic, Google, Azure)
 - [x] Secure MCP server with GitHub Apps-style authentication

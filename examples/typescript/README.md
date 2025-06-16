@@ -10,7 +10,7 @@ These TypeScript examples prove that the **Rust backend is truly generic**:
 - 🦀 **Rust Server**: One main binary (`cargo run --bin server`)
 - 🌐 **GraphQL API**: Language-agnostic workflow definition and execution
 - 📜 **TypeScript Clients**: Define domain-specific workflows through GraphQL
-- 🔄 **State Management**: Same Petri Net guarantees regardless of client language
+- 🔄 **State Management**: Same workflow guarantees regardless of client language
 
 ## 🚀 Quick Start
 
@@ -42,7 +42,7 @@ npm install
 # Architecture demonstration
 npm run demo:basic
 
-# Core token operations  
+# Core resource operations  
 npm run demo:token
 
 # Function system demonstration
@@ -74,20 +74,20 @@ Shows how TypeScript defines workflows via GraphQL and executes them on the gene
 - ✅ **TypeScript Application Development** workflow definition
 - ✅ **Revision loops** and **cycles** (impossible with DAGs)
 - ✅ **Client-side domain logic** sent to generic backend
-- ✅ **GraphQL mutations** for workflow creation and token management
+- ✅ **GraphQL mutations** for workflow creation and resource management
 
 **Run:**
 ```bash
 npm run demo:basic
 ```
 
-### `token_demo.ts` - **Core Token Operations**
+### `token_demo.ts` - **Core Resource Operations**
 
-Deep dive into token operations via GraphQL, showing TypeScript-specific data handling.
+Deep dive into resource operations via GraphQL, showing TypeScript-specific data handling.
 
 **Key Features:**
 - ✅ **AI-Powered Content Creation** workflow with revision cycles
-- ✅ **TypeScript-specific token data** (blog post metadata)
+- ✅ **TypeScript-specific resource data** (blog post metadata)
 - ✅ **Client-side analysis** of workflow performance
 - ✅ **History tracking** and duration calculations
 
@@ -237,11 +237,11 @@ npm run demo:ollama
 ### Direct Rust Usage (Server-Side)
 ```rust
 // examples/rust/basic_workflow.rs - Direct model access
-use circuit_breaker::{Token, StateId, WorkflowDefinition};
+use circuit_breaker::{Resource, StateId, WorkflowDefinition};
 
 // Direct access to core models
-let mut token = Token::new("workflow_id", StateId::from("initial"));
-token.transition_to(StateId::from("target"), TransitionId::from("transition"));
+let mut resource = Resource::new("workflow_id", StateId::from("initial"));
+resource.execute_activity(StateId::from("target"), ActivityId::from("activity"));
 ```
 
 ### GraphQL Client Usage (Any Language)
@@ -251,8 +251,8 @@ const client = new CircuitBreakerClient('http://localhost:4000/graphql');
 
 // Same API that Rust, Python, Go, Java use
 const result = await client.request(gql`
-  mutation CreateToken($input: TokenCreateInput!) {
-    createToken(input: $input) { id place }
+  mutation CreateResource($input: ResourceCreateInput!) {
+    createResource(input: $input) { id state }
   }
 `, { input: { workflowId: "any_workflow", data: {...} } });
 ```
@@ -261,7 +261,7 @@ const result = await client.request(gql`
 // examples/rust/graphql_client.rs - Rust can also use GraphQL!
 let client = reqwest::Client::new();
 let response = client.post("http://localhost:4000/graphql")
-    .json(&create_token_query)
+    .json(&create_resource_query)
     .send().await?;
 ```
 
@@ -286,9 +286,9 @@ Client Language → GraphQL → Generic Rust Backend
 ### 3. **State Managed Workflows**
 All languages work with the same **state management paradigm**:
 - ✅ **Cycles supported** (revision loops, rollbacks)
-- ✅ **Concurrent tokens** in different states
-- ✅ **Complex transitions** with multiple sources
-- ✅ **Mathematical guarantees** via Petri Nets
+- ✅ **Concurrent resources** in different states
+- ✅ **Complex activities** with multiple sources
+- ✅ **Mathematical guarantees** via workflow modeling
 
 ### 4. **Advanced Rules Engine**
 The rules engine provides sophisticated condition evaluation:
@@ -423,10 +423,10 @@ RuleBuilder.or('publish_ready', 'Ready to publish', [
 ```typescript
 // Begin with basic workflows
 const workflow = {
-  places: ['draft', 'review', 'published'],
-  transitions: [
-    { id: 'submit', fromPlaces: ['draft'], toPlace: 'review' },
-    { id: 'publish', fromPlaces: ['review'], toPlace: 'published' }
+  states: ['draft', 'review', 'published'],
+  activities: [
+    { id: 'submit', fromStates: ['draft'], toState: 'review' },
+    { id: 'publish', fromStates: ['review'], toState: 'published' }
   ]
 };
 ```
@@ -434,7 +434,7 @@ const workflow = {
 ### 2. **Add Rules Gradually**
 ```typescript
 // Add rules as business logic becomes clear
-transition.rules = [
+activity.rules = [
   RuleBuilder.fieldExists('has_content', 'content'),
   RuleBuilder.fieldGreaterThan('quality_score', 'score', 8)
 ];
@@ -443,7 +443,7 @@ transition.rules = [
 ### 3. **Use Client-Side Preview**
 ```typescript
 // Implement local rule evaluation for immediate UI feedback
-const canTransition = clientEngine.canTransition(token, transition);
+const canExecute = clientEngine.canExecuteActivity(resource, activity);
 // Then validate on server for authoritative result
 ```
 
@@ -457,8 +457,8 @@ interface ArticleData {
   tags: string[];
 }
 
-// Use with token data
-const token: Token & { data: ArticleData } = ...;
+// Use with resource data
+const resource: Resource & { data: ArticleData } = ...;
 ```
 
 ## 🎨 Client Feature Showcase
@@ -469,7 +469,7 @@ The TypeScript examples demonstrate advanced client capabilities:
 - **GraphQL Operations**: Simplified GraphQL query/mutation execution
 - **Type Safety**: Full TypeScript interfaces for all data structures
 - **Error Handling**: Proper error handling for network and GraphQL errors
-- **Workflow Management**: Create workflows, tokens, and fire transitions
+- **Workflow Management**: Create workflows, resources, and execute activities
 
 ### `AdvancedGraphQLClient`
 - **Performance Testing**: Built-in benchmarking utilities
@@ -487,7 +487,7 @@ The TypeScript examples demonstrate advanced client capabilities:
 | Feature | Rust Examples | TypeScript Examples |
 |---------|---------------|-------------------|
 | **Basic Workflows** | ✅ `basic_workflow.rs` | ✅ `basic_workflow.ts` |
-| **Token Operations** | ✅ `token_demo.rs` | ✅ `token_demo.ts` |
+| **Resource Operations** | ✅ `resource_demo.rs` | ✅ `token_demo.ts` |
 | **Function System** | ✅ `function_demo.rs` | ✅ `function_demo.ts` |
 | **Rules Engine** | ✅ `rules_engine_demo.rs` | ✅ `rules_engine_demo.ts` |
 | **GraphQL Client** | ✅ `graphql_client.rs` | ✅ `graphql_client.ts` |
