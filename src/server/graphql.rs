@@ -18,8 +18,9 @@ use tracing::{debug, info};
 use crate::engine::{
     agents::{AgentEngine, AgentEngineConfig, AgentStorage, InMemoryAgentStorage},
     graphql::{
-        create_schema_with_agents, create_schema_with_nats, create_schema_with_nats_and_agents,
-        create_schema_with_storage, Mutation, Query, Subscription,
+        create_schema_with_agents, create_schema_with_full_storage, create_schema_with_nats,
+        create_schema_with_nats_and_agents, create_schema_with_storage, Mutation, Query,
+        Subscription,
     },
     nats_storage::{NATSStorage, NATSStorageConfig, NATSStorageWrapper},
     rules::RulesEngine,
@@ -52,6 +53,7 @@ pub struct GraphQLServer {
     agent_storage: Option<std::sync::Arc<dyn AgentStorage>>,
     agent_engine: Option<AgentEngine>,
     nats_storage: Option<std::sync::Arc<NATSStorage>>,
+    rule_storage: Option<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>,
 }
 
 impl GraphQLServer {
@@ -62,6 +64,7 @@ impl GraphQLServer {
             agent_storage: None,
             agent_engine: None,
             nats_storage: None,
+            rule_storage: None,
         }
     }
 
@@ -101,24 +104,46 @@ impl GraphQLServer {
         self
     }
 
+    pub fn with_rule_storage(
+        mut self,
+        rule_storage: std::sync::Arc<dyn crate::engine::rules::RuleStorage>,
+    ) -> Self {
+        self.rule_storage = Some(rule_storage);
+        self
+    }
+
     pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Add default workflows
         self.add_default_workflows().await?;
 
-        let schema = match (self.nats_storage, self.agent_storage, self.agent_engine) {
-            (Some(nats_storage), Some(agent_storage), Some(agent_engine)) => {
+        let schema = match (
+            self.nats_storage,
+            self.agent_storage,
+            self.agent_engine,
+            self.rule_storage,
+        ) {
+            (Some(nats_storage), Some(agent_storage), Some(agent_engine), Some(rule_storage)) => {
+                info!("🎯 Starting server with full storage support (NATS + Agents + Rules)");
+                create_schema_with_full_storage(
+                    nats_storage,
+                    agent_storage,
+                    std::sync::Arc::new(agent_engine),
+                    rule_storage,
+                )
+            }
+            (Some(nats_storage), Some(agent_storage), Some(agent_engine), None) => {
                 info!("🤖 Starting server with NATS storage and AI agent support");
                 create_schema_with_nats_and_agents(nats_storage, agent_storage, agent_engine)
             }
-            (Some(nats_storage), _, _) => {
+            (Some(nats_storage), _, _, _) => {
                 info!("📡 Starting server with NATS storage support");
                 create_schema_with_nats(nats_storage)
             }
-            (None, Some(agent_storage), Some(agent_engine)) => {
+            (None, Some(agent_storage), Some(agent_engine), _) => {
                 info!("🤖 Starting server with AI agent support");
                 create_schema_with_agents(self.storage, agent_storage, agent_engine)
             }
-            (None, _, _) => {
+            (None, _, _, _) => {
                 info!("📋 Starting server with basic workflow support");
                 create_schema_with_storage(self.storage)
             }
@@ -319,6 +344,14 @@ impl GraphQLServerBuilder {
         self
     }
 
+    pub fn with_rule_storage(
+        mut self,
+        rule_storage: std::sync::Arc<dyn crate::engine::rules::RuleStorage>,
+    ) -> Self {
+        self.server = self.server.with_rule_storage(rule_storage);
+        self
+    }
+
     pub async fn with_nats(mut self, nats_url: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let nats_config = NATSStorageConfig {
             nats_urls: vec![nats_url.to_string()],
@@ -328,8 +361,14 @@ impl GraphQLServerBuilder {
         let nats_storage = std::sync::Arc::new(NATSStorage::new(nats_config).await?);
         let storage_wrapper = NATSStorageWrapper::new(nats_storage.clone());
 
+        // Create NATS client for rule storage
+        let nats_client = async_nats::connect(&nats_url).await?;
+        let rule_storage =
+            std::sync::Arc::new(crate::engine::rules::NATSRuleStorage::new(nats_client).await?);
+
         self.server = self.server.with_storage(Box::new(storage_wrapper));
         self.server = self.server.with_nats_storage(nats_storage);
+        self.server = self.server.with_rule_storage(rule_storage);
         Ok(self)
     }
 

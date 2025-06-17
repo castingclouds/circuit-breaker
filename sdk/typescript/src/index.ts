@@ -1,662 +1,295 @@
 /**
  * Circuit Breaker TypeScript SDK
  *
- * A comprehensive SDK for building and managing workflows using the Circuit Breaker
- * workflow engine. Provides type-safe APIs for workflows, resources, rules engine,
- * functions, LLM integration, and AI agents.
- *
- * @example
- * ```typescript
- * import { CircuitBreakerSDK, createWorkflow } from 'circuit-breaker-sdk';
- *
- * // Create SDK instance
- * const sdk = new CircuitBreakerSDK({
- *   graphqlEndpoint: 'http://localhost:4000/graphql'
- * });
- *
- * // Build a workflow
- * const workflow = createWorkflow('Order Processing')
- *   .addState('pending')
- *   .addState('processing')
- *   .addState('completed')
- *   .addTransition('pending', 'processing', 'start_processing')
- *   .addTransition('processing', 'completed', 'complete_order')
- *   .setInitialState('pending')
- *   .build();
- *
- * // Create the workflow
- * const workflowId = await sdk.workflows.create(workflow);
- *
- * // Create a resource
- * const resource = await sdk.resources.create({
- *   workflowId,
- *   data: { orderId: 'order-123', amount: 99.99 }
- * });
- * ```
+ * A simple, clean TypeScript client for the Circuit Breaker workflow engine.
+ * Mirrors the Rust SDK approach with minimal abstractions and direct API access.
  */
 
 // ============================================================================
-// Core Exports
+// Core Client
 // ============================================================================
 
-// Main SDK client
-export { CircuitBreakerSDK, createSDK, createSDKAsync } from "./core/client.js";
-
-// Core types
-export type {
-  SDKConfig,
-  LoggingConfig,
-  WorkflowDefinition,
-  ActivityDefinition,
-  Resource,
-  ResourceCreateInput,
-  ActivityExecuteInput,
-  HistoryEvent,
-} from "./core/types.js";
-
-// Error classes
-export {
-  CircuitBreakerError,
-  WorkflowError,
-  WorkflowNotFoundError,
-  WorkflowValidationError,
-  InvalidStateTransitionError,
-  ResourceError,
-  ResourceNotFoundError,
-  ResourceStateError,
-  ResourceValidationError,
-  StateTransitionError,
-  ActivityExecutionError,
-  RuleError,
-  RuleEvaluationError,
-  RuleNotFoundError,
-  RuleValidationError,
-  RuleTimeoutError,
-  FunctionError,
-  FunctionNotFoundError,
-  FunctionValidationError,
-  FunctionExecutionError,
-  FunctionTimeoutError,
-  ContainerError,
-  LLMError,
-  LLMProviderError,
-  LLMProviderNotFoundError,
-  LLMModelNotSupportedError,
-  LLMRateLimitError,
-  LLMQuotaExceededError,
-  AgentError,
-  AgentNotFoundError,
-  AgentConfigurationError,
-  NetworkError,
-  TimeoutError,
-  ConnectionError,
-  GraphQLError,
-  AuthenticationError,
-  AuthorizationError,
-  ValidationError,
-  SchemaValidationError,
-  ErrorFactory,
-  ErrorHandler,
-  // Error type guards
-  isCircuitBreakerError,
-  isWorkflowError,
-  isResourceError,
-  isRuleError,
-  isFunctionError,
-  isLLMError,
-  isAgentError,
-  isNetworkError,
-  isValidationError,
-} from "./core/errors.js";
+export { Client, ClientBuilder } from "./client.js";
+export type { ClientBuilderConfig } from "./client.js";
+export type { ClientConfig, PingResponse, ServerInfo } from "./types.js";
 
 // ============================================================================
-// Workflow Module Exports
+// API Clients
 // ============================================================================
 
 export {
+  WorkflowClient,
   WorkflowBuilder,
-  BranchBuilder,
-  ParallelBuilder,
-  LoopBuilder,
-  TryCatchBuilder,
   createWorkflow,
-  createLinearWorkflow,
-  createFromStateMachine,
-} from "./workflow/builder.js";
-
-export type {
-  WorkflowValidationResult,
-  BranchCondition,
-  ParallelBranch,
-  LoopCondition,
-} from "./workflow/builder.js";
-
-// Workflow manager
-export { WorkflowManager } from "./workflow/manager.js";
-export type {
-  WorkflowCreateInput,
-  WorkflowUpdateInput,
-  WorkflowSearchOptions,
-  WorkflowStats,
-  WorkflowWithStats,
-  WorkflowValidationOptions,
-  WorkflowValidationReport,
-  WorkflowHealthStatus,
-} from "./workflow/manager.js";
-
-// ============================================================================
-// Resources Module Exports
-// ============================================================================
-
-// Resource manager
+} from "./workflows.js";
+export { AgentClient, AgentBuilder, createAgent } from "./agents.js";
 export {
-  ResourceManager,
-  createResourceManager,
-  validateResourceDefinition,
-} from "./resources/manager.js";
-
-export type {
-  ResourceUpdateInput,
-  ResourceSearchOptions,
-  ResourceStats,
-  ResourceWithWorkflow,
-  StateTransitionInput,
-  StateTransitionResult,
-  ActivityExecutionResult,
-  BatchOperationOptions,
-  BatchOperationResult,
-  ResourceValidationOptions,
-  ResourceValidationReport,
-  ResourceHealthStatus,
-} from "./resources/manager.js";
-
-// Resource builder
-export {
-  ResourceBuilder,
-  ResourceBuilderResult,
-  BatchResourceBuilderResult,
-  ConditionalTransitionBuilder,
-  createResourceBuilder,
-  createResourceTemplate,
-  createResourceChain,
-} from "./resources/builder.js";
-
-export type {
-  ResourceBuilderOptions,
-  BatchResourceInput,
-  ConditionalTransition,
-  ResourceTemplate,
-  ResourceChain,
-} from "./resources/builder.js";
-
-// ============================================================================
-// Rules Engine Exports
-// ============================================================================
-
-export type {
-  RulesConfig,
-  Rule,
-  RuleType,
-  CompositeRule,
-  RuleContext,
-  RuleEvaluationResult,
-  RuleResult,
-  RuleValidationResult,
-  RuleEvaluator,
-} from "./core/types.js";
-
-// Rules engine
-export {
-  RulesEngine,
-  createRulesEngine,
-  validateRuleDefinition,
-  createSimpleRule,
-  createJavaScriptRule,
-  createCompositeRule,
-  createCustomRule,
-} from "./rules/engine.js";
-
-export type {
-  RuleCreateInput,
-  RuleUpdateInput,
-  RuleSearchOptions,
-  RuleStats,
-  RuleWithStats,
-  RuleEvaluationOptions,
-  BatchRuleEvaluationInput,
-  BatchRuleEvaluationResult,
-  RuleHealthStatus,
-} from "./rules/engine.js";
-
-// Rule builder
-export {
-  RuleBuilder,
-  SimpleRuleBuilder,
-  JavaScriptRuleBuilder,
-  CompositeRuleBuilder,
-  CustomRuleBuilder,
-  RuleBuilderResult,
-  BatchRuleBuilder,
-  ConditionalGroupBuilder,
-  RuleChainBuilder,
-  createRuleBuilder,
-  createRuleTemplate,
-  CommonTemplates,
-} from "./rules/builder.js";
-
-export type {
-  RuleBuilderOptions,
-  RuleTemplate,
-  ConditionalRuleGroup,
-  RuleChain,
-} from "./rules/builder.js";
-
-// ============================================================================
-// Function System Exports
-// ============================================================================
-
-export type {
-  FunctionConfig,
-  DockerConfig,
-  FunctionDefinition,
-  ContainerConfig,
-  ContainerMount,
-  ResourceLimits,
-  EventTrigger,
-  EventTriggerType,
-  InputMapping,
-  FunctionTrigger,
-  RetryConfig,
-  FunctionChain,
-  ChainCondition,
-  FunctionResult,
-  ExecutionStatus,
-  ResourceUsage,
-} from "./core/types.js";
-
-// Function system
-export {
-  FunctionManager,
-  createFunctionManager,
-  validateFunctionDefinition,
-} from "./functions/manager.js";
-
-export type {
-  FunctionCreateInput,
-  FunctionUpdateInput,
-  FunctionSearchOptions,
-  FunctionExecuteInput,
-  FunctionStats,
-  FunctionWithStats,
-  ContainerStatus,
-  BatchExecutionInput,
-  BatchExecutionResult,
-  FunctionHealthStatus,
-  ContainerLogOptions,
-} from "./functions/manager.js";
-
-// Function builder
-export {
+  FunctionClient,
   FunctionBuilder,
-  FunctionBuilderInstance,
-  FunctionBuilderResult,
-  BatchFunctionBuilder,
-  FunctionGroupBuilder,
-  FunctionPipelineBuilder,
-  createFunctionBuilder,
-  createFunctionTemplate,
-  CommonTemplates,
-} from "./functions/builder.js";
-
-export type {
-  FunctionBuilderOptions,
-  FunctionTemplate,
-  FunctionGroup,
-  FunctionPipeline,
-} from "./functions/builder.js";
-
-// ============================================================================
-// LLM Router Exports
-// ============================================================================
-
-export type {
-  LLMConfig,
-  LLMProviderConfig,
-  LLMProviderType,
-  LoadBalancingConfig,
-  FailoverConfig,
-  CircuitBreakerConfig,
-  RateLimitConfig,
-  UsageTrackingConfig,
-  ChatCompletionRequest,
-  ChatMessage,
-  ChatRole,
-  ToolCall,
-  Tool,
-  ChatCompletionResponse,
-  Choice,
-  Usage,
-  ChatCompletionChunk,
-  ChoiceDelta,
-  MessageDelta,
-  ToolCallDelta,
-} from "./core/types.js";
-
-// LLM router exports
-export { LLMRouter, createLLMRouter, DefaultLLMConfigs } from "./llm/router.js";
-export type {
-  RoutingStrategy,
-  ProviderHealth,
-  RoutingInfo,
-  LLMRouterStats,
-  LLMRouterConfig,
-} from "./llm/router.js";
-
+  createFunction,
+} from "./functions.js";
 export {
-  LLMProvider,
-  createOpenAIProvider,
-  createAnthropicProvider,
-  createOllamaProvider,
-  ModelRegistry,
-  getProviderForModel,
-  isModelSupported,
-  getModelsForProvider,
-  ModelCapabilities,
-  validateProviderConfig,
-  DefaultProviderConfigs,
-  checkProviderHealth,
-  checkAllProviderHealth,
-} from "./llm/providers.js";
-export type {
-  ModelPricing,
-  ProviderCapabilities,
-  ProviderMetrics,
-} from "./llm/providers.js";
-
+  ResourceClient,
+  ResourceBuilder,
+  createResource,
+} from "./resources.js";
 export {
-  StreamingHandler,
-  StreamingSession,
-  createStreamingHandler,
-  streamFromAsyncGenerator,
-  StreamUtils,
-} from "./llm/streaming.js";
-export type {
-  StreamConfig,
-  StreamStats,
-  StreamEvent,
-} from "./llm/streaming.js";
-
+  RuleClient,
+  RuleBuilder,
+  LegacyRuleBuilder,
+  ClientRuleEngine,
+  createRule,
+  createLegacyRule,
+  createRuleEngine,
+  evaluateRule,
+  CommonRules,
+} from "./rules.js";
 export {
-  LLMBuilder,
-  MultiProviderBuilder,
-  CostOptimizedBuilder,
-  PerformanceBuilder,
-  createLLMBuilder,
-  createMultiProviderBuilder,
-  createCostOptimizedBuilder,
-  createPerformanceBuilder,
-  LLMBuilderTemplates,
-} from "./llm/builder.js";
-export type {
-  LLMBuilderConfig,
-  ProviderBuilderConfig,
-  HealthCheckBuilderConfig,
-  CostTrackingBuilderConfig,
-  LoadBalancingBuilderConfig,
-  FailoverBuilderConfig,
-  LLMBuilderResult,
-} from "./llm/builder.js";
+  LLMClient,
+  ChatBuilder,
+  Conversation,
+  createChat,
+  createConversation,
+  quickChat,
+  COMMON_MODELS,
+} from "./llm.js";
 
 // ============================================================================
-// Agent System Exports
+// Types
 // ============================================================================
 
 export type {
-  AgentDefinition,
+  // Common types
+  PingResponse,
+  ServerInfo,
+  PaginationOptions,
+  PaginatedResult,
+  Result,
+  ExecutionStatus,
+
+  // Workflow types
+  Workflow,
+  WorkflowDefinition,
+  WorkflowState,
+  WorkflowTransition,
+  WorkflowAction,
+  WorkflowCondition,
+  WorkflowExecution,
+  WorkflowCreateInput,
+
+  // Agent types
+  Agent,
   AgentType,
   AgentConfig,
   MemoryConfig,
-  StateMachineConfig,
-  AgentState,
-  StateTransition,
-  StateAction,
-} from "./core/types.js";
+  Tool,
+  AgentCreateInput,
 
-// Agent builder exports
-export {
-  AgentBuilder,
-  ConversationalAgent,
-  StateMachineAgent,
-  Agent,
-  MemoryManager,
-  createAgent,
-  createConversationalAgent,
-  createWorkflowAgent,
-  ConversationalAgentBuilder,
-  WorkflowAgentBuilder,
-  AgentTemplates,
-} from "./agents/builder.js";
-export type {
-  AgentBuilderConfig,
-  ConversationalAgentConfig,
-  StateMachineAgentConfig,
-  MemoryBuilderConfig,
-  ToolBuilderConfig,
-  ToolImplementation,
-  AgentContext,
-  AgentBuilderResult,
-} from "./agents/builder.js";
+  // Function types
+  Function,
+  FunctionConfig,
+  DockerConfig,
+  ContainerMount,
+  ResourceLimits,
+  FunctionExecution,
+  FunctionCreateInput,
 
-// Conversational agent exports
-export {
-  ConversationalAgent as ConversationalAgentImpl,
-  createConversationalAgent as createConversationalAgentDirect,
-  ConversationalTemplates,
-} from "./agents/conversational.js";
-export type {
-  ConversationalConfig,
-  ConversationTurn,
-  ConversationState,
-  ConversationMetrics,
-} from "./agents/conversational.js";
+  // Resource types
+  Resource,
+  ResourceCreateInput,
+  ResourceUpdateInput,
 
-// State machine agent exports
-export {
-  StateMachineAgent as StateMachineAgentImpl,
-  createStateMachineAgent,
-  StateMachineTemplates,
-} from "./agents/state-machine.js";
-export type {
-  StateMachineAgentConfig as StateMachineConfigDetailed,
-  StateExecutionContext,
-  StateTransitionResult,
-  StateMachineMetrics,
-  StateMachineSession,
-} from "./agents/state-machine.js";
+  // LLM types
+  ChatMessage,
+  ChatCompletionRequest,
+  ChatCompletionResponse,
+  Choice,
+  Usage,
+} from "./types.js";
 
 // ============================================================================
-// Utility Exports
+// Rule Types (from rules.js)
 // ============================================================================
 
-export { GraphQLClient, QueryBuilder } from "./utils/graphql.js";
 export type {
-  GraphQLRequest,
-  GraphQLResponse,
-  GraphQLErrorResponse,
-  GraphQLClientConfig,
-  RequestLog,
-} from "./utils/graphql.js";
+  Rule,
+  RuleCondition,
+  RuleEvaluationResult,
+  RuleCreateInput,
+  LegacyRule,
+} from "./rules.js";
+
+// ============================================================================
+// Error Classes
+// ============================================================================
 
 export {
-  Logger,
-  createLogger,
-  createComponentLogger,
-  formatError,
-  sanitizeForLogging,
-  generateCorrelationId,
-  generateRequestId,
-  defaultLogger,
-  LOG_LEVELS,
-  isLogLevel,
-  compareLogLevels,
-} from "./utils/logger.js";
-export type {
-  LogLevel,
-  LogEntry,
-  LoggerConfig,
-  LogContext,
-  LogStats,
-} from "./utils/logger.js";
+  CircuitBreakerError,
+  NetworkError,
+  ValidationError,
+  NotFoundError,
+} from "./types.js";
+
+// ============================================================================
+// Re-export history event from resources
+// ============================================================================
+
+// export type { HistoryEvent } from "./resources.js"; // Not currently exported
+
+// ============================================================================
+// Re-export LLM specific types
+// ============================================================================
 
 export type {
-  JSONSchema,
-  PaginationOptions,
-  PaginatedResult,
-  FilterOptions,
-  DeepPartial,
-  RequireFields,
-  PartialExcept,
-  ArrayElement,
-  Awaited,
-} from "./core/types.js";
+  LLMModel,
+  ChatCompletionChunk,
+  ChoiceDelta,
+  MessageDelta,
+  TokenCount,
+  ProviderHealth,
+} from "./llm.js";
 
 // ============================================================================
 // Constants
 // ============================================================================
 
 export const SDK_VERSION = "0.1.0";
-
-export const DEFAULT_GRAPHQL_ENDPOINT = "http://localhost:4000/graphql";
-
+export const DEFAULT_BASE_URL = "http://localhost:3000";
 export const DEFAULT_TIMEOUT = 30000;
 
-export const SUPPORTED_RULE_TYPES = [
-  "simple",
-  "composite",
-  "custom",
-  "javascript",
-] as const;
-
-export const SUPPORTED_EXECUTION_STATUSES = [
-  "pending",
-  "running",
-  "success",
-  "failure",
-  "timeout",
-  "cancelled",
-] as const;
-
-export const SUPPORTED_LLM_PROVIDERS = [
-  "openai",
-  "anthropic",
-  "ollama",
-  "huggingface",
-  "cohere",
-  "custom",
-] as const;
-
-export const SUPPORTED_AGENT_TYPES = [
-  "conversational",
-  "state_machine",
-  "workflow_integrated",
-] as const;
-
 // ============================================================================
-// Helper Functions
+// Main SDK Class (Convenience)
 // ============================================================================
 
 /**
- * Check if the SDK is compatible with the server version
+ * Main SDK class that provides access to all API clients
  */
-export function isCompatibleVersion(serverVersion: string): boolean {
-  // Simple version compatibility check
-  // In a real implementation, this would do semantic version comparison
-  const [serverMajor] = serverVersion.split(".");
-  const [sdkMajor] = SDK_VERSION.split(".");
-  return serverMajor === sdkMajor;
-}
+export class CircuitBreakerSDK {
+  private client: Client;
 
-/**
- * Get SDK information
- */
-export function getSDKInfo(): {
-  version: string;
-  supportedFeatures: string[];
-  defaultEndpoint: string;
-} {
-  return {
-    version: SDK_VERSION,
-    supportedFeatures: [
-      "workflows",
-      "resources",
-      "rules",
-      "functions",
-      "llm",
-      "agents",
-      "graphql",
-      "streaming",
-      "validation",
-      "error-handling",
-    ],
-    defaultEndpoint: DEFAULT_GRAPHQL_ENDPOINT,
-  };
-}
+  constructor(config: ClientConfig) {
+    this.client = Client.builder()
+      .baseUrl(config.baseUrl)
+      .timeout(config.timeout || DEFAULT_TIMEOUT)
+      .build();
 
-/**
- * Validate SDK configuration
- */
-export function validateSDKConfig(config: any): {
-  valid: boolean;
-  errors: string[];
-} {
-  const errors: string[] = [];
+    if (config.apiKey) {
+      // Rebuild with API key
+      this.client = Client.builder()
+        .baseUrl(config.baseUrl)
+        .apiKey(config.apiKey)
+        .timeout(config.timeout || DEFAULT_TIMEOUT)
+        .build();
+    }
 
-  if (!config) {
-    errors.push("Configuration is required");
-    return { valid: false, errors };
-  }
+    // Add custom headers if provided
+    if (config.headers) {
+      let builder = Client.builder()
+        .baseUrl(config.baseUrl)
+        .timeout(config.timeout || DEFAULT_TIMEOUT);
 
-  if (!config.graphqlEndpoint) {
-    errors.push("GraphQL endpoint is required");
-  } else {
-    try {
-      new URL(config.graphqlEndpoint);
-    } catch {
-      errors.push("Invalid GraphQL endpoint URL");
+      if (config.apiKey) {
+        builder = builder.apiKey(config.apiKey);
+      }
+
+      Object.entries(config.headers).forEach(([key, value]) => {
+        builder = builder.header(key, value);
+      });
+
+      this.client = builder.build();
     }
   }
 
-  if (
-    config.timeout !== undefined &&
-    (typeof config.timeout !== "number" || config.timeout <= 0)
-  ) {
-    errors.push("Timeout must be a positive number");
+  /**
+   * Test connection to the server
+   */
+  async ping(): Promise<PingResponse> {
+    return this.client.ping();
   }
 
-  if (config.debug !== undefined && typeof config.debug !== "boolean") {
-    errors.push("Debug must be a boolean");
+  /**
+   * Get server information
+   */
+  async info(): Promise<ServerInfo> {
+    return this.client.info();
   }
 
-  if (config.headers !== undefined && typeof config.headers !== "object") {
-    errors.push("Headers must be an object");
+  /**
+   * Access workflows API
+   */
+  workflows(): WorkflowClient {
+    return this.client.workflows();
   }
 
-  return { valid: errors.length === 0, errors };
+  /**
+   * Access agents API
+   */
+  agents(): AgentClient {
+    return this.client.agents();
+  }
+
+  /**
+   * Access functions API
+   */
+  functions(): FunctionClient {
+    return this.client.functions();
+  }
+
+  /**
+   * Access resources API
+   */
+  resources(): ResourceClient {
+    return this.client.resources();
+  }
+
+  /**
+   * Access rules API
+   */
+  rules(): RuleClient {
+    return this.client.rules();
+  }
+
+  /**
+   * Access LLM API
+   */
+  llm(): LLMClient {
+    return this.client.llm();
+  }
+
+  /**
+   * Get the underlying client
+   */
+  getClient(): Client {
+    return this.client;
+  }
 }
 
 // ============================================================================
-// Re-export Common GraphQL Fragments
+// Convenience Factory Functions
 // ============================================================================
 
-export {
-  WORKFLOW_FRAGMENT,
-  RESOURCE_FRAGMENT,
-  ACTIVITY_FRAGMENT,
-} from "./utils/graphql.js";
+/**
+ * Create a new SDK instance
+ */
+export function createSDK(config: ClientConfig): CircuitBreakerSDK {
+  return new CircuitBreakerSDK(config);
+}
+
+/**
+ * Create a simple SDK instance with just a base URL
+ */
+export function createSimpleSDK(
+  baseUrl: string,
+  apiKey?: string,
+): CircuitBreakerSDK {
+  return new CircuitBreakerSDK({
+    baseUrl,
+    apiKey,
+  });
+}
 
 // ============================================================================
 // Default Export
 // ============================================================================
 
-// Export the main SDK class as the default export for convenience
-export { CircuitBreakerSDK as default } from "./core/client.js";
+export default CircuitBreakerSDK;

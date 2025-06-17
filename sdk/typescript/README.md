@@ -1,24 +1,6 @@
 # Circuit Breaker TypeScript SDK
 
-A comprehensive TypeScript SDK for building and managing workflows using the Circuit Breaker workflow engine. This SDK provides type-safe APIs for workflows, resources, rules engine, functions, LLM integration, and AI agents.
-
-[![npm version](https://badge.fury.io/js/circuit-breaker-sdk.svg)](https://badge.fury.io/js/circuit-breaker-sdk)
-[![TypeScript](https://img.shields.io/badge/%3C%2F%3E-TypeScript-%230074c1.svg)](http://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
-## Features
-
-- 🔄 **Fluent Workflow Builder** - Intuitive API for creating complex workflows
-- 📊 **Resource Management** - Track and manage workflow execution state
-- 🎯 **Rules Engine** - Powerful rule evaluation for state transitions
-- 🔧 **Function System** - Docker-based serverless function execution
-- 🤖 **LLM Integration** - Multi-provider AI routing with intelligent failover
-- 🧠 **AI Agents** - Conversational and state machine agents with memory
-- 🎯 **Agent Builder** - Fluent API for creating sophisticated AI agents
-- 🌐 **GraphQL API** - Type-safe communication with Circuit Breaker server
-- 📝 **Full TypeScript Support** - Complete type safety and IntelliSense
-- 🚨 **Error Handling** - Comprehensive error types and handling
-- 📊 **Monitoring** - Built-in logging, metrics, and health checks
+A simple, clean TypeScript client for the Circuit Breaker workflow engine. This SDK mirrors the Rust SDK approach with minimal abstractions and direct API access.
 
 ## Installation
 
@@ -26,473 +8,434 @@ A comprehensive TypeScript SDK for building and managing workflows using the Cir
 npm install circuit-breaker-sdk
 ```
 
-Or with yarn:
-
-```bash
-yarn add circuit-breaker-sdk
-```
-
 ## Quick Start
 
 ```typescript
-import { CircuitBreakerSDK, createWorkflow } from 'circuit-breaker-sdk';
+import { Client, createSDK } from 'circuit-breaker-sdk';
 
-// Create SDK instance
-const sdk = new CircuitBreakerSDK({
-  graphqlEndpoint: 'http://localhost:4000/graphql'
-});
-
-// Build a workflow
-const workflow = createWorkflow('Order Processing')
-  .addState('pending')
-  .addState('processing')
-  .addState('completed')
-  .addTransition('pending', 'processing', 'start_processing')
-  .addTransition('processing', 'completed', 'complete_order')
-  .setInitialState('pending')
+// Create a client
+const client = Client.builder()
+  .baseUrl('https://api.circuit-breaker.dev')
+  .apiKey('your-api-key')
   .build();
 
-// Create the workflow
-const workflowId = await sdk.workflows.create(workflow);
+// Test connection
+const info = await client.ping();
+console.log('Connected to Circuit Breaker v' + info.version);
 
-// Create a resource
-const resource = await sdk.resources.create({
-  workflowId,
-  data: { orderId: 'order-123', amount: 99.99 }
+// Or use the convenience SDK class
+const sdk = createSDK({
+  baseUrl: 'https://api.circuit-breaker.dev',
+  apiKey: 'your-api-key'
 });
 
-// Execute a state transition
-const result = await sdk.resources.executeActivity({
-  resourceId: resource.id,
-  activityId: 'start_processing',
-  data: { processedBy: 'system' }
+// Create a workflow
+const workflow = await sdk.workflows().create({
+  name: 'My Workflow',
+  description: 'Example workflow',
+  definition: {
+    states: [
+      { name: 'pending', type: 'normal' },
+      { name: 'completed', type: 'final' }
+    ],
+    transitions: [
+      { from: 'pending', to: 'completed', event: 'complete' }
+    ],
+    initial_state: 'pending'
+  }
 });
 
-console.log(`Order is now in state: ${result.state}`);
+// Execute the workflow
+const execution = await sdk.workflows().execute(workflow.id);
+console.log('Workflow executed:', execution.id);
 ```
 
 ## Core Concepts
 
-### Workflows
+### Client
 
-Workflows define the structure and flow of your business processes using states and activities (transitions).
+The `Client` class is the core HTTP client that handles communication with the Circuit Breaker server:
 
 ```typescript
-const workflow = createWorkflow('Document Approval')
-  .addStates(['submitted', 'under_review', 'approved', 'rejected'])
-  .setInitialState('submitted')
-  .addTransition('submitted', 'under_review', 'start_review')
-  .addTransition('under_review', 'approved', 'approve')
-  .addTransition('under_review', 'rejected', 'reject')
+const client = Client.builder()
+  .baseUrl('http://localhost:3000')
+  .apiKey('your-api-key')
+  .timeout(30000)
+  .header('X-Custom-Header', 'value')
   .build();
+```
+
+### API Clients
+
+Each domain has its own client accessible through the main client:
+
+- **Workflows**: `client.workflows()`
+- **Agents**: `client.agents()`
+- **Functions**: `client.functions()`
+- **Resources**: `client.resources()`
+- **Rules**: `client.rules()`
+- **LLM**: `client.llm()`
+
+## API Reference
+
+### Workflows
+
+```typescript
+const workflowClient = client.workflows();
+
+// Create workflow
+const workflow = await workflowClient.create({
+  name: 'Order Processing',
+  definition: {
+    states: [
+      { name: 'pending', type: 'normal' },
+      { name: 'processing', type: 'normal' },
+      { name: 'completed', type: 'final' }
+    ],
+    transitions: [
+      { from: 'pending', to: 'processing', event: 'start' },
+      { from: 'processing', to: 'completed', event: 'finish' }
+    ],
+    initial_state: 'pending'
+  }
+});
+
+// Execute workflow
+const execution = await workflowClient.execute(workflow.id, { orderId: '123' });
+
+// Get execution status
+const status = await workflowClient.getExecution(execution.id);
+```
+
+### Workflow Builder
+
+```typescript
+import { createWorkflow } from 'circuit-breaker-sdk';
+
+const workflow = createWorkflow('Order Processing')
+  .setDescription('Process customer orders')
+  .addState('pending')
+  .addState('processing')
+  .addState('completed', 'final')
+  .addTransition('pending', 'processing', 'start')
+  .addTransition('processing', 'completed', 'finish')
+  .setInitialState('pending')
+  .build();
+
+const created = await client.workflows().create(workflow);
+```
+
+### Agents
+
+```typescript
+const agentClient = client.agents();
+
+// Create agent
+const agent = await agentClient.create({
+  name: 'Customer Support',
+  type: 'conversational',
+  config: {
+    llm_provider: 'openai',
+    model: 'gpt-4',
+    temperature: 0.7,
+    system_prompt: 'You are a helpful customer support agent.'
+  }
+});
+
+// Chat with agent
+const response = await agentClient.chat(agent.id, [
+  { role: 'user', content: 'How can I return an item?' }
+]);
+```
+
+### Agent Builder
+
+```typescript
+import { createAgent } from 'circuit-breaker-sdk';
+
+const agent = createAgent('Support Bot')
+  .setType('conversational')
+  .setLLMProvider('openai')
+  .setModel('gpt-4')
+  .setTemperature(0.7)
+  .setSystemPrompt('You are a helpful assistant.')
+  .addTool('search', 'Search knowledge base', { query: 'string' })
+  .build();
+
+const created = await client.agents().create(agent);
+```
+
+### Functions
+
+```typescript
+const functionClient = client.functions();
+
+// Create JavaScript function
+const func = await functionClient.create({
+  name: 'calculate-tax',
+  runtime: 'node18',
+  code: `
+    exports.handler = async (input) => {
+      const { amount, rate } = input;
+      return { tax: amount * rate };
+    };
+  `
+});
+
+// Execute function
+const result = await functionClient.execute(func.id, { amount: 100, rate: 0.08 });
+```
+
+### Function Helpers
+
+```typescript
+import { createJavaScriptFunction, createPythonFunction, createDockerFunction } from 'circuit-breaker-sdk';
+
+// JavaScript function
+const jsFunc = createJavaScriptFunction(
+  'validate-email',
+  'exports.handler = (input) => ({ valid: input.email.includes("@") });'
+);
+
+// Python function
+const pyFunc = createPythonFunction(
+  'data-processing',
+  'def handler(input): return {"result": input["data"] * 2}'
+);
+
+// Docker function
+const dockerFunc = createDockerFunction(
+  'image-processor',
+  'python:3.9-slim',
+  { command: ['python', 'process.py'] }
+);
 ```
 
 ### Resources
 
-Resources are instances of workflows that track the current state and data.
+```typescript
+const resourceClient = client.resources();
+
+// Create resource
+const resource = await resourceClient.create({
+  workflow_id: workflow.id,
+  data: { orderId: 'ORD-123', amount: 99.99 }
+});
+
+// Transition resource state
+const updated = await resourceClient.transition(resource.id, 'processing');
+
+// Execute activity
+const result = await resourceClient.executeActivity(resource.id, 'validate-order');
+```
+
+### Rules
 
 ```typescript
-const resource = await sdk.resources.create({
-  workflowId: 'workflow-123',
-  data: {
-    documentId: 'doc-456',
-    title: 'Budget Proposal',
-    submittedBy: 'john.doe'
-  },
-  metadata: {
-    priority: 'high',
-    department: 'finance'
+const ruleClient = client.rules();
+
+// Create rule
+const rule = await ruleClient.create({
+  name: 'High Value Order',
+  type: 'simple',
+  definition: {
+    conditions: [
+      { field: 'amount', operator: 'greater_than', value: 1000 }
+    ],
+    actions: [
+      { type: 'webhook', config: { url: 'https://api.example.com/alerts' } }
+    ]
   }
 });
+
+// Evaluate rule
+const result = await ruleClient.evaluate(rule.id, { amount: 1500 });
 ```
 
-### Rules Engine
-
-Add business logic to control state transitions:
+### Rule Builder
 
 ```typescript
-// Simple field-based rules
-const workflow = createWorkflow('Order Processing')
-  .addTransition('pending', 'processing', 'start_processing')
-  .addSimpleRule('start_processing', 'payment_verified', '==', true)
-  .addSimpleRule('start_processing', 'inventory_available', '>', 0);
+import { createRule } from 'circuit-breaker-sdk';
 
-// Custom rule evaluators
-sdk.rules.registerRule('business_hours', {
-  name: 'business_hours',
-  type: 'custom',
-  evaluator: async (context) => {
-    const hour = new Date().getHours();
-    return hour >= 9 && hour <= 17;
-  },
-  description: 'Check if current time is within business hours'
-});
+const rule = createRule('Discount Eligibility')
+  .greaterThan('amount', 100)
+  .equals('customer_type', 'premium')
+  .setCombinator('and')
+  .webhook('https://api.example.com/discount')
+  .build();
+
+const created = await client.rules().create(rule);
 ```
 
-## Advanced Features
-
-### Function System
-
-Execute containerized functions as part of your workflows:
+### LLM
 
 ```typescript
-const processor = await sdk.functions.createFunction({
-  id: 'order-processor',
-  name: 'Order Data Processor',
-  container: {
-    image: 'node:18-alpine',
-    command: ['node', 'process-order.js']
-  },
-  triggers: [{
-    type: 'resource_state',
-    condition: 'state == "processing"',
-    inputMapping: 'full_data'
-  }],
-  inputSchema: {
-    type: 'object',
-    properties: {
-      orderId: { type: 'string' },
-      items: { type: 'array' }
-    }
-  }
-});
-```
+const llmClient = client.llm();
 
-### LLM Integration
+// Simple chat
+const response = await llmClient.chat('gpt-4', 'Hello, how are you?');
 
-Integrate with multiple LLM providers:
-
-```typescript
-// Configure providers
-await sdk.llm.addProvider('openai', {
-  apiKey: process.env.OPENAI_API_KEY,
-  baseURL: 'https://api.openai.com/v1'
-});
-
-await sdk.llm.addProvider('claude', {
-  apiKey: process.env.ANTHROPIC_API_KEY,
-  baseURL: 'https://api.anthropic.com'
-});
-
-// Use with automatic failover
-const completion = await sdk.llm.chat({
+// Full chat completion
+const completion = await llmClient.chatCompletion({
   model: 'gpt-4',
   messages: [
-    { role: 'user', content: 'Analyze this order data...' }
+    { role: 'system', content: 'You are a helpful assistant.' },
+    { role: 'user', content: 'Explain quantum computing' }
   ],
+  temperature: 0.7,
   max_tokens: 500
 });
+
+// Chat builder
+import { createChat } from 'circuit-breaker-sdk';
+
+const chat = createChat('gpt-4')
+  .setSystemPrompt('You are a coding assistant.')
+  .addUserMessage('Write a Python function to sort a list')
+  .setTemperature(0.2);
+
+const response = await chat.execute(llmClient);
 ```
 
-### AI Agents
-
-Build conversational and state machine agents:
+### Conversations
 
 ```typescript
-// Conversational agent
-const agent = sdk.agentBuilder('Customer Service Bot')
-  .conversational()
-  .setSystemPrompt('You are a helpful customer service representative')
-  .setLLMProvider('openai-gpt4')
-  .addWorkflowIntegration('customer-support-workflow')
-  .enableMemory(true)
-  .build();
+import { createConversation } from 'circuit-breaker-sdk';
 
-// State machine agent
-const stateMachineAgent = sdk.agentBuilder('Order Assistant')
-  .stateMachine()
-  .addState('greeting', 'Welcome! How can I help you today?')
-  .addState('collecting_info', 'Please provide your order details.')
-  .addState('processing', 'Processing your request...')
-  .addTransition('greeting', 'collecting_info', 'user_responds')
-  .addTransition('collecting_info', 'processing', 'info_complete')
-  .build();
-```
-
-### Advanced Workflow Patterns
-
-Create complex workflow patterns:
-
-```typescript
-// Branching workflow
-const workflow = createWorkflow('Order Routing')
-  .addState('received')
-  .addState('express_processing')
-  .addState('standard_processing')
-  .addState('completed')
-  .branch('received', [
-    { condition: 'data.priority == "high"', targetState: 'express_processing', activityId: 'route_express' },
-    { condition: 'data.amount > 1000', targetState: 'express_processing', activityId: 'route_high_value' }
-  ])
-  .otherwise('standard_processing', 'route_standard')
-  .addTransition('express_processing', 'completed', 'complete_express')
-  .addTransition('standard_processing', 'completed', 'complete_standard')
-  .build();
-
-// Parallel execution
-const parallelWorkflow = createWorkflow('Order Fulfillment')
-  .parallel('order_confirmed', [
-    {
-      name: 'inventory',
-      states: ['reserve_inventory', 'inventory_confirmed'],
-      activities: [/* inventory activities */],
-      joinState: 'inventory_ready'
-    },
-    {
-      name: 'shipping',
-      states: ['calculate_shipping', 'shipping_confirmed'],
-      activities: [/* shipping activities */],
-      joinState: 'shipping_ready'
-    }
-  ])
-  .joinAt('ready_to_ship')
-  .build();
-```
-
-## Configuration
-
-### SDK Configuration
-
-```typescript
-const sdk = new CircuitBreakerSDK({
-  graphqlEndpoint: 'http://localhost:4000/graphql',
-  timeout: 30000,
-  debug: true,
-  headers: {
-    'Authorization': 'Bearer your-token',
-    'User-Agent': 'MyApp/1.0.0'
-  },
-  logging: {
-    level: 'info',
-    structured: true,
-    logger: (level, message, meta) => {
-      console.log(`[${level}] ${message}`, meta);
-    }
-  },
-  rulesConfig: {
-    enableCache: true,
-    cacheSize: 1000,
-    evaluationTimeout: 5000
-  }
+const conversation = createConversation(llmClient, 'gpt-4', {
+  systemPrompt: 'You are a helpful assistant.',
+  maxContextLength: 4000
 });
-```
 
-### Environment Variables
+const response1 = await conversation.send('What is TypeScript?');
+const response2 = await conversation.send('How is it different from JavaScript?');
 
-```bash
-# Required
-CIRCUIT_BREAKER_ENDPOINT=http://localhost:4000/graphql
-
-# Optional
-CIRCUIT_BREAKER_TIMEOUT=30000
-CIRCUIT_BREAKER_DEBUG=true
-
-# For LLM integration
-OPENAI_API_KEY=your-openai-key
-ANTHROPIC_API_KEY=your-anthropic-key
+// Get conversation history
+const history = conversation.getHistory();
 ```
 
 ## Error Handling
 
-The SDK provides comprehensive error handling with specific error types:
+The SDK provides typed error classes:
 
 ```typescript
-import {
-  CircuitBreakerError,
-  WorkflowError,
-  ResourceError,
-  RuleError,
-  FunctionError,
-  LLMError,
-  NetworkError
-} from 'circuit-breaker-sdk';
+import { CircuitBreakerError, NetworkError, ValidationError, NotFoundError } from 'circuit-breaker-sdk';
 
 try {
-  await sdk.resources.executeActivity({
-    resourceId: 'invalid-id',
-    activityId: 'some-activity'
-  });
+  const workflow = await client.workflows().get('invalid-id');
 } catch (error) {
-  if (error instanceof ResourceError) {
-    console.log('Resource error:', error.message);
-    console.log('Error code:', error.code);
-    console.log('Context:', error.context);
+  if (error instanceof NotFoundError) {
+    console.log('Workflow not found');
   } else if (error instanceof NetworkError) {
-    console.log('Network error:', error.message);
-    if (error.isRetryable()) {
-      // Retry logic
-    }
-  } else {
-    console.log('Unknown error:', error);
+    console.log('Network issue:', error.message);
+  } else if (error instanceof ValidationError) {
+    console.log('Invalid request:', error.message);
+  } else if (error instanceof CircuitBreakerError) {
+    console.log('Circuit Breaker error:', error.code);
   }
 }
 ```
 
-## Monitoring and Observability
+## Configuration
 
-### Health Checks
+### Client Configuration
 
 ```typescript
-const health = await sdk.getHealth();
-console.log('System health:', health.healthy);
-console.log('Components:', health.components);
+interface ClientConfig {
+  baseUrl: string;
+  apiKey?: string;
+  timeout?: number;
+  headers?: Record<string, string>;
+}
 ```
 
-### Statistics
+### Environment Variables
 
-```typescript
-const stats = sdk.getStats();
-console.log('Total requests:', stats.requests.total);
-console.log('Success rate:', stats.requests.successful / stats.requests.total);
-console.log('Average response time:', stats.requests.averageResponseTime);
+You can also configure the SDK using environment variables:
+
+```bash
+CIRCUIT_BREAKER_BASE_URL=http://localhost:3000
+CIRCUIT_BREAKER_API_KEY=your-api-key
+CIRCUIT_BREAKER_TIMEOUT=30000
 ```
 
-### Logging
-
 ```typescript
-import { createLogger } from 'circuit-breaker-sdk';
-
-const logger = createLogger({
-  level: 'debug',
-  structured: true,
-  component: 'my-service'
-});
-
-logger.info('Processing order', { orderId: 'order-123' });
-logger.error('Order failed', { error: 'Payment declined' });
+const client = Client.builder()
+  .baseUrl(process.env.CIRCUIT_BREAKER_BASE_URL || 'http://localhost:3000')
+  .apiKey(process.env.CIRCUIT_BREAKER_API_KEY)
+  .timeout(parseInt(process.env.CIRCUIT_BREAKER_TIMEOUT || '30000'))
+  .build();
 ```
 
 ## Examples
 
-Check out the `examples/` directory for comprehensive examples:
+### Complete Workflow Example
 
-- `basic-workflow.ts` - Complete workflow creation and execution
-- `rules-demo.ts` - Advanced rules engine usage
-- `function-chains.ts` - Function system integration
-- `llm-integration.ts` - LLM provider setup and usage
-- `ai-agent.ts` - Building conversational AI agents
+```typescript
+import { Client, createWorkflow, createResource } from 'circuit-breaker-sdk';
 
-Run examples:
+async function main() {
+  const client = Client.builder()
+    .baseUrl('http://localhost:3000')
+    .build();
 
-```bash
-npm run example:basic
-npm run example:rules
-npm run example:functions
-npm run example:llm
-npm run example:agents
+  // Create workflow
+  const workflowDef = createWorkflow('Order Processing')
+    .addState('pending')
+    .addState('processing')
+    .addState('completed', 'final')
+    .addTransition('pending', 'processing', 'start')
+    .addTransition('processing', 'completed', 'finish')
+    .setInitialState('pending')
+    .build();
+
+  const workflow = await client.workflows().create(workflowDef);
+
+  // Create resource
+  const resourceDef = createResource(workflow.id)
+    .addData('orderId', 'ORD-123')
+    .addData('amount', 99.99)
+    .build();
+
+  const resource = await client.resources().create(resourceDef);
+
+  // Execute workflow
+  const execution = await client.workflows().execute(workflow.id, {
+    resourceId: resource.id
+  });
+
+  console.log('Workflow execution started:', execution.id);
+}
+
+main().catch(console.error);
 ```
-
-## API Reference
-
-### Core Classes
-
-- **`CircuitBreakerSDK`** - Main SDK client
-- **`WorkflowBuilder`** - Fluent workflow construction
-- **`WorkflowManager`** - Workflow CRUD operations
-- **`ResourceManager`** - Resource lifecycle management
-- **`RulesEngine`** - Rule evaluation and management
-- **`FunctionManager`** - Function system integration
-- **`LLMRouter`** - Multi-provider LLM routing
-- **`AgentBuilder`** - AI agent construction
-
-### Utility Classes
-
-- **`GraphQLClient`** - Type-safe GraphQL communication
-- **`Logger`** - Structured logging
-- **`ErrorHandler`** - Error management utilities
-
-For complete API documentation, visit: [https://docs.circuit-breaker.dev/sdk/typescript](https://docs.circuit-breaker.dev/sdk/typescript)
 
 ## TypeScript Support
 
-This SDK is built with TypeScript and provides complete type safety:
+The SDK is built with TypeScript and provides full type safety:
 
 ```typescript
-import type {
-  WorkflowDefinition,
-  ActivityDefinition,
-  Resource,
-  Rule,
-  FunctionDefinition,
-  ChatCompletionRequest
-} from 'circuit-breaker-sdk';
+import type { Workflow, WorkflowExecution, ExecutionStatus } from 'circuit-breaker-sdk';
 
-// All types are fully typed and validated
-const workflow: WorkflowDefinition = {
-  name: 'My Workflow',
-  states: ['start', 'end'],
-  activities: [],
-  initialState: 'start'
-};
+const workflow: Workflow = await client.workflows().get('workflow-id');
+const execution: WorkflowExecution = await client.workflows().execute(workflow.id);
+const status: ExecutionStatus = execution.status;
 ```
+
+## Comparison with Other SDKs
+
+This TypeScript SDK is designed to be simple and focused, similar to the Rust SDK. Unlike more complex SDK implementations, it:
+
+- **Minimal abstractions**: Direct API access without unnecessary layers
+- **Builder patterns**: Simple builders for constructing objects
+- **No lazy loading**: All functionality is available upfront
+- **Focused on client concerns**: No server-side features like health monitoring
+- **Type-safe**: Full TypeScript support with proper error handling
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Development Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/circuit-breaker/sdk.git
-cd sdk/typescript
-
-# Install dependencies
-npm install
-
-# Build the SDK
-npm run build
-
-# Run tests
-npm test
-
-# Run examples
-npm run example:basic
-```
-
-### Testing
-
-```bash
-# Unit tests
-npm run test
-
-# Integration tests
-npm run test:integration
-
-# End-to-end tests
-npm run test:e2e
-
-# Test coverage
-npm run test:coverage
-```
-
-## Roadmap
-
-- [ ] **Real-time Subscriptions** - GraphQL subscriptions for live updates
-- [ ] **Batch Operations** - Bulk workflow and resource operations
-- [ ] **Workflow Analytics** - Built-in metrics and analytics
-- [ ] **Plugin System** - Extensible plugin architecture
-- [ ] **Visual Workflow Editor** - Browser-based workflow designer
-- [ ] **Workflow Templates** - Pre-built workflow patterns
-- [ ] **Advanced Scheduling** - Cron-based and time-triggered workflows
-- [ ] **Multi-tenant Support** - Workspace and tenant isolation
-
-## Support
-
-- **Documentation**: [https://docs.circuit-breaker.dev](https://docs.circuit-breaker.dev)
-- **Examples**: [examples/](examples/)
-- **Issues**: [GitHub Issues](https://github.com/circuit-breaker/sdk/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/circuit-breaker/sdk/discussions)
-- **Discord**: [Join our community](https://discord.gg/circuit-breaker)
+Contributions are welcome! Please read our contributing guidelines and submit pull requests to our GitHub repository.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for version history and migration guides.
-
----
-
-Built with ❤️ by the Circuit Breaker team.
+MIT License - see LICENSE file for details.
