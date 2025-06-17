@@ -1,10 +1,15 @@
 # Circuit Breaker - Rust Edition
 
 > A unified platform providing **State Managed Workflows** via GraphQL, **OpenAI-compatible LLM routing** via REST API, **Secure Multi-Tenant MCP Server**, and **FinOps-optimized Agent Workflows**
+>
 > **Generic by design** - like Dagger's engine, the backend knows nothing about your domain
+>
 > **LiteLLM/OpenRouter Alternative** - BYOK (Bring Your Own Key) model with intelligent provider routing and cost optimization
+>
 > **Local AI Support** - Full Ollama and vLLM integration with automatic model detection and streaming
+>
 > **MCP Integration** - Secure, multi-tenant Model Context Protocol server with OAuth2.1 and fine-grained access control using JWT
+>
 > **Agent FinOps** - Cost tracking, budgeting, and optimization for AI agent workflows at scale
 
 ## Overview
@@ -14,10 +19,15 @@ Circuit Breaker is a distributed, high-performance platform that combines workfl
 ### Core Capabilities
 
 **🔄 State Managed Workflows** - Powered by Petri Nets for mathematical rigor and formal workflow verification
+
 **🧠 LLM Provider Routing** - OpenAI-compatible API with cost optimization and intelligent failover
+
 **🏠 Local AI Integration** - Native Ollama support with automatic model discovery and async loading
+
 **🌐 Multi-Provider Support** - OpenAI, Anthropic, Google, Azure OpenAI, Ollama, and custom endpoints
+
 **🛡️ Secure MCP Server** - Multi-tenant Model Context Protocol with OAuth2, RBAC, and audit logging
+
 **💰 Agent FinOps** - Real-time cost tracking, budget enforcement, and ROI analytics for AI workflows
 
 ### Key Principles
