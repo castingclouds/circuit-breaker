@@ -22,7 +22,7 @@ Circuit Breaker is a distributed, high-performance platform that combines workfl
 
 **🧠 LLM Provider Routing** - OpenAI-compatible API with cost optimization and intelligent failover
 
-**🏠 Local AI Integration** - Native Ollama support with automatic model discovery and async loading
+**🏠 Local AI Integration** - Native Ollama and vLLM support with automatic model discovery and async loading
 
 **🌐 Multi-Provider Support** - OpenAI, Anthropic, Google, Azure OpenAI, Ollama, and custom endpoints
 
@@ -30,16 +30,7 @@ Circuit Breaker is a distributed, high-performance platform that combines workfl
 
 **💰 Agent FinOps** - Real-time cost tracking, budget enforcement, and ROI analytics for AI workflows
 
-### Key Principles
-
-**Unified Server**: Single binary providing GraphQL, REST, and MCP APIs
-**OpenAI Compatible**: Drop-in replacement for OpenRouter.ai with BYOK model
-**Local AI First**: Native Ollama integration with zero-config model detection
-**State Managed Workflows**: Unlike DAG-based systems, supports cycles, concurrent states, and complex relationships
-**Mathematical Guarantees**: Petri Net formalism provides deadlock detection and state safety
-**Polyglot First**: Any language can use GraphQL, REST, or MCP APIs
-**Multi-Tenant by Design**: Secure isolation with granular access controls and resource quotas
-**FinOps Native**: Built-in cost tracking, budgeting, and optimization for AI operations at scale
+**✨ Polyglot First** - Any language can use GraphQL, REST, or MCP APIs
 
 ### Architecture
 
