@@ -30,9 +30,19 @@
 //! annotations to ensure the references remain valid.
 
 use crate::models::{
-    activity::ActivityRuleEvaluation, ActivityDefinition, Resource, Rule, WorkflowDefinition,
+    activity::ActivityRuleEvaluation, ActivityDefinition, Resource, Rule, RuleCondition,
+    WorkflowDefinition,
 };
-use std::collections::HashMap;
+use crate::{CircuitBreakerError, Result};
+use async_nats::{
+    jetstream::{self, kv},
+    Client,
+};
+use async_trait;
+use chrono::{DateTime, Utc};
+use futures::StreamExt;
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, sync::Arc};
 
 /// Central rules engine for evaluating resource activities
 ///
@@ -66,12 +76,210 @@ use std::collections::HashMap;
 /// - Use in multi-threaded environments
 /// - Test with different token/workflow combinations
 /// - Cache or persist engine instances
+/// Rule storage abstraction for CRUD operations on rules
+#[async_trait::async_trait]
+pub trait RuleStorage: Send + Sync {
+    /// Create a new rule
+    async fn create_rule(&self, rule: StoredRule) -> Result<StoredRule>;
+
+    /// Get a rule by ID
+    async fn get_rule(&self, id: &str) -> Result<Option<StoredRule>>;
+
+    /// List all rules, optionally filtered by tags
+    async fn list_rules(&self, tags: Option<Vec<String>>) -> Result<Vec<StoredRule>>;
+
+    /// Update an existing rule
+    async fn update_rule(&self, id: &str, rule: StoredRule) -> Result<StoredRule>;
+
+    /// Delete a rule
+    async fn delete_rule(&self, id: &str) -> Result<bool>;
+
+    /// Get rules for a specific workflow
+    async fn get_workflow_rules(&self, workflow_id: &str) -> Result<Vec<StoredRule>>;
+}
+
+/// A rule with metadata for storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredRule {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub condition: RuleCondition,
+    pub version: i32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub created_by: Option<String>,
+    pub tags: Vec<String>,
+    pub workflow_id: Option<String>, // If rule is workflow-specific
+}
+
+impl From<StoredRule> for Rule {
+    fn from(stored: StoredRule) -> Self {
+        Rule {
+            id: stored.id,
+            description: stored.description,
+            condition: stored.condition,
+        }
+    }
+}
+
+/// NATS KV-based rule storage implementation
+pub struct NATSRuleStorage {
+    kv_store: kv::Store,
+}
+
+impl NATSRuleStorage {
+    /// Create a new NATS rule storage
+    pub async fn new(nats_client: Client) -> Result<Self> {
+        let js = jetstream::new(nats_client);
+
+        // Create or get the rules KV bucket
+        let kv_store = js
+            .create_key_value(kv::Config {
+                bucket: "circuit_breaker_rules".to_string(),
+                description: "Circuit Breaker Rules Storage".to_string(),
+                max_value_size: 1024 * 1024, // 1MB max rule size
+                history: 10,                 // Keep last 10 versions
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| CircuitBreakerError::Storage(anyhow::Error::new(e)))?;
+
+        Ok(Self { kv_store })
+    }
+
+    /// Get storage key for a rule
+    fn rule_key(&self, id: &str) -> String {
+        format!("rules.{}", id)
+    }
+
+    /// Get storage key for workflow-specific rules
+    fn workflow_rules_key(&self, workflow_id: &str) -> String {
+        format!("workflow.{}.rules", workflow_id)
+    }
+
+    /// Get storage key for rule metadata
+    fn rule_metadata_key(&self, id: &str) -> String {
+        format!("rules.{}.metadata", id)
+    }
+}
+
+#[async_trait::async_trait]
+impl RuleStorage for NATSRuleStorage {
+    async fn create_rule(&self, mut rule: StoredRule) -> Result<StoredRule> {
+        rule.created_at = Utc::now();
+        rule.updated_at = rule.created_at;
+
+        let rule_json =
+            serde_json::to_vec(&rule).map_err(|e| CircuitBreakerError::Serialization(e))?;
+
+        self.kv_store
+            .put(self.rule_key(&rule.id), rule_json.into())
+            .await
+            .map_err(|e| CircuitBreakerError::Storage(anyhow::Error::new(e)))?;
+
+        Ok(rule)
+    }
+
+    async fn get_rule(&self, id: &str) -> Result<Option<StoredRule>> {
+        match self.kv_store.get(&self.rule_key(id)).await {
+            Ok(Some(entry)) => {
+                let rule: StoredRule = serde_json::from_slice(&entry)
+                    .map_err(|e| CircuitBreakerError::Serialization(e))?;
+                Ok(Some(rule))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(CircuitBreakerError::Storage(anyhow::Error::new(e))),
+        }
+    }
+
+    async fn list_rules(&self, tags: Option<Vec<String>>) -> Result<Vec<StoredRule>> {
+        let mut keys = self
+            .kv_store
+            .keys()
+            .await
+            .map_err(|e| CircuitBreakerError::Storage(anyhow::Error::new(e)))?;
+
+        let mut rules = Vec::new();
+
+        while let Some(key_result) = keys.next().await {
+            let key =
+                key_result.map_err(|e| CircuitBreakerError::Storage(anyhow::Error::new(e)))?;
+            if key.starts_with("rules.") && !key.contains(".metadata") {
+                if let Ok(Some(entry)) = self.kv_store.get(&key).await {
+                    if let Ok(rule) = serde_json::from_slice::<StoredRule>(&entry) {
+                        // Filter by tags if provided
+                        if let Some(ref filter_tags) = tags {
+                            if filter_tags.iter().any(|tag| rule.tags.contains(tag)) {
+                                rules.push(rule);
+                            }
+                        } else {
+                            rules.push(rule);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(rules)
+    }
+
+    async fn update_rule(&self, id: &str, mut rule: StoredRule) -> Result<StoredRule> {
+        // Get existing rule to preserve created_at
+        if let Some(existing) = self.get_rule(id).await? {
+            rule.created_at = existing.created_at;
+            rule.version = existing.version + 1;
+        }
+
+        rule.updated_at = Utc::now();
+
+        let rule_json =
+            serde_json::to_vec(&rule).map_err(|e| CircuitBreakerError::Serialization(e))?;
+
+        self.kv_store
+            .put(self.rule_key(id), rule_json.into())
+            .await
+            .map_err(|e| CircuitBreakerError::Storage(anyhow::Error::new(e)))?;
+
+        Ok(rule)
+    }
+
+    async fn delete_rule(&self, id: &str) -> Result<bool> {
+        match self.kv_store.delete(&self.rule_key(id)).await {
+            Ok(_) => Ok(true),
+            Err(e) => {
+                if e.to_string().contains("not found") {
+                    Ok(false)
+                } else {
+                    Err(CircuitBreakerError::Storage(anyhow::Error::new(e)))
+                }
+            }
+        }
+    }
+
+    async fn get_workflow_rules(&self, workflow_id: &str) -> Result<Vec<StoredRule>> {
+        let mut rules = Vec::new();
+        let all_rules = self.list_rules(None).await?;
+
+        for rule in all_rules {
+            if rule.workflow_id.as_deref() == Some(workflow_id) {
+                rules.push(rule);
+            }
+        }
+
+        Ok(rules)
+    }
+}
+
 pub struct RulesEngine {
     /// Global rules that can be referenced by name from activities
     ///
     /// This allows defining common rules once and reusing them across
     /// multiple workflows and activities. Rules are stored by their ID.
     global_rules: HashMap<String, Rule>,
+
+    /// Rule storage backend for persistence
+    rule_storage: Option<Arc<dyn RuleStorage>>,
 }
 
 /// Detailed evaluation results for all activities in a workflow
@@ -113,7 +321,21 @@ impl RulesEngine {
     pub fn new() -> Self {
         Self {
             global_rules: HashMap::new(),
+            rule_storage: None,
         }
+    }
+
+    /// Create a new rules engine with NATS storage
+    pub fn with_storage(rule_storage: Arc<dyn RuleStorage>) -> Self {
+        Self {
+            global_rules: HashMap::new(),
+            rule_storage: Some(rule_storage),
+        }
+    }
+
+    /// Get the rule storage backend
+    pub fn storage(&self) -> Option<&Arc<dyn RuleStorage>> {
+        self.rule_storage.as_ref()
     }
 
     /// Create a rules engine with common predefined rules
@@ -475,7 +697,7 @@ impl RulesEngine {
 impl Default for RulesEngine {
     /// Create a default rules engine with common rules pre-loaded
     ///
-    /// This is equivalent to calling `RulesEngine::with_common_rules()`.
+    /// This is convenient for typical use cases.
     fn default() -> Self {
         Self::with_common_rules()
     }

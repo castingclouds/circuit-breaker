@@ -13,10 +13,11 @@
  * Prerequisites:
  * 1. Circuit Breaker server running on ports 3000 (OpenAI API) and 4000 (GraphQL)
  * 2. API keys configured in server's .env file
- * 3. Run with: npx tsx multi_provider_demo.ts
+ * 3. Run with: npx tsx multi-provider-demo.ts
  */
 
 import * as readline from "readline";
+import { Client, COMMON_MODELS } from "../src/index.js";
 
 // Types and interfaces
 interface GraphQLResponse<T = any> {
@@ -166,7 +167,6 @@ class SSEParser {
 }
 
 // Unified SSE parser - server normalizes all provider responses to OpenAI format
-
 class UniversalSSEParser {
   static parseEvent(
     event: { data: string },
@@ -209,8 +209,22 @@ class UniversalSSEParser {
 }
 
 class MultiProviderDemo {
+  private client: Client;
   private readonly graphqlUrl = "http://localhost:4000/graphql";
-  private readonly openaiApiUrl = "http://localhost:3000/v1/chat/completions";
+  private readonly openaiApiUrl = "http://localhost:8081/v1/chat/completions";
+
+  constructor() {
+    // Initialize Circuit Breaker SDK client
+    let clientBuilder = Client.builder()
+      .baseUrl(process.env.CIRCUIT_BREAKER_URL || "http://localhost:4000")
+      .timeout(30000);
+
+    if (process.env.CIRCUIT_BREAKER_API_KEY) {
+      clientBuilder = clientBuilder.apiKey(process.env.CIRCUIT_BREAKER_API_KEY);
+    }
+
+    this.client = clientBuilder.build();
+  }
 
   async main(): Promise<void> {
     console.log(
@@ -269,10 +283,17 @@ class MultiProviderDemo {
         "Smart routing demo complete! Ready for advanced features?",
       );
 
-      // 6. Advanced features
+      // 6. Routing behavior analysis
+      await this.analyzeRoutingBehavior();
+
+      await this.waitForEnter(
+        "Routing analysis complete! Ready for advanced features?",
+      );
+
+      // 7. Advanced features
       await this.testAdvancedFeatures();
 
-      // 7. Final summary
+      // 8. Final summary
       await this.printSummary();
     } catch (error) {
       console.error("❌ Demo failed:", error);
@@ -284,20 +305,16 @@ class MultiProviderDemo {
     console.log("🔗 Testing server connectivity...");
 
     try {
-      // Test GraphQL endpoint
-      const graphqlResponse = await fetch(this.graphqlUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: "{ __typename }" }),
-      });
+      // Test Circuit Breaker connection
+      const ping = await this.client.ping();
+      console.log(`✅ Circuit Breaker server v${ping.version} connected`);
 
       // Test OpenAI API endpoint
-      const openaiResponse = await fetch("http://localhost:3000/v1/models");
-
-      if (graphqlResponse.ok && openaiResponse.ok) {
-        console.log("✅ Both GraphQL and OpenAI API servers are running");
+      const openaiResponse = await fetch("http://localhost:8081/v1/models");
+      if (openaiResponse.ok) {
+        console.log("✅ OpenAI API endpoint accessible");
       } else {
-        throw new Error("Server connectivity issues");
+        throw new Error("OpenAI API endpoint not accessible");
       }
     } catch (error) {
       console.log("❌ Server not responding. Please start the server first:");
@@ -396,7 +413,7 @@ class MultiProviderDemo {
       },
       {
         provider: "Google",
-        model: "gemini-2.5-flash-preview-05-20",
+        model: "gemini-1.5-flash",
         prompt: "Say hello and introduce yourself briefly.",
       },
     ];
@@ -451,7 +468,7 @@ class MultiProviderDemo {
         prompt: "Write a haiku about artificial intelligence.",
       },
       {
-        name: "gemini-2.5-flash-preview-05-20",
+        name: "gemini-1.5-flash",
         prompt: "Write a short haiku.",
       },
     ];
@@ -558,19 +575,19 @@ class MultiProviderDemo {
       {
         name: "OpenAI GPT-4",
         model: "o4-mini-2025-04-16",
-        prompt: "Create me an elevator pitch for selling GitLab",
+        prompt: "Write a short story about a robot learning to paint",
         provider: "openai",
       },
       {
         name: "Anthropic Claude",
-        model: "claude-sonnet-4-20250514",
-        prompt: "Create me an elevator pitch for selling GitLab",
+        model: "claude-3-haiku-20240307",
+        prompt: "Write a short story about a robot learning to paint",
         provider: "anthropic",
       },
       {
         name: "Google Gemini",
-        model: "gemini-2.5-flash-preview-05-20",
-        prompt: "Create me an elevator pitch for selling GitLab",
+        model: "gemini-1.5-flash",
+        prompt: "Write a short story about a robot learning to paint",
         provider: "google",
       },
     ];
@@ -589,7 +606,7 @@ class MultiProviderDemo {
           body: JSON.stringify({
             model: testModel.model,
             messages: [{ role: "user", content: testModel.prompt }],
-            max_tokens: testModel.model.includes("gemini") ? 10000 : 300,
+            max_tokens: testModel.model.includes("gemini") ? 5000 : 300,
             temperature: 0.7,
             stream: true,
             metadata: { provider: testModel.provider },
@@ -662,6 +679,59 @@ class MultiProviderDemo {
     console.log("\n🧠 5. Smart Routing Demonstration");
     console.log("=================================");
 
+    // First, let's check provider availability and costs
+    console.log("\n📊 Provider Analysis for Routing:");
+    try {
+      const query = `
+        query {
+          llmProviders {
+            id
+            name
+            providerType
+            healthStatus {
+              isHealthy
+              errorRate
+              averageLatencyMs
+            }
+            models {
+              id
+              name
+              costPerInputToken
+              costPerOutputToken
+              supportsStreaming
+              supportsFunctionCalling
+            }
+          }
+        }
+      `;
+
+      const response = await this.graphqlRequest<{
+        llmProviders: LLMProvider[];
+      }>(query);
+
+      for (const provider of response.llmProviders) {
+        const status = provider.healthStatus.isHealthy ? "🟢" : "🔴";
+        console.log(`   ${status} ${provider.name} (${provider.providerType})`);
+        console.log(
+          `      Health: ${provider.healthStatus.isHealthy ? "Healthy" : "Unhealthy"}`,
+        );
+        console.log(`      Error Rate: ${provider.healthStatus.errorRate}%`);
+        console.log(
+          `      Avg Latency: ${provider.healthStatus.averageLatencyMs}ms`,
+        );
+
+        // Show cheapest model
+        const cheapestModel = provider.models.reduce((prev, curr) =>
+          prev.costPerInputToken < curr.costPerInputToken ? prev : curr,
+        );
+        console.log(
+          `      Cheapest Model: ${cheapestModel.name} ($${(cheapestModel.costPerInputToken * 1000).toFixed(4)}/1K tokens)`,
+        );
+      }
+    } catch (error) {
+      console.log(`   ⚠️  Could not fetch provider analysis: ${error}`);
+    }
+
     const routingScenarios = [
       {
         name: "Cost-Optimized Task",
@@ -688,7 +758,7 @@ class MultiProviderDemo {
       },
     ];
 
-    // Test virtual models
+    // Test virtual models with debug info
     console.log("\n🎯 Testing Virtual Models:");
     const virtualModels = [
       "auto",
@@ -700,47 +770,90 @@ class MultiProviderDemo {
     for (const model of virtualModels) {
       console.log(`\n   Testing virtual model: ${model}`);
       try {
+        const requestBody = {
+          model,
+          messages: [
+            { role: "user", content: "Hello! What provider are you?" },
+          ],
+          max_tokens: 200,
+          metadata: {
+            debug: true,
+            trace_routing: true,
+          },
+        } as ChatCompletionRequest;
+
+        console.log(
+          `   📤 Request: ${JSON.stringify(requestBody, null, 2).substring(0, 200)}...`,
+        );
+
         const response = await fetch(this.openaiApiUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model,
-            messages: [
-              { role: "user", content: "Hello! What provider are you?" },
-            ],
-            max_tokens: 200,
-          } as ChatCompletionRequest),
+          body: JSON.stringify(requestBody),
         });
 
         if (response.ok) {
           const result: ChatCompletionResponse = await response.json();
           console.log(`   ✅ ${model} → Routed to: ${result.model}`);
           console.log(
+            `   🏷️  System fingerprint: ${result.system_fingerprint || "N/A"}`,
+          );
+          console.log(
+            `   💰 Token usage: ${result.usage?.total_tokens || "N/A"} tokens`,
+          );
+          console.log(
             `   💬 Response: "${result.choices[0].message.content.substring(0, 60)}..."`,
           );
+
+          // Log response headers for debugging
+          const debugHeaders = response.headers.get("x-routing-debug");
+          if (debugHeaders) {
+            console.log(`   🔍 Routing Debug: ${debugHeaders}`);
+          }
         } else {
-          console.log(`   ❌ ${model} failed`);
+          const errorText = await response.text();
+          console.log(
+            `   ❌ ${model} failed: ${response.status} ${response.statusText}`,
+          );
+          console.log(`   📋 Error details: ${errorText.substring(0, 200)}...`);
         }
       } catch (error) {
         console.log(`   ❌ ${model} error: ${error}`);
       }
     }
 
-    // Test smart routing with circuit breaker config
+    // Test smart routing with circuit breaker config and debug logging
     console.log("\n🎛️  Testing Smart Routing Strategies:");
 
     for (const scenario of routingScenarios) {
       console.log(`\n   🎯 ${scenario.name}:`);
+      console.log(
+        `   📋 Strategy: ${JSON.stringify(scenario.config, null, 2)}`,
+      );
+
       try {
+        const requestBody = {
+          model: "auto",
+          messages: [{ role: "user", content: scenario.prompt }],
+          max_tokens: 200,
+          circuit_breaker: {
+            ...scenario.config,
+            debug: true,
+            trace_routing: true,
+          },
+          metadata: {
+            debug: true,
+            scenario: scenario.name,
+          },
+        } as ChatCompletionRequest;
+
         const response = await fetch(this.openaiApiUrl, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: "auto",
-            messages: [{ role: "user", content: scenario.prompt }],
-            max_tokens: 200,
-            circuit_breaker: scenario.config,
-          } as ChatCompletionRequest),
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Routing": "true",
+          },
+          body: JSON.stringify(requestBody),
         });
 
         if (response.ok) {
@@ -748,19 +861,203 @@ class MultiProviderDemo {
           console.log(`   ✅ Strategy: ${scenario.config.routing_strategy}`);
           console.log(`   🎯 Selected: ${result.model || "auto-routed"}`);
           console.log(
+            `   💰 Cost estimate: $${this.estimateCost(result.model, result.usage).toFixed(6)}`,
+          );
+          console.log(
+            `   ⏱️  Response time: ${result.created ? new Date(result.created * 1000).toLocaleTimeString() : "N/A"}`,
+          );
+          console.log(
             `   💬 Preview: "${result.choices[0].message.content.substring(0, 80)}..."`,
           );
+
+          // Check for routing debug info
+          const routingInfo = response.headers.get("x-circuit-breaker-routing");
+          if (routingInfo) {
+            console.log(`   🔍 Routing Info: ${routingInfo}`);
+          }
+
+          // Analyze why this provider might have been selected
+          const provider = this.getProviderFromModel(result.model);
+          console.log(`   📊 Analysis: Selected ${provider} - likely due to:`);
+
+          if (scenario.config.routing_strategy === "cost_optimized") {
+            console.log(`      • Cost optimization (model: ${result.model})`);
+          } else if (scenario.config.routing_strategy === "performance_first") {
+            console.log(`      • Performance priority (lowest latency)`);
+          } else if (scenario.config.routing_strategy === "task_specific") {
+            console.log(
+              `      • Task-specific optimization (${scenario.config.task_type})`,
+            );
+          }
         } else {
-          console.log(`   ❌ Failed: ${response.statusText}`);
+          const errorText = await response.text();
+          console.log(
+            `   ❌ Failed: ${response.status} ${response.statusText}`,
+          );
+          console.log(`   📋 Error: ${errorText.substring(0, 200)}...`);
         }
       } catch (error) {
         console.log(`   ❌ Error: ${error}`);
       }
     }
+
+    // Test explicit provider forcing to understand the issue
+    console.log("\n🔬 Provider Forcing Test (to debug routing bias):");
+    const explicitModels = [
+      { name: "OpenAI Direct", model: "o4-mini-2025-04-16" },
+      { name: "Anthropic Direct", model: "claude-3-haiku-20240307" },
+      { name: "Google Direct", model: "gemini-1.5-flash" },
+    ];
+
+    for (const test of explicitModels) {
+      console.log(`\n   Testing explicit ${test.name}:`);
+      try {
+        const response = await fetch(this.openaiApiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: test.model,
+            messages: [{ role: "user", content: "Hello from " + test.name }],
+            max_tokens: 50,
+          }),
+        });
+
+        if (response.ok) {
+          const result: ChatCompletionResponse = await response.json();
+          console.log(`   ✅ ${test.name}: Success`);
+          console.log(`   🎯 Actual model: ${result.model}`);
+          console.log(
+            `   💰 Cost: $${this.estimateCost(result.model, result.usage).toFixed(6)}`,
+          );
+        } else {
+          const errorText = await response.text();
+          console.log(`   ❌ ${test.name}: Failed - ${response.status}`);
+          console.log(`   📋 ${errorText.substring(0, 100)}...`);
+        }
+      } catch (error) {
+        console.log(`   ❌ ${test.name}: Error - ${error}`);
+      }
+    }
+  }
+
+  private async analyzeRoutingBehavior(): Promise<void> {
+    console.log("\n🔍 6. Routing Behavior Analysis");
+    console.log("===============================");
+
+    // Test routing consistency
+    console.log("\n🔁 Testing routing consistency (10 identical requests):");
+    const testPrompt = "What is 2+2?";
+    const routingResults: Record<string, number> = {};
+
+    for (let i = 0; i < 10; i++) {
+      try {
+        const response = await fetch(this.openaiApiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "auto",
+            messages: [{ role: "user", content: testPrompt }],
+            max_tokens: 50,
+            circuit_breaker: {
+              routing_strategy: "cost_optimized",
+            },
+          }),
+        });
+
+        if (response.ok) {
+          const result: ChatCompletionResponse = await response.json();
+          const provider = this.getProviderFromModel(result.model);
+          routingResults[provider] = (routingResults[provider] || 0) + 1;
+        }
+      } catch (error) {
+        console.log(`   Request ${i + 1} failed: ${error}`);
+      }
+    }
+
+    console.log("\n📊 Routing Distribution:");
+    for (const [provider, count] of Object.entries(routingResults)) {
+      const percentage = ((count / 10) * 100).toFixed(1);
+      console.log(`   ${provider}: ${count}/10 requests (${percentage}%)`);
+    }
+
+    // Analyze potential reasons for Anthropic bias
+    console.log("\n🧐 Potential Reasons for Anthropic Preference:");
+    console.log("   1. Cost Optimization:");
+    console.log("      • Claude Haiku: ~$0.00025/1K input tokens");
+    console.log(
+      "      • GPT-4o-mini: ~$0.003/1K input tokens (12x more expensive)",
+    );
+    console.log("      • Gemini Flash: ~$0.000075/1K input tokens (cheapest)");
+    console.log();
+    console.log("   2. Health Status:");
+    console.log("      • Anthropic provider may have better health metrics");
+    console.log("      • Lower error rates or faster response times");
+    console.log();
+    console.log("   3. Model Capabilities:");
+    console.log(
+      "      • Task-specific routing may favor Claude for certain tasks",
+    );
+    console.log("      • Context window or capability matching");
+
+    // Test with different routing strategies
+    console.log("\n🎯 Testing Different Routing Strategies:");
+    const strategies = [
+      {
+        name: "Cost Optimized",
+        config: { routing_strategy: "cost_optimized" },
+      },
+      {
+        name: "Performance First",
+        config: { routing_strategy: "performance_first" },
+      },
+      { name: "No Strategy", config: {} },
+    ];
+
+    for (const strategy of strategies) {
+      console.log(`\n   Testing ${strategy.name}:`);
+      try {
+        const response = await fetch(this.openaiApiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "auto",
+            messages: [{ role: "user", content: "Simple test question" }],
+            max_tokens: 30,
+            circuit_breaker: strategy.config,
+          }),
+        });
+
+        if (response.ok) {
+          const result: ChatCompletionResponse = await response.json();
+          const provider = this.getProviderFromModel(result.model);
+          const cost = this.estimateCost(result.model, result.usage);
+          console.log(`      → ${provider} (${result.model})`);
+          console.log(`      → Cost: $${cost.toFixed(6)}`);
+        }
+      } catch (error) {
+        console.log(`      → Failed: ${error}`);
+      }
+    }
+
+    // Recommendations
+    console.log("\n💡 Recommendations:");
+    if (routingResults["Anthropic"] > 7) {
+      console.log("   🎯 Heavy Anthropic bias detected. Consider:");
+      console.log("      • Check if OpenAI provider is healthy");
+      console.log("      • Verify OpenAI API keys are configured");
+      console.log("      • Test explicit OpenAI model calls");
+      console.log("      • Review cost optimization settings");
+    }
+    console.log("   📊 To force specific providers:");
+    console.log(
+      "      • Use explicit model names (e.g., 'o4-mini-2025-04-16')",
+    );
+    console.log("      • Configure routing_strategy: 'performance_first'");
+    console.log("      • Set max_cost_per_1k_tokens higher for premium models");
   }
 
   private async testAdvancedFeatures(): Promise<void> {
-    console.log("\n🚀 6. Advanced Features");
+    console.log("\n🚀 7. Advanced Features");
     console.log("=======================");
 
     // Test function calling (if supported)
@@ -840,10 +1137,29 @@ class MultiProviderDemo {
         console.log(`   ❌ Temperature ${temp} failed: ${error}`);
       }
     }
+
+    // Test Circuit Breaker SDK LLM client integration
+    console.log("\n🔧 Circuit Breaker SDK Integration:");
+    try {
+      const llmClient = this.client.llm();
+
+      // Test direct LLM usage through SDK
+      const response = await llmClient.chat(
+        "o4-mini-2025-04-16",
+        "Explain the benefits of multi-provider LLM routing in 2 sentences.",
+        {
+          temperature: 0.3,
+          maxTokens: 100,
+        },
+      );
+      console.log(`   ✅ SDK LLM response: ${response}`);
+    } catch (error) {
+      console.log(`   ⚠️  SDK LLM integration skipped: ${error}`);
+    }
   }
 
   private async printSummary(): Promise<void> {
-    console.log("\n📋 7. Demo Summary");
+    console.log("\n📋 8. Demo Summary");
     console.log("==================");
 
     console.log("✅ Multi-Provider Integration Completed:");
@@ -851,7 +1167,7 @@ class MultiProviderDemo {
     console.log("   🧪 Individual Testing: Provider-specific model validation");
     console.log("   💰 Cost Analysis: Comparative pricing across providers");
     console.log(
-      "   🌊 Batched Streaming: Real-time response capabilities verified",
+      "   🌊 Streaming Support: Real-time response capabilities verified",
     );
     console.log(
       "   🧠 Smart Routing: Virtual models and strategy-based routing",
@@ -864,7 +1180,7 @@ class MultiProviderDemo {
     console.log("🎯 Key Benefits Demonstrated:");
     console.log("   • Unified API across multiple LLM providers");
     console.log("   • Automatic cost optimization and provider selection");
-    console.log("   • Live API data with batched streaming interface");
+    console.log("   • Real-time streaming interface with normalized responses");
     console.log("   • Smart routing based on task requirements");
     console.log("   • Transparent cost tracking and comparison");
     console.log();
@@ -878,7 +1194,7 @@ class MultiProviderDemo {
 
     console.log("🌐 Resources:");
     console.log("   • GraphiQL Interface: http://localhost:4000");
-    console.log("   • OpenAI API Endpoint: http://localhost:3000");
+    console.log("   • OpenAI API Endpoint: http://localhost:8081");
     console.log("   • Documentation: Check the docs/ directory");
     console.log();
 
@@ -932,10 +1248,12 @@ class MultiProviderDemo {
     // Simplified cost estimation based on known rates
     const rates: Record<string, { input: number; output: number }> = {
       "o4-mini-2025-04-16": { input: 0.003, output: 0.012 },
+      "gpt-4o-mini": { input: 0.00015, output: 0.0006 },
       "gpt-4": { input: 0.03, output: 0.06 },
       "claude-3-haiku-20240307": { input: 0.00025, output: 0.00125 },
       "claude-3-sonnet-20240229": { input: 0.003, output: 0.015 },
-      "gemini-2.5-flash-preview-05-20": { input: 0.000075, output: 0.0003 },
+      "gemini-1.5-flash": { input: 0.000075, output: 0.0003 },
+      "gemini-1.5-pro": { input: 0.00125, output: 0.005 },
     };
 
     const rate = rates[model] || { input: 0.001, output: 0.002 };
@@ -947,7 +1265,12 @@ class MultiProviderDemo {
   }
 
   private getProviderFromModel(model: string): string {
-    if (model.startsWith("gpt-") || model.startsWith("o4-")) return "OpenAI";
+    if (
+      model.startsWith("gpt-") ||
+      model.startsWith("o4-") ||
+      model.includes("o4-")
+    )
+      return "OpenAI";
     if (model.startsWith("claude-")) return "Anthropic";
     if (model.startsWith("gemini-")) return "Google";
     return "Unknown";
@@ -955,10 +1278,28 @@ class MultiProviderDemo {
 }
 
 // Main execution
-async function run(): Promise<void> {
+async function main(): Promise<void> {
   const demo = new MultiProviderDemo();
   await demo.main();
 }
 
+// Handle graceful shutdown
+process.on("SIGINT", () => {
+  console.log("\n👋 Shutting down gracefully...");
+  process.exit(0);
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+  process.exit(1);
+});
+
 // Run the demo
-run().catch(console.error);
+if (require.main === module) {
+  main().catch((error) => {
+    console.error("Fatal error:", error);
+    process.exit(1);
+  });
+}
+
+export { main, MultiProviderDemo };

@@ -1,0 +1,162 @@
+[package]
+name = "circuit-breaker-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Rust SDK for Circuit Breaker workflow engine"
+authors = ["Circuit Breaker Team <team@circuit-breaker.dev>"]
+license = "MIT"
+repository = "https://github.com/circuit-breaker/sdk"
+homepage = "https://github.com/circuit-breaker/sdk"
+documentation = "https://docs.rs/circuit-breaker-sdk"
+readme = "README.md"
+keywords = ["workflow", "automation", "state-machine", "graphql", "ai", "llm", "docker", "functions"]
+categories = ["api-bindings", "development-tools", "web-programming"]
+rust-version = "1.70"
+
+[lib]
+name = "circuit_breaker_sdk"
+path = "src/lib.rs"
+
+[[example]]
+name = "basic_usage"
+path = "examples/basic_usage.rs"
+
+[[example]]
+name = "multi_provider_demo"
+path = "examples/multi_provider_demo.rs"
+
+[[example]]
+name = "workflow_management"
+path = "examples/workflow_management.rs"
+
+[[example]]
+name = "rules_demo"
+path = "examples/rules_demo.rs"
+
+[[example]]
+name = "function_chains"
+path = "examples/function_chains.rs"
+
+[[example]]
+name = "llm_integration"
+path = "examples/llm_integration.rs"
+
+[[example]]
+name = "ai_agent"
+path = "examples/ai_agent.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3"
+pin-project = "1.0"
+
+# HTTP and GraphQL
+reqwest = { version = "0.11", features = ["json", "stream"] }
+graphql_client = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+url = "2.4"
+
+# WebSocket support
+tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
+tungstenite = "0.20"
+
+# Docker integration (optional)
+bollard = { version = "0.14", optional = true }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-futures = "0.2"
+
+# Utilities
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dashmap = "5.5"
+once_cell = "1.18"
+parking_lot = "0.12"
+
+# JSON Schema and validation
+jsonschema = "0.17"
+validator = { version = "0.16", features = ["derive"] }
+
+# Configuration
+config = "0.13"
+
+# Regular expressions
+regex = "1.9"
+
+# Base64 encoding
+base64 = "0.21"
+
+# Hashing
+sha2 = "0.10"
+
+# Template engine for JavaScript rules
+rhai = { version = "1.15", features = ["sync"], optional = true }
+
+# Streaming support (optional)
+async-stream = { version = "0.3", optional = true }
+tokio-stream = { version = "0.1", optional = true }
+
+# Rate limiting and circuit breaker
+governor = "0.6"
+
+# Memory management
+lru = "0.11"
+
+# Random number generation
+rand = "0.8"
+
+# HTTP server for webhooks (optional)
+axum = { version = "0.6", optional = true }
+tower = { version = "0.4", optional = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockito = "1.2"
+tempfile = "3.7"
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.2"
+
+[features]
+default = ["streaming"]
+
+# Enable Docker integration
+docker = ["dep:bollard"]
+
+# Enable webhook server
+webhooks = ["dep:axum", "dep:tower"]
+
+# Enable streaming capabilities
+streaming = ["dep:tokio-stream", "dep:async-stream"]
+
+# Enable all LLM providers
+llm-all = ["llm-openai", "llm-anthropic", "llm-ollama"]
+llm-openai = []
+llm-anthropic = []
+llm-ollama = []
+
+# Enable advanced rules engine features
+rules-javascript = ["dep:rhai"]
+
+# Enable metrics and monitoring
+metrics = []
+
+# Enable full validation
+validation-strict = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+# Benchmarks will be added later
+# [[bench]]
+# name = "workflow_performance"
+# harness = false

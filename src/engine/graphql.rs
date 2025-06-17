@@ -6,12 +6,14 @@ use chrono::Utc;
 use serde_json;
 use uuid::Uuid;
 
+use crate::engine::rules::StoredRule;
 use crate::engine::storage::WorkflowStorage;
 use crate::engine::{AgentEngine, AgentStorage};
 use crate::models::{
     ActivityDefinition, ActivityId, AgentDefinition, AgentExecution, AgentExecutionStatus, AgentId,
     AgentPrompts, AgentRetryConfig, HistoryEvent, LLMConfig, LLMProvider, Resource,
-    StateAgentConfig, StateAgentSchedule, StateId, WorkflowDefinition,
+    ResourceMetadata, Rule, RuleCondition, StateAgentConfig, StateAgentSchedule, StateId,
+    WorkflowDefinition,
 };
 
 // GraphQL types - these are the API representations of our domain models
@@ -507,6 +509,67 @@ pub struct TriggerStateAgentsInput {
     pub resource_id: String,
 }
 
+// Rule types for GraphQL
+#[derive(SimpleObject, Debug, Clone)]
+pub struct RuleGQL {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub condition: RuleConditionGQL,
+    pub version: i32,
+    pub created_at: String,
+    pub updated_at: String,
+    pub created_by: Option<String>,
+    pub tags: Vec<String>,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct RuleConditionGQL {
+    pub condition_type: String,
+    pub field: Option<String>,
+    pub value: Option<serde_json::Value>,
+    pub substring: Option<String>,
+    pub rules: Option<Vec<RuleGQL>>,
+    pub rule: Option<Box<RuleGQL>>,
+    pub script: Option<String>,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct RuleEvaluationResultGQL {
+    pub rule_id: String,
+    pub passed: bool,
+    pub reason: String,
+    pub details: Option<serde_json::Value>,
+    pub sub_results: Vec<RuleEvaluationResultGQL>,
+}
+
+// Rule input types
+#[derive(InputObject, Debug)]
+pub struct RuleInput {
+    pub name: String,
+    pub description: String,
+    pub condition: RuleConditionInput,
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(InputObject, Debug)]
+pub struct RuleConditionInput {
+    pub condition_type: String,
+    pub field: Option<String>,
+    pub value: Option<serde_json::Value>,
+    pub substring: Option<String>,
+    pub rules: Option<Vec<RuleConditionInput>>,
+    pub rule: Option<Box<RuleConditionInput>>,
+    pub script: Option<String>,
+}
+
+#[derive(InputObject, Debug)]
+pub struct RuleEvaluationInput {
+    pub rule_id: String,
+    pub data: serde_json::Value,
+    pub metadata: Option<serde_json::Value>,
+}
+
 // NATS-specific input types
 #[derive(InputObject, Debug)]
 pub struct CreateWorkflowInstanceInput {
@@ -802,6 +865,192 @@ impl From<&Resource> for NATSResourceGQL {
             nats_timestamp: resource.nats_timestamp.map(|ts| ts.to_rfc3339()),
             nats_subject: resource.nats_subject.clone(),
             activity_history: resource.activity_history.iter().map(|r| r.into()).collect(),
+        }
+    }
+}
+
+// Rule conversion implementations
+impl From<&StoredRule> for RuleGQL {
+    fn from(rule: &StoredRule) -> Self {
+        RuleGQL {
+            id: rule.id.clone(),
+            name: rule.name.clone(),
+            description: rule.description.clone(),
+            condition: RuleConditionGQL::from(&rule.condition),
+            version: rule.version,
+            created_at: rule.created_at.to_rfc3339(),
+            updated_at: rule.updated_at.to_rfc3339(),
+            created_by: rule.created_by.clone(),
+            tags: rule.tags.clone(),
+        }
+    }
+}
+
+impl From<&RuleCondition> for RuleConditionGQL {
+    fn from(condition: &RuleCondition) -> Self {
+        match condition {
+            RuleCondition::FieldExists { field } => RuleConditionGQL {
+                condition_type: "FieldExists".to_string(),
+                field: Some(field.clone()),
+                value: None,
+                substring: None,
+                rules: None,
+                rule: None,
+                script: None,
+            },
+            RuleCondition::FieldEquals { field, value } => RuleConditionGQL {
+                condition_type: "FieldEquals".to_string(),
+                field: Some(field.clone()),
+                value: Some(value.clone()),
+                substring: None,
+                rules: None,
+                rule: None,
+                script: None,
+            },
+            RuleCondition::FieldGreaterThan { field, value } => RuleConditionGQL {
+                condition_type: "FieldGreaterThan".to_string(),
+                field: Some(field.clone()),
+                value: Some(serde_json::Value::Number(
+                    serde_json::Number::from_f64(*value).unwrap(),
+                )),
+                substring: None,
+                rules: None,
+                rule: None,
+                script: None,
+            },
+            RuleCondition::FieldLessThan { field, value } => RuleConditionGQL {
+                condition_type: "FieldLessThan".to_string(),
+                field: Some(field.clone()),
+                value: Some(serde_json::Value::Number(
+                    serde_json::Number::from_f64(*value).unwrap(),
+                )),
+                substring: None,
+                rules: None,
+                rule: None,
+                script: None,
+            },
+            RuleCondition::FieldContains { field, substring } => RuleConditionGQL {
+                condition_type: "FieldContains".to_string(),
+                field: Some(field.clone()),
+                value: None,
+                substring: Some(substring.clone()),
+                rules: None,
+                rule: None,
+                script: None,
+            },
+            RuleCondition::And { rules: _rules } => RuleConditionGQL {
+                condition_type: "And".to_string(),
+                field: None,
+                value: None,
+                substring: None,
+                rules: None, // Nested rules not fully supported yet
+                rule: None,
+                script: None,
+            },
+            RuleCondition::Or { rules: _rules } => RuleConditionGQL {
+                condition_type: "Or".to_string(),
+                field: None,
+                value: None,
+                substring: None,
+                rules: None, // Nested rules not fully supported yet
+                rule: None,
+                script: None,
+            },
+            RuleCondition::Not { rule } => RuleConditionGQL {
+                condition_type: "Not".to_string(),
+                field: None,
+                value: None,
+                substring: None,
+                rules: None,
+                rule: None, // Nested rules not fully supported in StoredRule context
+                script: None,
+            },
+            RuleCondition::Expression { script } => RuleConditionGQL {
+                condition_type: "Expression".to_string(),
+                field: None,
+                value: None,
+                substring: None,
+                rules: None,
+                rule: None,
+                script: Some(script.clone()),
+            },
+        }
+    }
+}
+
+impl From<RuleInput> for Rule {
+    fn from(input: RuleInput) -> Self {
+        Rule {
+            id: uuid::Uuid::new_v4().to_string(),
+            description: input.description,
+            condition: RuleCondition::from(input.condition),
+        }
+    }
+}
+
+impl From<RuleConditionInput> for RuleCondition {
+    fn from(input: RuleConditionInput) -> Self {
+        match input.condition_type.as_str() {
+            "FieldExists" => RuleCondition::FieldExists {
+                field: input.field.unwrap_or_default(),
+            },
+            "FieldEquals" => RuleCondition::FieldEquals {
+                field: input.field.unwrap_or_default(),
+                value: input.value.unwrap_or(serde_json::Value::Null),
+            },
+            "FieldGreaterThan" => RuleCondition::FieldGreaterThan {
+                field: input.field.unwrap_or_default(),
+                value: input.value.and_then(|v| v.as_f64()).unwrap_or(0.0),
+            },
+            "FieldLessThan" => RuleCondition::FieldLessThan {
+                field: input.field.unwrap_or_default(),
+                value: input.value.and_then(|v| v.as_f64()).unwrap_or(0.0),
+            },
+            "FieldContains" => RuleCondition::FieldContains {
+                field: input.field.unwrap_or_default(),
+                substring: input.substring.unwrap_or_default(),
+            },
+            "And" => RuleCondition::And {
+                rules: input
+                    .rules
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|r| Rule {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        description: "Nested rule".to_string(),
+                        condition: RuleCondition::from(r),
+                    })
+                    .collect(),
+            },
+            "Or" => RuleCondition::Or {
+                rules: input
+                    .rules
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|r| Rule {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        description: "Nested rule".to_string(),
+                        condition: RuleCondition::from(r),
+                    })
+                    .collect(),
+            },
+            "Not" => RuleCondition::Not {
+                rule: Box::new(Rule {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    description: "Negated rule".to_string(),
+                    condition: input.rule.map(|r| RuleCondition::from(*r)).unwrap_or(
+                        RuleCondition::Expression {
+                            script: "true".to_string(),
+                        },
+                    ),
+                }),
+            },
+            "Expression" => RuleCondition::Expression {
+                script: input.script.unwrap_or_default(),
+            },
+            _ => RuleCondition::Expression {
+                script: "false".to_string(),
+            },
         }
     }
 }
@@ -1276,6 +1525,66 @@ impl Query {
             period_start: input.start_date,
             period_end: input.end_date,
         })
+    }
+
+    /// Get a rule by ID
+    async fn rule(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<RuleGQL>> {
+        let rule_storage = ctx.data::<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>()?;
+
+        match rule_storage.get_rule(&id).await {
+            Ok(Some(stored_rule)) => Ok(Some(RuleGQL::from(&stored_rule))),
+            Ok(None) => Ok(None),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to get rule: {}",
+                e
+            ))),
+        }
+    }
+
+    /// List all rules, optionally filtered by tags
+    async fn rules(
+        &self,
+        ctx: &Context<'_>,
+        tags: Option<Vec<String>>,
+    ) -> async_graphql::Result<Vec<RuleGQL>> {
+        let rule_storage = ctx.data::<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>()?;
+
+        match rule_storage.list_rules(tags).await {
+            Ok(stored_rules) => {
+                let rules: Vec<RuleGQL> = stored_rules
+                    .iter()
+                    .map(|stored_rule| RuleGQL::from(stored_rule))
+                    .collect();
+                Ok(rules)
+            }
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to list rules: {}",
+                e
+            ))),
+        }
+    }
+
+    /// Get rules for a specific workflow
+    async fn workflow_rules(
+        &self,
+        ctx: &Context<'_>,
+        workflow_id: String,
+    ) -> async_graphql::Result<Vec<RuleGQL>> {
+        let rule_storage = ctx.data::<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>()?;
+
+        match rule_storage.get_workflow_rules(&workflow_id).await {
+            Ok(stored_rules) => {
+                let rules: Vec<RuleGQL> = stored_rules
+                    .iter()
+                    .map(|stored_rule| RuleGQL::from(stored_rule))
+                    .collect();
+                Ok(rules)
+            }
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to get workflow rules: {}",
+                e
+            ))),
+        }
     }
 }
 
@@ -2104,6 +2413,124 @@ impl Mutation {
             message: format!("Budget set to ${:.2}", input.limit),
         })
     }
+
+    /// Create a new rule
+    async fn create_rule(
+        &self,
+        ctx: &Context<'_>,
+        input: RuleInput,
+    ) -> async_graphql::Result<RuleGQL> {
+        let rule_storage = ctx.data::<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>()?;
+
+        let stored_rule = crate::engine::rules::StoredRule {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: input.name,
+            description: input.description,
+            condition: RuleCondition::from(input.condition),
+            version: 1,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            created_by: None, // TODO: Get from auth context
+            tags: input.tags.unwrap_or_default(),
+            workflow_id: None,
+        };
+
+        match rule_storage.create_rule(stored_rule).await {
+            Ok(created_rule) => Ok(RuleGQL::from(&created_rule)),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to create rule: {}",
+                e
+            ))),
+        }
+    }
+
+    /// Update an existing rule
+    async fn update_rule(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+        input: RuleInput,
+    ) -> async_graphql::Result<RuleGQL> {
+        let rule_storage = ctx.data::<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>()?;
+
+        let stored_rule = crate::engine::rules::StoredRule {
+            id: id.clone(),
+            name: input.name,
+            description: input.description,
+            condition: RuleCondition::from(input.condition),
+            version: 1,                     // Will be incremented in update_rule
+            created_at: chrono::Utc::now(), // Will be preserved in update_rule
+            updated_at: chrono::Utc::now(),
+            created_by: None,
+            tags: input.tags.unwrap_or_default(),
+            workflow_id: None,
+        };
+
+        match rule_storage.update_rule(&id, stored_rule).await {
+            Ok(updated_rule) => Ok(RuleGQL::from(&updated_rule)),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to update rule: {}",
+                e
+            ))),
+        }
+    }
+
+    /// Delete a rule
+    async fn delete_rule(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<bool> {
+        let rule_storage = ctx.data::<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>()?;
+
+        match rule_storage.delete_rule(&id).await {
+            Ok(deleted) => Ok(deleted),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to delete rule: {}",
+                e
+            ))),
+        }
+    }
+
+    /// Evaluate a rule against data
+    async fn evaluate_rule(
+        &self,
+        ctx: &Context<'_>,
+        input: RuleEvaluationInput,
+    ) -> async_graphql::Result<RuleEvaluationResultGQL> {
+        let rule_storage = ctx.data::<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>()?;
+
+        match rule_storage.get_rule(&input.rule_id).await {
+            Ok(Some(stored_rule)) => {
+                let rule: Rule = stored_rule.into();
+
+                // Combine data and metadata for evaluation
+                let mut combined_data = input.data;
+                if let Some(metadata) = input.metadata {
+                    if let serde_json::Value::Object(metadata_obj) = metadata {
+                        if let serde_json::Value::Object(ref mut data_obj) = combined_data {
+                            data_obj.extend(metadata_obj);
+                        }
+                    }
+                }
+
+                let metadata = ResourceMetadata::new();
+                let result = rule.evaluate_detailed(&metadata, &combined_data);
+
+                Ok(RuleEvaluationResultGQL {
+                    rule_id: result.rule_id,
+                    passed: result.passed,
+                    reason: result.explanation,
+                    details: Some(serde_json::to_value(&result.sub_results).unwrap_or_default()),
+                    sub_results: vec![], // TODO: Convert sub_results properly
+                })
+            }
+            Ok(None) => Err(async_graphql::Error::new(format!(
+                "Rule not found: {}",
+                input.rule_id
+            ))),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to evaluate rule: {}",
+                e
+            ))),
+        }
+    }
 }
 
 // GraphQL Subscription root (for real-time updates)
@@ -2302,5 +2729,26 @@ pub fn create_schema_with_nats_and_agents(
         .data(nats_storage)
         .data(agent_storage)
         .data(agent_engine)
+        .finish()
+}
+
+/// Create GraphQL schema with NATS storage, agents, and rule storage
+pub fn create_schema_with_full_storage(
+    nats_storage: std::sync::Arc<crate::engine::nats_storage::NATSStorage>,
+    agent_storage: std::sync::Arc<dyn AgentStorage>,
+    agent_engine: std::sync::Arc<AgentEngine>,
+    rule_storage: std::sync::Arc<dyn crate::engine::rules::RuleStorage>,
+) -> CircuitBreakerSchema {
+    // Use NATS storage as the primary WorkflowStorage implementation
+    let storage_boxed: Box<dyn WorkflowStorage> = Box::new(
+        crate::engine::nats_storage::NATSStorageWrapper::new(nats_storage.clone()),
+    );
+
+    Schema::build(Query, Mutation, Subscription)
+        .data(storage_boxed)
+        .data(nats_storage)
+        .data(agent_storage)
+        .data(agent_engine)
+        .data(rule_storage)
         .finish()
 }
