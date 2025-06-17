@@ -1,9 +1,43 @@
 # Circuit Breaker - Rust Edition
 
-> A unified platform providing **State Managed Workflows** via GraphQL and **OpenAI-compatible LLM routing** via REST API  
-> **Generic by design** - like Dagger's engine, the backend knows nothing about your domain  
-> **OpenRouter Alternative** - BYOK (Bring Your Own Key) model with intelligent provider routing  
-> **Local AI Support** - Full Ollama integration with automatic model detection and streaming
+> A unified platform providing **State Managed Workflows** via GraphQL, **OpenAI-compatible LLM routing** via REST API, **Secure Multi-Tenant MCP Server**, and **FinOps-optimized Agent Workflows**
+> **Generic by design** - like Dagger's engine, the backend knows nothing about your domain
+> **LiteLLM/OpenRouter Alternative** - BYOK (Bring Your Own Key) model with intelligent provider routing and cost optimization
+> **Local AI Support** - Full Ollama and vLLM integration with automatic model detection and streaming
+> **MCP Integration** - Secure, multi-tenant Model Context Protocol server with OAuth2.1 and fine-grained access control using JWT
+> **Agent FinOps** - Cost tracking, budgeting, and optimization for AI agent workflows at scale
+
+## Overview
+
+Circuit Breaker is a distributed, high-performance platform that combines workflow orchestration with intelligent LLM routing and secure AI agent management. It provides three complementary APIs:
+
+### Core Capabilities
+
+**🔄 State Managed Workflows** - Powered by Petri Nets for mathematical rigor and formal workflow verification
+**🧠 LLM Provider Routing** - OpenAI-compatible API with cost optimization and intelligent failover
+**🏠 Local AI Integration** - Native Ollama support with automatic model discovery and async loading
+**🌐 Multi-Provider Support** - OpenAI, Anthropic, Google, Azure OpenAI, Ollama, and custom endpoints
+**🛡️ Secure MCP Server** - Multi-tenant Model Context Protocol with OAuth2, RBAC, and audit logging
+**💰 Agent FinOps** - Real-time cost tracking, budget enforcement, and ROI analytics for AI workflows
+
+### Key Principles
+
+**Unified Server**: Single binary providing GraphQL, REST, and MCP APIs
+**OpenAI Compatible**: Drop-in replacement for OpenRouter.ai with BYOK model
+**Local AI First**: Native Ollama integration with zero-config model detection
+**State Managed Workflows**: Unlike DAG-based systems, supports cycles, concurrent states, and complex relationships
+**Mathematical Guarantees**: Petri Net formalism provides deadlock detection and state safety
+**Polyglot First**: Any language can use GraphQL, REST, or MCP APIs
+**Multi-Tenant by Design**: Secure isolation with granular access controls and resource quotas
+**FinOps Native**: Built-in cost tracking, budgeting, and optimization for AI operations at scale
+
+### Architecture
+
+- **GraphQL API** (Port 4000): Workflow orchestration, agent management, and system administration
+- **REST API** (Port 8081): OpenAI-compatible LLM routing with intelligent provider selection
+- **MCP Server** (Port 3000): Secure multi-tenant Model Context Protocol for AI tool integration
+- **NATS Streaming**: Distributed state management and event sourcing
+- **Petri Net Engine**: Mathematical workflow validation and execution guarantees
 
 ## 🧠 Understanding Circuit Breaker Workflows
 
@@ -12,7 +46,7 @@ Circuit Breaker uses an intuitive workflow model that anyone can understand:
 ### **Resources** flow through **States** via **Activities**
 
 - **🏷️ Resources**: The things being worked on (Documents, Issues, Orders, Health Records, etc.)
-- **📍 States**: Where resources currently are (Draft, Review, Approved, Published, etc.)  
+- **📍 States**: Where resources currently are (Draft, Review, Approved, Published, etc.)
 - **⚡ Activities**: Actions that move resources between states (Submit, Approve, Deploy, etc.)
 
 ### **Activities** are powerful workflow steps that:
@@ -26,7 +60,7 @@ Circuit Breaker uses an intuitive workflow model that anyone can understand:
 ```
 Document Resource: "User Manual v2.1"
 States: Draft → Review → Approved → Published
-Activities: 
+Activities:
 - Submit: Rules(required fields), Functions(notify reviewers)
 - Approve: Rules(reviewer permissions), Functions(send notifications, log approval)
 - Publish: Rules(final approval), Functions(deploy to website, update catalogs)
@@ -34,7 +68,7 @@ Activities:
 
 **Issue Tracking**:
 ```
-Issue Resource: "Login Bug #1234"  
+Issue Resource: "Login Bug #1234"
 States: Open → In Progress → Testing → Closed
 Activities:
 - Assign: Rules(valid assignee), Functions(notify developer, update metrics)
@@ -52,7 +86,7 @@ Circuit Breaker is a **distributed, high-performance platform** that combines wo
 3. **Local AI Integration** - Native Ollama support with automatic model discovery and async loading
 4. **Multi-Provider Support** - OpenAI, Anthropic, Google, Azure OpenAI, Ollama, and custom endpoints
 
-**Key Principles**: 
+**Key Principles**:
 - **Unified Server**: Single binary providing both GraphQL and REST APIs
 - **OpenAI Compatible**: Drop-in replacement for OpenRouter.ai with BYOK model
 - **Local AI First**: Native Ollama integration with zero-config model detection
@@ -141,13 +175,13 @@ Circuit Breaker provides **first-class Ollama support** with automatic model det
 
 ### Features
 
-✅ **Automatic Model Detection** - Discovers available models on startup  
-✅ **Async Model Loading** - Non-blocking model initialization  
-✅ **Streaming Chat Completions** - Real-time response streaming  
-✅ **Embeddings Support** - Vector embeddings for semantic operations  
-✅ **OpenAI API Compatibility** - Drop-in replacement for OpenAI clients  
-✅ **Dynamic Model Management** - Hot-reload models without restart  
-✅ **Performance Optimized** - Rust async for maximum throughput  
+✅ **Automatic Model Detection** - Discovers available models on startup
+✅ **Async Model Loading** - Non-blocking model initialization
+✅ **Streaming Chat Completions** - Real-time response streaming
+✅ **Embeddings Support** - Vector embeddings for semantic operations
+✅ **OpenAI API Compatibility** - Drop-in replacement for OpenAI clients
+✅ **Dynamic Model Management** - Hot-reload models without restart
+✅ **Performance Optimized** - Rust async for maximum throughput
 
 ### Quick Ollama Setup
 
@@ -157,7 +191,7 @@ curl -fsSL https://ollama.ai/install.sh | sh
 
 # Pull recommended models
 ollama pull qwen2.5-coder:3b      # 2GB - Coding
-ollama pull gemma2:2b             # 1.6GB - Text 
+ollama pull gemma2:2b             # 1.6GB - Text
 ollama pull nomic-embed-text      # 274MB - Embeddings
 
 # Start Circuit Breaker (auto-detects models)
@@ -294,7 +328,7 @@ src/
 ├── models/           # 📦 Core domain logic (language-agnostic)
 │   ├── resource.rs   # Generic resource and history tracking
 │   └── workflow.rs   # Generic state and activity definitions
-├── engine/           # 🚀 Execution engines and APIs  
+├── engine/           # 🚀 Execution engines and APIs
 │   ├── graphql.rs    # GraphQL API implementation
 │   └── storage.rs    # Storage abstraction (NATS, PostgreSQL, etc.)
 ├── server/           # 🖥️  Deployable server implementations
@@ -320,7 +354,7 @@ examples/             # 📚 Client examples only (no servers!)
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                🦀 Circuit Breaker Unified Server            │
-│                  cargo run --bin server                     │  
+│                  cargo run --bin server                     │
 ├─────────────────────────────────────────────────────────────┤
 │  📊 GraphQL API (Port 4000)    🤖 OpenAI API (Port 3000)   │
 │  • Workflow Management         • Chat Completions          │
@@ -341,7 +375,7 @@ examples/             # 📚 Client examples only (no servers!)
         │
    🔗 Any OpenAI-Compatible Client
    • curl, HTTPie, Postman
-   • OpenAI Python/JS SDKs  
+   • OpenAI Python/JS SDKs
    • LangChain, AutoGPT
    • Custom Applications
 ```
@@ -586,7 +620,7 @@ cargo run --example llm_router_demo
 🔄 Circuit Breaker - Refactored Architecture Demo
 ==================================================
 📁 src/models/     → Domain-agnostic workflow state management
-🚀 src/engine/     → GraphQL API for polyglot clients  
+🚀 src/engine/     → GraphQL API for polyglot clients
 🖥️  src/server/     → Deployable server implementations
 
 ✅ Created workflow using src/models/: Example Process
@@ -594,7 +628,7 @@ cargo run --example llm_router_demo
 
 🔄 Executing activities using src/models/...
    ➡️  init -> processing
-   ➡️  processing -> review  
+   ➡️  processing -> review
    ➡️  review -> complete
 
 🏗️  Complete Architecture Benefits:
@@ -676,7 +710,7 @@ let ecommerce = WorkflowDefinition {
     // ...
 };
 
-// Software deployment pipeline  
+// Software deployment pipeline
 let deployment = WorkflowDefinition {
     states: vec!["development", "staging", "production", "rollback"],
     // ...
@@ -766,15 +800,15 @@ resource.metadata.insert("department".to_string(), serde_json::json!("engineerin
 
 // Execute activity to any state via any activity
 resource.execute_activity(
-    StateId::from("target_state"), 
+    StateId::from("target_state"),
     ActivityId::from("activity_name")
 );
 
 // Full audit trail automatically maintained
 for event in &resource.history {
-    println!("{} -> {} via {}", 
-        event.from.as_str(), 
-        event.to.as_str(), 
+    println!("{} -> {} via {}",
+        event.from.as_str(),
+        event.to.as_str(),
         event.activity_id.as_str()
     );
 }
@@ -790,7 +824,7 @@ let workflow = WorkflowDefinition {
     name: "Custom Process".to_string(),
     states: vec![
         StateId::from("start"),
-        StateId::from("middle"), 
+        StateId::from("middle"),
         StateId::from("end")
     ],
     activities: vec![
@@ -824,7 +858,7 @@ let schema = create_schema_with_storage(storage);
 
 // Available operations:
 // - Query: workflows, resources, availableActivities
-// - Mutation: createWorkflow, createToken, fireTransition  
+// - Mutation: createWorkflow, createToken, fireTransition
 // - Subscription: resourceUpdates, workflowEvents (coming soon)
 ```
 
@@ -842,7 +876,7 @@ let server = GraphQLServerBuilder::new()
 // Production server with custom storage
 let server = GraphQLServerBuilder::new()
     .host([0, 0, 0, 0])
-    .port(8080) 
+    .port(8080)
     .disable_playground()
     .disable_cors()
     .build_with_storage(production_storage);
@@ -893,9 +927,9 @@ server.start().await?;
 @dag
 def document_approval():
     draft = DummyOperator(task_id="draft")
-    review = DummyOperator(task_id="review") 
+    review = DummyOperator(task_id="review")
     approve = DummyOperator(task_id="approve")
-    
+
     draft >> review >> approve  # No cycles possible!
 ```
 
@@ -929,7 +963,7 @@ func DocumentWorkflow(ctx workflow.Context) error {
 ```
 
 ```rust
-// Circuit Breaker - Declarative state management  
+// Circuit Breaker - Declarative state management
 let mut resource = Resource::new("document_workflow", StateId::from("draft"));
 resource.execute_activity(StateId::from("review"), ActivityId::from("submit"));
 // Rich state history and concurrent resource support
@@ -946,7 +980,7 @@ mutation CreateContentCampaign {
   createWorkflow(input: {
     name: "AI Content Pipeline"
     states: [
-      "research", "outline", "draft", "fact_check", 
+      "research", "outline", "draft", "fact_check",
       "edit", "review", "published", "promoted"
     ]
     transitions: [
@@ -963,7 +997,7 @@ mutation CreateContentCampaign {
 
 **Agent Coordination Benefits:**
 - **Parallel Processing**: Multiple agents can work on different resources simultaneously
-- **Revision Loops**: Natural support for agent feedback and iteration  
+- **Revision Loops**: Natural support for agent feedback and iteration
 - **State Persistence**: Agents can pause/resume work with full context
 - **Audit Trail**: Complete history of which agents performed what actions
 
@@ -977,7 +1011,7 @@ examples/
 │   ├── basic_workflow.rs  # Direct model usage
 │   ├── token_demo.rs      # Core operations demo
 │   └── graphql_client.rs  # GraphQL client demo
-└── typescript/        # 📜 TypeScript clients  
+└── typescript/        # 📜 TypeScript clients
     ├── basic_workflow.ts  # GraphQL client demo
     ├── token_demo.ts      # Resource operations demo
     └── README.md          # Setup instructions
@@ -988,7 +1022,7 @@ examples/
 ```bash
 examples/
 ├── python/            # 🐍 Python clients (planned)
-├── go/                # 🐹 Go clients (planned)  
+├── go/                # 🐹 Go clients (planned)
 ├── java/              # ☕ Java clients (planned)
 └── csharp/            # 🔷 C# clients (planned)
 ```
@@ -1088,9 +1122,9 @@ MIT License - see [LICENSE](LICENSE) for details.
 # Start the server
 cargo run --bin server
 
-# Try client examples  
+# Try client examples
 cargo run --example basic_workflow
 cd examples/typescript && npm run start:basic
 
 # Visit http://localhost:4000/graphql and start building!
-``` 
+```
