@@ -1,0 +1,426 @@
+# Workflow Management Schema
+# Defines GraphQL operations for workflow definitions, resources, and activities
+
+# ============================================================================
+# QUERIES
+# ============================================================================
+
+extend type Query {
+  """Get a workflow definition by ID"""
+  workflow(id: String!): WorkflowGQL
+
+  """List all workflow definitions"""
+  workflows: [WorkflowGQL!]!
+
+  """Get a resource by ID"""
+  resource(id: String!): ResourceGQL
+
+  """List resources, optionally filtered by workflow"""
+  resources(workflowId: String): [ResourceGQL!]!
+
+  """Get available activities for a resource"""
+  availableActivities(resourceId: String!): [ActivityGQL!]!
+
+  """Get state definition by ID"""
+  state(workflowId: String!, stateId: String!): StateGQL
+
+  """List all states for a workflow"""
+  workflowStates(workflowId: String!): [StateGQL!]!
+}
+
+# ============================================================================
+# MUTATIONS
+# ============================================================================
+
+extend type Mutation {
+  """Create a new workflow definition"""
+  createWorkflow(input: WorkflowDefinitionInput!): WorkflowGQL!
+
+  """Create a new resource"""
+  createResource(input: ResourceCreateInput!): ResourceGQL!
+
+  """Execute an activity - automatically uses NATS-aware execution when available"""
+  executeActivity(input: ActivityExecuteInput!): ResourceGQL!
+
+  """Create or update a state definition"""
+  createState(input: StateDefinitionInput!): StateGQL!
+
+  """Update an existing state definition"""
+  updateState(workflowId: String!, stateId: String!, input: StateUpdateInput!): StateGQL!
+}
+
+# ============================================================================
+# SUBSCRIPTIONS
+# ============================================================================
+
+extend type Subscription {
+  """Subscribe to resource state changes"""
+  resourceUpdates(resourceId: String!): ResourceGQL!
+
+  """Subscribe to workflow events"""
+  workflowEvents(workflowId: String!): String!
+}
+
+# ============================================================================
+# TYPES
+# ============================================================================
+
+"""Workflow definition with states and activities"""
+type WorkflowGQL {
+  """Unique workflow identifier"""
+  id: ID!
+
+  """Human-readable workflow name"""
+  name: String!
+
+  """List of valid states in this workflow"""
+  states: [StateGQL!]!
+
+  """Activities that can transition between states"""
+  activities: [ActivityGQL!]!
+
+  """Initial state for new resources"""
+  initialState: String!
+
+  """Timestamp when workflow was created"""
+  createdAt: String!
+
+  """Timestamp when workflow was last updated"""
+  updatedAt: String!
+}
+
+"""State definition with metadata and configuration"""
+type StateGQL {
+  """Unique state identifier within the workflow"""
+  id: String!
+
+  """Human-readable state name"""
+  name: String!
+
+  """State description"""
+  description: String
+
+  """State type classification"""
+  stateType: StateType!
+
+  """Whether this is the initial state"""
+  isInitial: Boolean!
+
+  """Whether this is a terminal state"""
+  isTerminal: Boolean!
+
+  """State-specific configuration"""
+  config: StateConfigGQL
+
+  """Valid transitions from this state"""
+  allowedTransitions: [String!]!
+
+  """Activities that can be executed from this state"""
+  availableActivities: [ActivityGQL!]!
+
+  """Timestamp when state was created"""
+  createdAt: String!
+
+  """Timestamp when state was last updated"""
+  updatedAt: String!
+}
+
+"""State configuration options"""
+type StateConfigGQL {
+  """Timeout for resources in this state (seconds)"""
+  timeoutSeconds: Int
+
+  """Auto-transition configuration"""
+  autoTransition: AutoTransitionConfigGQL
+
+  """Notification settings for this state"""
+  notifications: StateNotificationConfigGQL
+
+  """Custom metadata for the state"""
+  metadata: JSON
+}
+
+"""Auto-transition configuration"""
+type AutoTransitionConfigGQL {
+  """Whether auto-transition is enabled"""
+  enabled: Boolean!
+
+  """Delay before auto-transition (seconds)"""
+  delaySeconds: Int!
+
+  """Target state for auto-transition"""
+  targetState: String!
+
+  """Conditions that must be met for auto-transition"""
+  conditions: [String!]!
+}
+
+"""State notification configuration"""
+type StateNotificationConfigGQL {
+  """Whether notifications are enabled for this state"""
+  enabled: Boolean!
+
+  """Notification channels"""
+  channels: [String!]!
+
+  """Notification templates"""
+  templates: JSON
+}
+
+"""Resource/token with current state and history"""
+type ResourceGQL {
+  """Unique resource identifier"""
+  id: ID!
+
+  """ID of the workflow this resource belongs to"""
+  workflowId: String!
+
+  """Current state of the resource"""
+  state: String!
+
+  """Current state definition"""
+  stateDefinition: StateGQL
+
+  """Resource data payload"""
+  data: JSON!
+
+  """Resource metadata"""
+  metadata: JSON!
+
+  """Timestamp when resource was created"""
+  createdAt: String!
+
+  """Timestamp when resource was last updated"""
+  updatedAt: String!
+
+  """Historical state transitions"""
+  history: [HistoryEventGQL!]!
+}
+
+"""Activity definition with transitions"""
+type ActivityGQL {
+  """Unique activity identifier"""
+  id: String!
+
+  """Human-readable activity name"""
+  name: String
+
+  """States this activity can transition from"""
+  fromStates: [String!]!
+
+  """State this activity transitions to"""
+  toState: String!
+
+  """Conditions that must be met to execute this activity"""
+  conditions: [String!]!
+
+  """Activity description"""
+  description: String
+}
+
+"""Historical state transition event"""
+type HistoryEventGQL {
+  """Timestamp of the transition"""
+  timestamp: String!
+
+  """Activity that caused the transition"""
+  activity: String!
+
+  """State before the transition"""
+  fromState: String!
+
+  """State after the transition"""
+  toState: String!
+
+  """Data associated with the transition"""
+  data: JSON
+}
+
+# ============================================================================
+# ENUMS
+# ============================================================================
+
+"""Types of states in a workflow"""
+enum StateType {
+  """Regular processing state"""
+  NORMAL
+
+  """Initial entry state"""
+  INITIAL
+
+  """Final terminal state"""
+  TERMINAL
+
+  """Error/failure state"""
+  ERROR
+
+  """Waiting/pending state"""
+  WAITING
+
+  """Review/approval state"""
+  REVIEW
+}
+
+# ============================================================================
+# INPUT TYPES
+# ============================================================================
+
+"""Input for creating a new workflow definition"""
+input WorkflowDefinitionInput {
+  """Human-readable workflow name"""
+  name: String!
+
+  """List of state definitions for this workflow"""
+  states: [StateDefinitionInput!]!
+
+  """Activities that can transition between states"""
+  activities: [ActivityDefinitionInput!]!
+
+  """Initial state ID for new resources"""
+  initialState: String!
+
+  """Optional workflow description"""
+  description: String
+}
+
+"""Input for defining a state"""
+input StateDefinitionInput {
+  """Unique state identifier within the workflow"""
+  id: String!
+
+  """Human-readable state name"""
+  name: String!
+
+  """Workflow ID this state belongs to"""
+  workflowId: String!
+
+  """State description"""
+  description: String
+
+  """State type classification"""
+  stateType: StateType!
+
+  """Whether this is the initial state"""
+  isInitial: Boolean = false
+
+  """Whether this is a terminal state"""
+  isTerminal: Boolean = false
+
+  """State-specific configuration"""
+  config: StateConfigInput
+}
+
+"""Input for updating a state definition"""
+input StateUpdateInput {
+  """Human-readable state name"""
+  name: String
+
+  """State description"""
+  description: String
+
+  """State type classification"""
+  stateType: StateType
+
+  """Whether this is a terminal state"""
+  isTerminal: Boolean
+
+  """State-specific configuration"""
+  config: StateConfigInput
+}
+
+"""Input for state configuration"""
+input StateConfigInput {
+  """Timeout for resources in this state (seconds)"""
+  timeoutSeconds: Int
+
+  """Auto-transition configuration"""
+  autoTransition: AutoTransitionConfigInput
+
+  """Notification settings for this state"""
+  notifications: StateNotificationConfigInput
+
+  """Custom metadata for the state"""
+  metadata: JSON
+}
+
+"""Input for auto-transition configuration"""
+input AutoTransitionConfigInput {
+  """Whether auto-transition is enabled"""
+  enabled: Boolean!
+
+  """Delay before auto-transition (seconds)"""
+  delaySeconds: Int!
+
+  """Target state for auto-transition"""
+  targetState: String!
+
+  """Conditions that must be met for auto-transition"""
+  conditions: [String!]!
+}
+
+"""Input for state notification configuration"""
+input StateNotificationConfigInput {
+  """Whether notifications are enabled for this state"""
+  enabled: Boolean!
+
+  """Notification channels"""
+  channels: [String!]!
+
+  """Notification templates"""
+  templates: JSON
+}
+
+"""Input for defining an activity"""
+input ActivityDefinitionInput {
+  """Unique activity identifier"""
+  id: String!
+
+  """Human-readable activity name"""
+  name: String
+
+  """States this activity can transition from"""
+  fromStates: [String!]!
+
+  """State this activity transitions to"""
+  toState: String!
+
+  """Conditions that must be met to execute this activity"""
+  conditions: [String!]!
+
+  """Activity description"""
+  description: String
+}
+
+"""Input for creating a new resource"""
+input ResourceCreateInput {
+  """ID of the workflow this resource belongs to"""
+  workflowId: String!
+
+  """Initial state (defaults to workflow's initial state)"""
+  initialState: String
+
+  """Initial resource data payload"""
+  data: JSON
+
+  """Initial resource metadata"""
+  metadata: JSON
+}
+
+"""Input for executing an activity"""
+input ActivityExecuteInput {
+  """ID of the resource to transition"""
+  resourceId: String!
+
+  """ID of the activity to execute"""
+  activityId: String!
+
+  """Data to associate with the transition"""
+  data: JSON
+}
+
+# ============================================================================
+# SCALARS
+# ============================================================================
+
+"""JSON scalar type for arbitrary data"""
+scalar JSON

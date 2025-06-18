@@ -1,0 +1,158 @@
+# NATS-Enhanced Operations Schema
+# Defines GraphQL operations for NATS event streaming and enhanced workflow operations
+
+# ============================================================================
+# QUERIES
+# ============================================================================
+
+extend type Query {
+  """Get resource with NATS metadata by ID"""
+  natsResource(id: String!): NatsResourceGQL
+
+  """Get resources currently in a specific state (NATS-specific)"""
+  resourcesInState(workflowId: String!, stateId: String!): [NatsResourceGQL!]!
+
+  """Find resource by ID with workflow context (more efficient for NATS)"""
+  findResource(workflowId: String!, resourceId: String!): NatsResourceGQL
+}
+
+# ============================================================================
+# MUTATIONS
+# ============================================================================
+
+extend type Mutation {
+  """Create a workflow instance with NATS event tracking"""
+  createWorkflowInstance(input: CreateWorkflowInstanceInput!): NatsResourceGQL!
+
+  """Execute activity with NATS event publishing"""
+  executeActivityWithNats(input: ExecuteActivityWithNatsInput!): NatsResourceGQL!
+}
+
+# ============================================================================
+# TYPES
+# ============================================================================
+
+"""Resource with NATS-specific metadata and event tracking"""
+type NatsResourceGQL {
+  """Unique resource identifier"""
+  id: ID!
+
+  """ID of the workflow this resource belongs to"""
+  workflowId: String!
+
+  """Current state of the resource"""
+  state: String!
+
+  """Resource data payload"""
+  data: JSON!
+
+  """Resource metadata"""
+  metadata: JSON!
+
+  """Timestamp when resource was created"""
+  createdAt: String!
+
+  """Timestamp when resource was last updated"""
+  updatedAt: String!
+
+  """Historical state transitions"""
+  history: [HistoryEventGQL!]!
+
+  """NATS sequence number for this resource"""
+  natsSequence: String
+
+  """NATS timestamp for last event"""
+  natsTimestamp: String
+
+  """NATS subject for resource events"""
+  natsSubject: String
+
+  """Activity execution history with NATS metadata"""
+  activityHistory: [ActivityRecordGQL!]!
+}
+
+"""Activity execution record with NATS tracking"""
+type ActivityRecordGQL {
+  """State before the activity execution"""
+  fromState: String!
+
+  """State after the activity execution"""
+  toState: String!
+
+  """ID of the executed activity"""
+  activityId: String!
+
+  """Timestamp of the activity execution"""
+  timestamp: String!
+
+  """User or system that triggered the activity"""
+  triggeredBy: String
+
+  """NATS sequence number for this activity"""
+  natsSequence: String
+
+  """Additional metadata for the activity execution"""
+  metadata: JSON
+}
+
+"""Historical state transition event"""
+type HistoryEventGQL {
+  """Timestamp of the transition"""
+  timestamp: String!
+
+  """Activity that caused the transition"""
+  activity: String!
+
+  """State before the transition"""
+  fromState: String!
+
+  """State after the transition"""
+  toState: String!
+
+  """Data associated with the transition"""
+  data: JSON
+}
+
+# ============================================================================
+# INPUT TYPES
+# ============================================================================
+
+"""Input for creating a workflow instance with NATS tracking"""
+input CreateWorkflowInstanceInput {
+  """ID of the workflow to instantiate"""
+  workflowId: String!
+
+  """Initial data for the resource"""
+  initialData: JSON
+
+  """Initial metadata for the resource"""
+  metadata: JSON
+
+  """User or system creating the instance"""
+  triggeredBy: String
+}
+
+"""Input for executing activity with NATS event publishing"""
+input ExecuteActivityWithNatsInput {
+  """ID of the resource to transition"""
+  resourceId: String!
+
+  """ID of the activity to execute"""
+  activityId: String!
+
+  """New state to transition to"""
+  newState: String!
+
+  """User or system triggering the activity"""
+  triggeredBy: String
+
+  """Data to associate with the activity execution"""
+  data: JSON
+}
+
+# ============================================================================
+# SCALARS
+# ============================================================================
+
+"""JSON scalar type for arbitrary data"""
+scalar JSON

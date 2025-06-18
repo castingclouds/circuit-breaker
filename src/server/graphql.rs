@@ -1,8 +1,6 @@
 // GraphQL server implementation for Circuit Breaker
 // This creates a standalone GraphQL server with predefined workflows
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use async_graphql::Schema;
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse, GraphQLSubscription};
 use axum::{
@@ -12,19 +10,23 @@ use axum::{
     routing::{get, post},
     Router, Server,
 };
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 use crate::engine::{
-    graphql::{Query, Mutation, Subscription, create_schema_with_storage, create_schema_with_agents, create_schema_with_nats, create_schema_with_nats_and_agents},
-    storage::{InMemoryStorage, WorkflowStorage},
+    agents::{AgentEngine, AgentEngineConfig, AgentStorage, InMemoryAgentStorage},
+    graphql::{
+        create_schema_with_agents, create_schema_with_full_storage, create_schema_with_nats,
+        create_schema_with_nats_and_agents, create_schema_with_storage, Mutation, Query,
+        Subscription,
+    },
     nats_storage::{NATSStorage, NATSStorageConfig, NATSStorageWrapper},
-    agents::{AgentEngine, AgentStorage, InMemoryAgentStorage, AgentEngineConfig},
     rules::RulesEngine,
+    storage::{InMemoryStorage, WorkflowStorage},
 };
-use crate::models::{
-    WorkflowDefinition, PlaceId, TransitionId, TransitionDefinition
-};
+use crate::models::{ActivityDefinition, ActivityId, StateId, WorkflowDefinition};
 
 pub type GraphQLSchema = Schema<Query, Mutation, Subscription>;
 
@@ -51,6 +53,7 @@ pub struct GraphQLServer {
     agent_storage: Option<std::sync::Arc<dyn AgentStorage>>,
     agent_engine: Option<AgentEngine>,
     nats_storage: Option<std::sync::Arc<NATSStorage>>,
+    rule_storage: Option<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>,
 }
 
 impl GraphQLServer {
@@ -61,6 +64,7 @@ impl GraphQLServer {
             agent_storage: None,
             agent_engine: None,
             nats_storage: None,
+            rule_storage: None,
         }
     }
 
@@ -78,18 +82,18 @@ impl GraphQLServer {
         // Create a single shared agent storage instance
         let agent_storage = std::sync::Arc::new(InMemoryAgentStorage::default());
         let rules_engine = std::sync::Arc::new(RulesEngine::new());
-        
+
         // Create agent engine with shared storage
         let agent_engine = AgentEngine::new(
             agent_storage.clone(),
             rules_engine,
             AgentEngineConfig::default(),
         );
-        
+
         // Clone the shared Arc<dyn AgentStorage> and assign it to self.agent_storage
         // This ensures the storage is shared across the application
         let shared_storage = agent_storage.clone();
-        
+
         self.agent_storage = Some(shared_storage as std::sync::Arc<dyn AgentStorage>);
         self.agent_engine = Some(agent_engine);
         self
@@ -100,29 +104,51 @@ impl GraphQLServer {
         self
     }
 
+    pub fn with_rule_storage(
+        mut self,
+        rule_storage: std::sync::Arc<dyn crate::engine::rules::RuleStorage>,
+    ) -> Self {
+        self.rule_storage = Some(rule_storage);
+        self
+    }
+
     pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Add default workflows
         self.add_default_workflows().await?;
-        
-        let schema = match (self.nats_storage, self.agent_storage, self.agent_engine) {
-            (Some(nats_storage), Some(agent_storage), Some(agent_engine)) => {
+
+        let schema = match (
+            self.nats_storage,
+            self.agent_storage,
+            self.agent_engine,
+            self.rule_storage,
+        ) {
+            (Some(nats_storage), Some(agent_storage), Some(agent_engine), Some(rule_storage)) => {
+                info!("🎯 Starting server with full storage support (NATS + Agents + Rules)");
+                create_schema_with_full_storage(
+                    nats_storage,
+                    agent_storage,
+                    std::sync::Arc::new(agent_engine),
+                    rule_storage,
+                )
+            }
+            (Some(nats_storage), Some(agent_storage), Some(agent_engine), None) => {
                 info!("🤖 Starting server with NATS storage and AI agent support");
                 create_schema_with_nats_and_agents(nats_storage, agent_storage, agent_engine)
-            },
-            (Some(nats_storage), _, _) => {
+            }
+            (Some(nats_storage), _, _, _) => {
                 info!("📡 Starting server with NATS storage support");
                 create_schema_with_nats(nats_storage)
-            },
-            (None, Some(agent_storage), Some(agent_engine)) => {
+            }
+            (None, Some(agent_storage), Some(agent_engine), _) => {
                 info!("🤖 Starting server with AI agent support");
                 create_schema_with_agents(self.storage, agent_storage, agent_engine)
-            },
-            (None, _, _) => {
+            }
+            (None, _, _, _) => {
                 info!("📋 Starting server with basic workflow support");
                 create_schema_with_storage(self.storage)
             }
         };
-        
+
         let app_state = Arc::new(RwLock::new(schema.clone()));
 
         let subscription_service = GraphQLSubscription::new(schema);
@@ -139,12 +165,24 @@ impl GraphQLServer {
         }
 
         let addr = format!("0.0.0.0:{}", self.config.port);
-        
-        info!("🚀 GraphQL server running on http://localhost:{}", self.config.port);
-        info!("📊 GraphiQL interface: http://localhost:{}", self.config.port);
-        info!("🔗 GraphQL endpoint: http://localhost:{}/graphql", self.config.port);
-        info!("📡 GraphQL WebSocket: ws://localhost:{}/ws", self.config.port);
-        
+
+        info!(
+            "🚀 GraphQL server running on http://localhost:{}",
+            self.config.port
+        );
+        info!(
+            "📊 GraphiQL interface: http://localhost:{}",
+            self.config.port
+        );
+        info!(
+            "🔗 GraphQL endpoint: http://localhost:{}/graphql",
+            self.config.port
+        );
+        info!(
+            "📡 GraphQL WebSocket: ws://localhost:{}/ws",
+            self.config.port
+        );
+
         // Use axum 0.6 syntax
         Server::bind(&addr.parse()?)
             .serve(app.into_make_service())
@@ -157,109 +195,109 @@ impl GraphQLServer {
         let _document_workflow = WorkflowDefinition {
             id: "document_review".to_string(),
             name: "Document Review Process".to_string(),
-            places: vec![
-                PlaceId::from("draft"),
-                PlaceId::from("pending_review"),
-                PlaceId::from("reviewed"),
-                PlaceId::from("approved"),
-                PlaceId::from("rejected"),
+            states: vec![
+                StateId::from("draft"),
+                StateId::from("pending_review"),
+                StateId::from("reviewed"),
+                StateId::from("approved"),
+                StateId::from("rejected"),
             ],
-            transitions: vec![
-                TransitionDefinition {
-                    id: TransitionId::from("submit"),
-                    from_places: vec![PlaceId::from("draft")],
-                    to_place: PlaceId::from("pending_review"),
+            activities: vec![
+                ActivityDefinition {
+                    id: ActivityId::from("submit"),
+                    from_states: vec![StateId::from("draft")],
+                    to_state: StateId::from("pending_review"),
                     conditions: vec![],
                     rules: vec![],
                 },
-                TransitionDefinition {
-                    id: TransitionId::from("review"),
-                    from_places: vec![PlaceId::from("pending_review")],
-                    to_place: PlaceId::from("reviewed"),
+                ActivityDefinition {
+                    id: ActivityId::from("review"),
+                    from_states: vec![StateId::from("pending_review")],
+                    to_state: StateId::from("reviewed"),
                     conditions: vec![],
                     rules: vec![],
                 },
-                TransitionDefinition {
-                    id: TransitionId::from("approve"),
-                    from_places: vec![PlaceId::from("reviewed")],
-                    to_place: PlaceId::from("approved"),
+                ActivityDefinition {
+                    id: ActivityId::from("approve"),
+                    from_states: vec![StateId::from("reviewed")],
+                    to_state: StateId::from("approved"),
                     conditions: vec![],
                     rules: vec![],
                 },
-                TransitionDefinition {
-                    id: TransitionId::from("reject"),
-                    from_places: vec![PlaceId::from("reviewed")],
-                    to_place: PlaceId::from("rejected"),
+                ActivityDefinition {
+                    id: ActivityId::from("reject"),
+                    from_states: vec![StateId::from("reviewed")],
+                    to_state: StateId::from("rejected"),
                     conditions: vec![],
                     rules: vec![],
                 },
-                TransitionDefinition {
-                    id: TransitionId::from("revise"),
-                    from_places: vec![PlaceId::from("rejected")],
-                    to_place: PlaceId::from("draft"),
+                ActivityDefinition {
+                    id: ActivityId::from("revise"),
+                    from_states: vec![StateId::from("rejected")],
+                    to_state: StateId::from("draft"),
                     conditions: vec![],
                     rules: vec![],
                 },
             ],
-            initial_place: PlaceId::from("draft"),
+            initial_state: StateId::from("draft"),
         };
 
         // Software Deployment Workflow
         let _deployment_workflow = WorkflowDefinition {
             id: "software_deployment".to_string(),
             name: "Software Deployment Pipeline".to_string(),
-            places: vec![
-                PlaceId::from("development"),
-                PlaceId::from("staging"),
-                PlaceId::from("production"),
-                PlaceId::from("rollback"),
-                PlaceId::from("hotfix"),
+            states: vec![
+                StateId::from("development"),
+                StateId::from("staging"),
+                StateId::from("production"),
+                StateId::from("rollback"),
+                StateId::from("hotfix"),
             ],
-            transitions: vec![
-                TransitionDefinition {
-                    id: TransitionId::from("deploy_to_staging"),
-                    from_places: vec![PlaceId::from("development")],
-                    to_place: PlaceId::from("staging"),
+            activities: vec![
+                ActivityDefinition {
+                    id: ActivityId::from("deploy_to_staging"),
+                    from_states: vec![StateId::from("development")],
+                    to_state: StateId::from("staging"),
                     conditions: vec!["tests_passed".to_string()],
                     rules: vec![],
                 },
-                TransitionDefinition {
-                    id: TransitionId::from("deploy_to_production"),
-                    from_places: vec![PlaceId::from("staging")],
-                    to_place: PlaceId::from("production"),
+                ActivityDefinition {
+                    id: ActivityId::from("deploy_to_production"),
+                    from_states: vec![StateId::from("staging")],
+                    to_state: StateId::from("production"),
                     conditions: vec!["qa_approved".to_string()],
                     rules: vec![],
                 },
-                TransitionDefinition {
-                    id: TransitionId::from("rollback_from_production"),
-                    from_places: vec![PlaceId::from("production")],
-                    to_place: PlaceId::from("rollback"),
+                ActivityDefinition {
+                    id: ActivityId::from("rollback_from_production"),
+                    from_states: vec![StateId::from("production")],
+                    to_state: StateId::from("rollback"),
                     conditions: vec![],
                     rules: vec![],
                 },
-                TransitionDefinition {
-                    id: TransitionId::from("create_hotfix"),
-                    from_places: vec![PlaceId::from("production")],
-                    to_place: PlaceId::from("hotfix"),
+                ActivityDefinition {
+                    id: ActivityId::from("create_hotfix"),
+                    from_states: vec![StateId::from("production")],
+                    to_state: StateId::from("hotfix"),
                     conditions: vec!["critical_bug_detected".to_string()],
                     rules: vec![],
                 },
-                TransitionDefinition {
-                    id: TransitionId::from("deploy_hotfix"),
-                    from_places: vec![PlaceId::from("rollback")],
-                    to_place: PlaceId::from("staging"),
+                ActivityDefinition {
+                    id: ActivityId::from("deploy_hotfix"),
+                    from_states: vec![StateId::from("rollback")],
+                    to_state: StateId::from("staging"),
                     conditions: vec![],
                     rules: vec![],
                 },
-                TransitionDefinition {
-                    id: TransitionId::from("hotfix_to_staging"),
-                    from_places: vec![PlaceId::from("hotfix")],
-                    to_place: PlaceId::from("staging"),
+                ActivityDefinition {
+                    id: ActivityId::from("hotfix_to_staging"),
+                    from_states: vec![StateId::from("hotfix")],
+                    to_state: StateId::from("staging"),
                     conditions: vec!["hotfix_tested".to_string()],
                     rules: vec![],
                 },
             ],
-            initial_place: PlaceId::from("development"),
+            initial_state: StateId::from("development"),
         };
 
         // Store workflows - we'll need to implement this in the storage trait
@@ -306,17 +344,31 @@ impl GraphQLServerBuilder {
         self
     }
 
+    pub fn with_rule_storage(
+        mut self,
+        rule_storage: std::sync::Arc<dyn crate::engine::rules::RuleStorage>,
+    ) -> Self {
+        self.server = self.server.with_rule_storage(rule_storage);
+        self
+    }
+
     pub async fn with_nats(mut self, nats_url: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let nats_config = NATSStorageConfig {
             nats_urls: vec![nats_url.to_string()],
             ..Default::default()
         };
-        
+
         let nats_storage = std::sync::Arc::new(NATSStorage::new(nats_config).await?);
         let storage_wrapper = NATSStorageWrapper::new(nats_storage.clone());
-        
+
+        // Create NATS client for rule storage
+        let nats_client = async_nats::connect(&nats_url).await?;
+        let rule_storage =
+            std::sync::Arc::new(crate::engine::rules::NATSRuleStorage::new(nats_client).await?);
+
         self.server = self.server.with_storage(Box::new(storage_wrapper));
         self.server = self.server.with_nats_storage(nats_storage);
+        self.server = self.server.with_rule_storage(rule_storage);
         Ok(self)
     }
 
@@ -342,7 +394,8 @@ async fn graphql_handler(
 
 // GraphiQL interface with WebSocket support
 async fn graphiql() -> impl IntoResponse {
-    Html(r#"
+    Html(
+        r#"
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -372,7 +425,7 @@ async fn graphiql() -> impl IntoResponse {
     <script src="https://unpkg.com/graphiql@3/graphiql.min.js" type="application/javascript"></script>
     <script>
       const root = ReactDOM.createRoot(document.getElementById('graphiql'));
-      
+
       const fetcher = GraphiQL.createFetcher({
         url: '/graphql',
         subscriptionUrl: 'ws://localhost:4000/ws',
@@ -385,10 +438,9 @@ async fn graphiql() -> impl IntoResponse {
     </script>
   </body>
 </html>
-"#)
+"#,
+    )
 }
-
-
 
 // Health check endpoint
 async fn health_check() -> impl IntoResponse {

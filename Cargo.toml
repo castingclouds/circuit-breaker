@@ -8,6 +8,10 @@ edition = "2021"
 name = "server"
 path = "src/bin/server.rs"
 
+[[bin]]
+name = "admin"
+path = "src/bin/admin.rs"
+
 
 
 
@@ -59,6 +63,9 @@ urlencoding = "2.1"
 # Error handling
 anyhow = "1.0"
 thiserror = "1.0"
+
+# CLI parsing
+clap = { version = "4.0", features = ["derive", "env"] }
 
 # Logging
 tracing = "0.1"

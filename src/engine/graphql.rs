@@ -1,16 +1,20 @@
 // GraphQL API for the Circuit Breaker engine
 // This provides a GraphQL interface for defining and executing State Managed Workflows
 
-use async_graphql::{Context, Object, Schema, Subscription, InputObject, SimpleObject, Enum, ID};
+use async_graphql::{Context, Enum, InputObject, Object, Schema, SimpleObject, Subscription, ID};
 use chrono::Utc;
 use serde_json;
 use uuid::Uuid;
 
-use crate::models::{Token, PlaceId, TransitionId, WorkflowDefinition, TransitionDefinition, HistoryEvent,
-    AgentId, AgentDefinition, LLMProvider, LLMConfig, AgentPrompts, PlaceAgentConfig, 
-    PlaceAgentSchedule, AgentRetryConfig, AgentExecution, AgentExecutionStatus};
+use crate::engine::rules::StoredRule;
 use crate::engine::storage::WorkflowStorage;
-use crate::engine::{TokenEvents, EventBus, AgentStorage, AgentEngine};
+use crate::engine::{AgentEngine, AgentStorage};
+use crate::models::{
+    ActivityDefinition, ActivityId, AgentDefinition, AgentExecution, AgentExecutionStatus, AgentId,
+    AgentPrompts, AgentRetryConfig, HistoryEvent, LLMConfig, LLMProvider, Resource,
+    ResourceMetadata, Rule, RuleCondition, StateAgentConfig, StateAgentSchedule, StateId,
+    WorkflowDefinition,
+};
 
 // GraphQL types - these are the API representations of our domain models
 
@@ -18,28 +22,28 @@ use crate::engine::{TokenEvents, EventBus, AgentStorage, AgentEngine};
 pub struct WorkflowGQL {
     pub id: ID,
     pub name: String,
-    pub places: Vec<String>,
-    pub transitions: Vec<TransitionGQL>,
-    pub initial_place: String,
+    pub states: Vec<String>,
+    pub activities: Vec<ActivityGQL>,
+    pub initial_state: String,
     pub created_at: String,
     pub updated_at: String,
 }
 
 #[derive(SimpleObject, Debug, Clone)]
-pub struct TransitionGQL {
+pub struct ActivityGQL {
     pub id: String,
     pub name: Option<String>,
-    pub from_places: Vec<String>,
-    pub to_place: String,
+    pub from_states: Vec<String>,
+    pub to_state: String,
     pub conditions: Vec<String>,
     pub description: Option<String>,
 }
 
 #[derive(SimpleObject, Debug, Clone)]
-pub struct TokenGQL {
+pub struct ResourceGQL {
     pub id: ID,
     pub workflow_id: String,
-    pub place: String,
+    pub state: String,
     pub data: serde_json::Value,
     pub metadata: serde_json::Value,
     pub created_at: String,
@@ -50,17 +54,17 @@ pub struct TokenGQL {
 #[derive(SimpleObject, Debug, Clone)]
 pub struct HistoryEventGQL {
     pub timestamp: String,
-    pub transition: String,
-    pub from_place: String,
-    pub to_place: String,
+    pub activity: String,
+    pub from_state: String,
+    pub to_state: String,
     pub data: Option<serde_json::Value>,
 }
 
 #[derive(SimpleObject, Debug, Clone)]
-pub struct TransitionRecordGQL {
-    pub from_place: String,
-    pub to_place: String,
-    pub transition_id: String,
+pub struct ActivityRecordGQL {
+    pub from_state: String,
+    pub to_state: String,
+    pub activity_id: String,
     pub timestamp: String,
     pub triggered_by: Option<String>,
     pub nats_sequence: Option<String>,
@@ -68,10 +72,10 @@ pub struct TransitionRecordGQL {
 }
 
 #[derive(SimpleObject, Debug, Clone)]
-pub struct NATSTokenGQL {
+pub struct NATSResourceGQL {
     pub id: ID,
     pub workflow_id: String,
-    pub place: String,
+    pub state: String,
     pub data: serde_json::Value,
     pub metadata: serde_json::Value,
     pub created_at: String,
@@ -80,7 +84,7 @@ pub struct NATSTokenGQL {
     pub nats_sequence: Option<String>,
     pub nats_timestamp: Option<String>,
     pub nats_subject: Option<String>,
-    pub transition_history: Vec<TransitionRecordGQL>,
+    pub activity_history: Vec<ActivityRecordGQL>,
 }
 
 // Agent-related GraphQL types
@@ -123,15 +127,15 @@ pub struct AgentPromptsGQL {
 }
 
 #[derive(SimpleObject, Debug, Clone)]
-pub struct PlaceAgentConfigGQL {
+pub struct StateAgentConfigGQL {
     pub id: String,
-    pub place_id: String,
+    pub state_id: String,
     pub agent_id: String,
     pub llm_config: Option<LLMConfigGQL>,
     pub input_mapping: serde_json::Value,
     pub output_mapping: serde_json::Value,
-    pub auto_transition: Option<String>,
-    pub schedule: Option<PlaceAgentScheduleGQL>,
+    pub auto_activity: Option<String>,
+    pub schedule: Option<StateAgentScheduleGQL>,
     pub retry_config: Option<AgentRetryConfigGQL>,
     pub enabled: bool,
     pub created_at: String,
@@ -139,7 +143,7 @@ pub struct PlaceAgentConfigGQL {
 }
 
 #[derive(SimpleObject, Debug, Clone)]
-pub struct PlaceAgentScheduleGQL {
+pub struct StateAgentScheduleGQL {
     pub initial_delay_seconds: Option<i32>,
     pub interval_seconds: Option<i32>,
     pub max_executions: Option<i32>,
@@ -156,8 +160,8 @@ pub struct AgentRetryConfigGQL {
 pub struct AgentExecutionGQL {
     pub id: String,
     pub agent_id: String,
-    pub token_id: String,
-    pub place_id: String,
+    pub resource_id: String,
+    pub state_id: String,
     pub status: AgentExecutionStatusGQL,
     pub input_data: serde_json::Value,
     pub output_data: Option<serde_json::Value>,
@@ -328,18 +332,18 @@ pub struct CostAnalyticsGQL {
 #[derive(InputObject, Debug)]
 pub struct WorkflowDefinitionInput {
     pub name: String,
-    pub places: Vec<String>,
-    pub transitions: Vec<TransitionDefinitionInput>,
-    pub initial_place: String,
+    pub states: Vec<String>,
+    pub activities: Vec<ActivityDefinitionInput>,
+    pub initial_state: String,
     pub description: Option<String>,
 }
 
 #[derive(InputObject, Debug)]
-pub struct TransitionDefinitionInput {
+pub struct ActivityDefinitionInput {
     pub id: String,
     pub name: Option<String>,
-    pub from_places: Vec<String>,
-    pub to_place: String,
+    pub from_states: Vec<String>,
+    pub to_state: String,
     pub conditions: Vec<String>,
     pub description: Option<String>,
 }
@@ -407,17 +411,17 @@ pub struct CostAnalyticsInput {
 }
 
 #[derive(InputObject, Debug)]
-pub struct TokenCreateInput {
+pub struct ResourceCreateInput {
     pub workflow_id: String,
-    pub initial_place: Option<String>,
+    pub initial_state: Option<String>,
     pub data: Option<serde_json::Value>,
     pub metadata: Option<serde_json::Value>,
 }
 
 #[derive(InputObject, Debug)]
-pub struct TransitionFireInput {
-    pub token_id: String,
-    pub transition_id: String,
+pub struct ActivityExecuteInput {
+    pub resource_id: String,
+    pub activity_id: String,
     pub data: Option<serde_json::Value>,
 }
 
@@ -474,20 +478,20 @@ pub struct AgentPromptsInput {
 }
 
 #[derive(InputObject, Debug)]
-pub struct PlaceAgentConfigInput {
-    pub place_id: String,
+pub struct StateAgentConfigInput {
+    pub state_id: String,
     pub agent_id: String,
     pub llm_config: Option<LLMConfigInput>,
     pub input_mapping: serde_json::Value,
     pub output_mapping: serde_json::Value,
-    pub auto_transition: Option<String>,
-    pub schedule: Option<PlaceAgentScheduleInput>,
+    pub auto_activity: Option<String>,
+    pub schedule: Option<StateAgentScheduleInput>,
     pub retry_config: Option<AgentRetryConfigInput>,
     pub enabled: bool,
 }
 
 #[derive(InputObject, Debug)]
-pub struct PlaceAgentScheduleInput {
+pub struct StateAgentScheduleInput {
     pub initial_delay_seconds: Option<i32>,
     pub interval_seconds: Option<i32>,
     pub max_executions: Option<i32>,
@@ -501,8 +505,69 @@ pub struct AgentRetryConfigInput {
 }
 
 #[derive(InputObject, Debug)]
-pub struct TriggerPlaceAgentsInput {
-    pub token_id: String,
+pub struct TriggerStateAgentsInput {
+    pub resource_id: String,
+}
+
+// Rule types for GraphQL
+#[derive(SimpleObject, Debug, Clone)]
+pub struct RuleGQL {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub condition: RuleConditionGQL,
+    pub version: i32,
+    pub created_at: String,
+    pub updated_at: String,
+    pub created_by: Option<String>,
+    pub tags: Vec<String>,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct RuleConditionGQL {
+    pub condition_type: String,
+    pub field: Option<String>,
+    pub value: Option<serde_json::Value>,
+    pub substring: Option<String>,
+    pub rules: Option<Vec<RuleGQL>>,
+    pub rule: Option<Box<RuleGQL>>,
+    pub script: Option<String>,
+}
+
+#[derive(SimpleObject, Debug, Clone)]
+pub struct RuleEvaluationResultGQL {
+    pub rule_id: String,
+    pub passed: bool,
+    pub reason: String,
+    pub details: Option<serde_json::Value>,
+    pub sub_results: Vec<RuleEvaluationResultGQL>,
+}
+
+// Rule input types
+#[derive(InputObject, Debug)]
+pub struct RuleInput {
+    pub name: String,
+    pub description: String,
+    pub condition: RuleConditionInput,
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(InputObject, Debug)]
+pub struct RuleConditionInput {
+    pub condition_type: String,
+    pub field: Option<String>,
+    pub value: Option<serde_json::Value>,
+    pub substring: Option<String>,
+    pub rules: Option<Vec<RuleConditionInput>>,
+    pub rule: Option<Box<RuleConditionInput>>,
+    pub script: Option<String>,
+}
+
+#[derive(InputObject, Debug)]
+pub struct RuleEvaluationInput {
+    pub rule_id: String,
+    pub data: serde_json::Value,
+    pub metadata: Option<serde_json::Value>,
 }
 
 // NATS-specific input types
@@ -515,18 +580,18 @@ pub struct CreateWorkflowInstanceInput {
 }
 
 #[derive(InputObject, Debug)]
-pub struct TransitionTokenWithNATSInput {
-    pub token_id: String,
-    pub transition_id: String,
-    pub new_place: String,
+pub struct ExecuteActivityWithNATSInput {
+    pub resource_id: String,
+    pub activity_id: String,
+    pub new_state: String,
     pub triggered_by: Option<String>,
     pub data: Option<serde_json::Value>,
 }
 
 #[derive(InputObject, Debug)]
-pub struct TokensInPlaceInput {
+pub struct ResourcesInStateInput {
     pub workflow_id: String,
-    pub place_id: String,
+    pub state_id: String,
 }
 
 // Enums
@@ -561,9 +626,13 @@ impl From<&WorkflowDefinition> for WorkflowGQL {
         WorkflowGQL {
             id: ID(workflow.id.clone()),
             name: workflow.name.clone(),
-            places: workflow.places.iter().map(|s| s.as_str().to_string()).collect(),
-            transitions: workflow.transitions.iter().map(|t| t.into()).collect(),
-            initial_place: workflow.initial_place.as_str().to_string(),
+            states: workflow
+                .states
+                .iter()
+                .map(|s| s.as_str().to_string())
+                .collect(),
+            activities: workflow.activities.iter().map(|a| a.into()).collect(),
+            initial_state: workflow.initial_state.as_str().to_string(),
             created_at: Utc::now().to_rfc3339(),
             updated_at: Utc::now().to_rfc3339(),
         }
@@ -591,7 +660,9 @@ impl From<&AgentDefinition> for AgentDefinitionGQL {
 impl From<&LLMProvider> for AgentLLMProviderGQL {
     fn from(provider: &LLMProvider) -> Self {
         match provider {
-            LLMProvider::OpenAI { model, base_url, .. } => AgentLLMProviderGQL {
+            LLMProvider::OpenAI {
+                model, base_url, ..
+            } => AgentLLMProviderGQL {
                 provider_type: "openai".to_string(),
                 model: model.clone(),
                 base_url: base_url.clone(),
@@ -606,12 +677,16 @@ impl From<&LLMProvider> for AgentLLMProviderGQL {
                 model: model.clone(),
                 base_url: None,
             },
-            LLMProvider::Ollama { model, base_url, .. } => AgentLLMProviderGQL {
+            LLMProvider::Ollama {
+                model, base_url, ..
+            } => AgentLLMProviderGQL {
                 provider_type: "ollama".to_string(),
                 model: model.clone(),
                 base_url: Some(base_url.clone()),
             },
-            LLMProvider::Custom { model, endpoint, .. } => AgentLLMProviderGQL {
+            LLMProvider::Custom {
+                model, endpoint, ..
+            } => AgentLLMProviderGQL {
                 provider_type: "custom".to_string(),
                 model: model.clone(),
                 base_url: Some(endpoint.clone()),
@@ -643,17 +718,20 @@ impl From<&AgentPrompts> for AgentPromptsGQL {
     }
 }
 
-impl From<&PlaceAgentConfig> for PlaceAgentConfigGQL {
-    fn from(config: &PlaceAgentConfig) -> Self {
-        PlaceAgentConfigGQL {
+impl From<&StateAgentConfig> for StateAgentConfigGQL {
+    fn from(config: &StateAgentConfig) -> Self {
+        StateAgentConfigGQL {
             id: config.id.to_string(),
-            place_id: config.place_id.as_str().to_string(),
+            state_id: config.state_id.as_str().to_string(),
             agent_id: config.agent_id.as_str().to_string(),
             llm_config: config.llm_config.as_ref().map(LLMConfigGQL::from),
             input_mapping: serde_json::to_value(&config.input_mapping).unwrap_or_default(),
             output_mapping: serde_json::to_value(&config.output_mapping).unwrap_or_default(),
-            auto_transition: config.auto_transition.as_ref().map(|t| t.as_str().to_string()),
-            schedule: config.schedule.as_ref().map(PlaceAgentScheduleGQL::from),
+            auto_activity: config
+                .auto_activity
+                .as_ref()
+                .map(|t| t.as_str().to_string()),
+            schedule: config.schedule.as_ref().map(StateAgentScheduleGQL::from),
             retry_config: config.retry_config.as_ref().map(AgentRetryConfigGQL::from),
             enabled: config.enabled,
             created_at: config.created_at.to_rfc3339(),
@@ -662,9 +740,9 @@ impl From<&PlaceAgentConfig> for PlaceAgentConfigGQL {
     }
 }
 
-impl From<&PlaceAgentSchedule> for PlaceAgentScheduleGQL {
-    fn from(schedule: &PlaceAgentSchedule) -> Self {
-        PlaceAgentScheduleGQL {
+impl From<&StateAgentSchedule> for StateAgentScheduleGQL {
+    fn from(schedule: &StateAgentSchedule) -> Self {
+        StateAgentScheduleGQL {
             initial_delay_seconds: schedule.initial_delay_seconds.map(|d| d as i32),
             interval_seconds: schedule.interval_seconds.map(|i| i as i32),
             max_executions: schedule.max_executions.map(|e| e as i32),
@@ -687,8 +765,8 @@ impl From<&AgentExecution> for AgentExecutionGQL {
         AgentExecutionGQL {
             id: execution.id.to_string(),
             agent_id: execution.agent_id.as_str().to_string(),
-            token_id: execution.token_id.to_string(),
-            place_id: execution.place_id.as_str().to_string(),
+            resource_id: execution.resource_id.to_string(),
+            state_id: execution.state_id.as_str().to_string(),
             status: AgentExecutionStatusGQL::from(&execution.status),
             input_data: execution.input_data.clone(),
             output_data: execution.output_data.clone(),
@@ -714,30 +792,34 @@ impl From<&AgentExecutionStatus> for AgentExecutionStatusGQL {
     }
 }
 
-impl From<&TransitionDefinition> for TransitionGQL {
-    fn from(transition: &TransitionDefinition) -> Self {
-        TransitionGQL {
-            id: transition.id.as_str().to_string(),
+impl From<&ActivityDefinition> for ActivityGQL {
+    fn from(activity: &ActivityDefinition) -> Self {
+        ActivityGQL {
+            id: activity.id.as_str().to_string(),
             name: None,
-            from_places: transition.from_places.iter().map(|s| s.as_str().to_string()).collect(),
-            to_place: transition.to_place.as_str().to_string(),
-            conditions: transition.conditions.clone(),
+            from_states: activity
+                .from_states
+                .iter()
+                .map(|s| s.as_str().to_string())
+                .collect(),
+            to_state: activity.to_state.as_str().to_string(),
+            conditions: activity.conditions.clone(),
             description: None,
         }
     }
 }
 
-impl From<&Token> for TokenGQL {
-    fn from(token: &Token) -> Self {
-        TokenGQL {
-            id: ID(token.id.to_string()),
-            workflow_id: token.workflow_id.clone(),
-            place: token.place.as_str().to_string(),
-            data: token.data.clone(),
-            metadata: serde_json::to_value(&token.metadata).unwrap_or_default(),
-            created_at: token.created_at.to_rfc3339(),
-            updated_at: token.updated_at.to_rfc3339(),
-            history: token.history.iter().map(|h| h.into()).collect(),
+impl From<&Resource> for ResourceGQL {
+    fn from(resource: &Resource) -> Self {
+        ResourceGQL {
+            id: ID(resource.id.to_string()),
+            workflow_id: resource.workflow_id.clone(),
+            state: resource.state.as_str().to_string(),
+            data: resource.data.clone(),
+            metadata: serde_json::to_value(&resource.metadata).unwrap_or_default(),
+            created_at: resource.created_at.to_rfc3339(),
+            updated_at: resource.updated_at.to_rfc3339(),
+            history: resource.history.iter().map(|h| h.into()).collect(),
         }
     }
 }
@@ -746,20 +828,20 @@ impl From<&HistoryEvent> for HistoryEventGQL {
     fn from(event: &HistoryEvent) -> Self {
         HistoryEventGQL {
             timestamp: event.timestamp.to_rfc3339(),
-            transition: event.transition.as_str().to_string(),
-            from_place: event.from.as_str().to_string(),
-            to_place: event.to.as_str().to_string(),
+            activity: event.activity.as_str().to_string(),
+            from_state: event.from.as_str().to_string(),
+            to_state: event.to.as_str().to_string(),
             data: event.data.clone(),
         }
     }
 }
 
-impl From<&crate::models::TransitionRecord> for TransitionRecordGQL {
-    fn from(record: &crate::models::TransitionRecord) -> Self {
-        TransitionRecordGQL {
-            from_place: record.from_place.as_str().to_string(),
-            to_place: record.to_place.as_str().to_string(),
-            transition_id: record.transition_id.as_str().to_string(),
+impl From<&crate::models::ActivityRecord> for ActivityRecordGQL {
+    fn from(record: &crate::models::ActivityRecord) -> Self {
+        ActivityRecordGQL {
+            from_state: record.from_state.as_str().to_string(),
+            to_state: record.to_state.as_str().to_string(),
+            activity_id: record.activity_id.as_str().to_string(),
             timestamp: record.timestamp.to_rfc3339(),
             triggered_by: record.triggered_by.clone(),
             nats_sequence: record.nats_sequence.map(|s| s.to_string()),
@@ -768,21 +850,207 @@ impl From<&crate::models::TransitionRecord> for TransitionRecordGQL {
     }
 }
 
-impl From<&Token> for NATSTokenGQL {
-    fn from(token: &Token) -> Self {
-        NATSTokenGQL {
-            id: ID(token.id.to_string()),
-            workflow_id: token.workflow_id.clone(),
-            place: token.place.as_str().to_string(),
-            data: token.data.clone(),
-            metadata: serde_json::to_value(&token.metadata).unwrap_or_default(),
-            created_at: token.created_at.to_rfc3339(),
-            updated_at: token.updated_at.to_rfc3339(),
-            history: token.history.iter().map(|h| h.into()).collect(),
-            nats_sequence: token.nats_sequence.map(|s| s.to_string()),
-            nats_timestamp: token.nats_timestamp.map(|t| t.to_rfc3339()),
-            nats_subject: token.nats_subject.clone(),
-            transition_history: token.transition_history.iter().map(|r| r.into()).collect(),
+impl From<&Resource> for NATSResourceGQL {
+    fn from(resource: &Resource) -> Self {
+        NATSResourceGQL {
+            id: ID(resource.id.to_string()),
+            workflow_id: resource.workflow_id.clone(),
+            state: resource.state.as_str().to_string(),
+            data: resource.data.clone(),
+            metadata: serde_json::to_value(&resource.metadata).unwrap_or_default(),
+            created_at: resource.created_at.to_rfc3339(),
+            updated_at: resource.updated_at.to_rfc3339(),
+            history: resource.history.iter().map(|h| h.into()).collect(),
+            nats_sequence: resource.nats_sequence.map(|s| s.to_string()),
+            nats_timestamp: resource.nats_timestamp.map(|ts| ts.to_rfc3339()),
+            nats_subject: resource.nats_subject.clone(),
+            activity_history: resource.activity_history.iter().map(|r| r.into()).collect(),
+        }
+    }
+}
+
+// Rule conversion implementations
+impl From<&StoredRule> for RuleGQL {
+    fn from(rule: &StoredRule) -> Self {
+        RuleGQL {
+            id: rule.id.clone(),
+            name: rule.name.clone(),
+            description: rule.description.clone(),
+            condition: RuleConditionGQL::from(&rule.condition),
+            version: rule.version,
+            created_at: rule.created_at.to_rfc3339(),
+            updated_at: rule.updated_at.to_rfc3339(),
+            created_by: rule.created_by.clone(),
+            tags: rule.tags.clone(),
+        }
+    }
+}
+
+impl From<&RuleCondition> for RuleConditionGQL {
+    fn from(condition: &RuleCondition) -> Self {
+        match condition {
+            RuleCondition::FieldExists { field } => RuleConditionGQL {
+                condition_type: "FieldExists".to_string(),
+                field: Some(field.clone()),
+                value: None,
+                substring: None,
+                rules: None,
+                rule: None,
+                script: None,
+            },
+            RuleCondition::FieldEquals { field, value } => RuleConditionGQL {
+                condition_type: "FieldEquals".to_string(),
+                field: Some(field.clone()),
+                value: Some(value.clone()),
+                substring: None,
+                rules: None,
+                rule: None,
+                script: None,
+            },
+            RuleCondition::FieldGreaterThan { field, value } => RuleConditionGQL {
+                condition_type: "FieldGreaterThan".to_string(),
+                field: Some(field.clone()),
+                value: Some(serde_json::Value::Number(
+                    serde_json::Number::from_f64(*value).unwrap(),
+                )),
+                substring: None,
+                rules: None,
+                rule: None,
+                script: None,
+            },
+            RuleCondition::FieldLessThan { field, value } => RuleConditionGQL {
+                condition_type: "FieldLessThan".to_string(),
+                field: Some(field.clone()),
+                value: Some(serde_json::Value::Number(
+                    serde_json::Number::from_f64(*value).unwrap(),
+                )),
+                substring: None,
+                rules: None,
+                rule: None,
+                script: None,
+            },
+            RuleCondition::FieldContains { field, substring } => RuleConditionGQL {
+                condition_type: "FieldContains".to_string(),
+                field: Some(field.clone()),
+                value: None,
+                substring: Some(substring.clone()),
+                rules: None,
+                rule: None,
+                script: None,
+            },
+            RuleCondition::And { rules: _rules } => RuleConditionGQL {
+                condition_type: "And".to_string(),
+                field: None,
+                value: None,
+                substring: None,
+                rules: None, // Nested rules not fully supported yet
+                rule: None,
+                script: None,
+            },
+            RuleCondition::Or { rules: _rules } => RuleConditionGQL {
+                condition_type: "Or".to_string(),
+                field: None,
+                value: None,
+                substring: None,
+                rules: None, // Nested rules not fully supported yet
+                rule: None,
+                script: None,
+            },
+            RuleCondition::Not { rule } => RuleConditionGQL {
+                condition_type: "Not".to_string(),
+                field: None,
+                value: None,
+                substring: None,
+                rules: None,
+                rule: None, // Nested rules not fully supported in StoredRule context
+                script: None,
+            },
+            RuleCondition::Expression { script } => RuleConditionGQL {
+                condition_type: "Expression".to_string(),
+                field: None,
+                value: None,
+                substring: None,
+                rules: None,
+                rule: None,
+                script: Some(script.clone()),
+            },
+        }
+    }
+}
+
+impl From<RuleInput> for Rule {
+    fn from(input: RuleInput) -> Self {
+        Rule {
+            id: uuid::Uuid::new_v4().to_string(),
+            description: input.description,
+            condition: RuleCondition::from(input.condition),
+        }
+    }
+}
+
+impl From<RuleConditionInput> for RuleCondition {
+    fn from(input: RuleConditionInput) -> Self {
+        match input.condition_type.as_str() {
+            "FieldExists" => RuleCondition::FieldExists {
+                field: input.field.unwrap_or_default(),
+            },
+            "FieldEquals" => RuleCondition::FieldEquals {
+                field: input.field.unwrap_or_default(),
+                value: input.value.unwrap_or(serde_json::Value::Null),
+            },
+            "FieldGreaterThan" => RuleCondition::FieldGreaterThan {
+                field: input.field.unwrap_or_default(),
+                value: input.value.and_then(|v| v.as_f64()).unwrap_or(0.0),
+            },
+            "FieldLessThan" => RuleCondition::FieldLessThan {
+                field: input.field.unwrap_or_default(),
+                value: input.value.and_then(|v| v.as_f64()).unwrap_or(0.0),
+            },
+            "FieldContains" => RuleCondition::FieldContains {
+                field: input.field.unwrap_or_default(),
+                substring: input.substring.unwrap_or_default(),
+            },
+            "And" => RuleCondition::And {
+                rules: input
+                    .rules
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|r| Rule {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        description: "Nested rule".to_string(),
+                        condition: RuleCondition::from(r),
+                    })
+                    .collect(),
+            },
+            "Or" => RuleCondition::Or {
+                rules: input
+                    .rules
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|r| Rule {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        description: "Nested rule".to_string(),
+                        condition: RuleCondition::from(r),
+                    })
+                    .collect(),
+            },
+            "Not" => RuleCondition::Not {
+                rule: Box::new(Rule {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    description: "Negated rule".to_string(),
+                    condition: input.rule.map(|r| RuleCondition::from(*r)).unwrap_or(
+                        RuleCondition::Expression {
+                            script: "true".to_string(),
+                        },
+                    ),
+                }),
+            },
+            "Expression" => RuleCondition::Expression {
+                script: input.script.unwrap_or_default(),
+            },
+            _ => RuleCondition::Expression {
+                script: "false".to_string(),
+            },
         }
     }
 }
@@ -793,12 +1061,19 @@ pub struct Query;
 #[Object]
 impl Query {
     /// Get a workflow definition by ID
-    async fn workflow(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<WorkflowGQL>> {
+    async fn workflow(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+    ) -> async_graphql::Result<Option<WorkflowGQL>> {
         let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
         match storage.get_workflow(&id).await {
             Ok(Some(workflow)) => Ok(Some(WorkflowGQL::from(&workflow))),
             Ok(None) => Ok(None),
-            Err(e) => Err(async_graphql::Error::new(format!("Failed to get workflow: {}", e))),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to get workflow: {}",
+                e
+            ))),
         }
     }
 
@@ -807,250 +1082,374 @@ impl Query {
         let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
         match storage.list_workflows().await {
             Ok(workflows) => Ok(workflows.iter().map(WorkflowGQL::from).collect()),
-            Err(e) => Err(async_graphql::Error::new(format!("Failed to list workflows: {}", e))),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to list workflows: {}",
+                e
+            ))),
         }
     }
 
-    /// Get a token by ID
-    async fn token(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<TokenGQL>> {
-        let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
-        let token_id = id.parse::<Uuid>()
-            .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
-        
-        match storage.get_token(&token_id).await {
-            Ok(Some(token)) => Ok(Some(TokenGQL::from(&token))),
-            Ok(None) => Ok(None),
-            Err(e) => Err(async_graphql::Error::new(format!("Failed to get token: {}", e))),
-        }
-    }
-
-    /// List tokens, optionally filtered by workflow
-    async fn tokens(&self, ctx: &Context<'_>, workflow_id: Option<String>) -> async_graphql::Result<Vec<TokenGQL>> {
-        let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
-        match storage.list_tokens(workflow_id.as_deref()).await {
-            Ok(tokens) => Ok(tokens.iter().map(TokenGQL::from).collect()),
-            Err(e) => Err(async_graphql::Error::new(format!("Failed to list tokens: {}", e))),
-        }
-    }
-
-    /// Get available transitions for a token
-    async fn available_transitions(
-        &self, 
+    /// Get a resource by ID
+    async fn resource(
+        &self,
         ctx: &Context<'_>,
-        token_id: String
-    ) -> async_graphql::Result<Vec<TransitionGQL>> {
+        id: String,
+    ) -> async_graphql::Result<Option<ResourceGQL>> {
         let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
-        let token_uuid = token_id.parse::<Uuid>()
-            .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
-        
-        // Get the token with retry logic for timing issues
-        let mut token = None;
+        let resource_id = id
+            .parse::<Uuid>()
+            .map_err(|_| async_graphql::Error::new("Invalid resource ID format"))?;
+
+        match storage.get_resource(&resource_id).await {
+            Ok(Some(resource)) => Ok(Some(ResourceGQL::from(&resource))),
+            Ok(None) => Ok(None),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to get resource: {}",
+                e
+            ))),
+        }
+    }
+
+    /// List resources, optionally filtered by workflow
+    async fn resources(
+        &self,
+        ctx: &Context<'_>,
+        workflow_id: Option<String>,
+    ) -> async_graphql::Result<Vec<ResourceGQL>> {
+        let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
+        match storage.list_resources(workflow_id.as_deref()).await {
+            Ok(resources) => Ok(resources.iter().map(ResourceGQL::from).collect()),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to list resources: {}",
+                e
+            ))),
+        }
+    }
+
+    /// Get available activities for a resource
+    async fn available_activities(
+        &self,
+        ctx: &Context<'_>,
+        resource_id: String,
+    ) -> async_graphql::Result<Vec<ActivityGQL>> {
+        let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
+        let resource_uuid = resource_id
+            .parse::<Uuid>()
+            .map_err(|_| async_graphql::Error::new("Invalid resource ID format"))?;
+
+        // Get the resource with retry logic for timing issues
+        let mut resource = None;
         for attempt in 0..3 {
             if attempt > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(100 * (2_u64.pow(attempt)))).await;
+                tokio::time::sleep(std::time::Duration::from_millis(100 * (2_u64.pow(attempt))))
+                    .await;
             }
-            
-            match storage.get_token(&token_uuid).await {
-                Ok(Some(found_token)) => {
-                    token = Some(found_token);
+
+            match storage.get_resource(&resource_uuid).await {
+                Ok(Some(found_resource)) => {
+                    resource = Some(found_resource);
                     break;
-                },
+                }
                 Ok(None) => {
                     if attempt == 2 {
-                        return Err(async_graphql::Error::new("Token not found after retries"));
+                        return Err(async_graphql::Error::new(
+                            "Resource not found after retries",
+                        ));
                     }
                     continue;
-                },
+                }
                 Err(e) => {
-                    return Err(async_graphql::Error::new(format!("Failed to get token: {}", e)));
+                    return Err(async_graphql::Error::new(format!(
+                        "Failed to get resource: {}",
+                        e
+                    )));
                 }
             }
         }
-        
-        let token = token.unwrap();
-        
-        let workflow = storage.get_workflow(&token.workflow_id).await?
+
+        let resource = resource.unwrap();
+
+        let workflow = storage
+            .get_workflow(&resource.workflow_id)
+            .await?
             .ok_or_else(|| async_graphql::Error::new("Workflow not found"))?;
-        
-        let current_place = PlaceId::from(token.current_place());
-        let available = workflow.available_transitions(&current_place);
-        
-        Ok(available.iter().map(|t| TransitionGQL::from(*t)).collect())
+
+        let current_state = StateId::from(resource.current_state());
+        let available = workflow.available_activities(&current_state);
+
+        Ok(available.iter().map(|a| ActivityGQL::from(*a)).collect())
     }
 
     /// Get an agent by ID
-    async fn agent(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<AgentDefinitionGQL>> {
+    async fn agent(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+    ) -> async_graphql::Result<Option<AgentDefinitionGQL>> {
         let agent_storage = ctx.data::<std::sync::Arc<dyn AgentStorage>>()?;
         let agent_id = AgentId::from(id);
-        
+
         match agent_storage.get_agent(&agent_id).await {
             Ok(Some(agent)) => Ok(Some(AgentDefinitionGQL::from(&agent))),
             Ok(None) => Ok(None),
-            Err(e) => Err(async_graphql::Error::new(format!("Failed to get agent: {}", e))),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to get agent: {}",
+                e
+            ))),
         }
     }
 
     /// List all agents
     async fn agents(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<AgentDefinitionGQL>> {
         let agent_storage = ctx.data::<std::sync::Arc<dyn AgentStorage>>()?;
-        
+
         match agent_storage.list_agents().await {
             Ok(agents) => Ok(agents.iter().map(AgentDefinitionGQL::from).collect()),
-            Err(e) => Err(async_graphql::Error::new(format!("Failed to list agents: {}", e))),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to list agents: {}",
+                e
+            ))),
         }
     }
 
-    /// Get place agent configurations for a specific place
-    async fn place_agent_configs(&self, ctx: &Context<'_>, place_id: String) -> async_graphql::Result<Vec<PlaceAgentConfigGQL>> {
+    /// Get state agent configurations for a specific state
+    async fn state_agent_configs(
+        &self,
+        ctx: &Context<'_>,
+        state_id: String,
+    ) -> async_graphql::Result<Vec<StateAgentConfigGQL>> {
         let agent_storage = ctx.data::<std::sync::Arc<dyn AgentStorage>>()?;
-        let place = PlaceId::from(place_id);
-        
-        match agent_storage.get_place_agent_configs(&place).await {
-            Ok(configs) => Ok(configs.iter().map(PlaceAgentConfigGQL::from).collect()),
-            Err(e) => Err(async_graphql::Error::new(format!("Failed to get place agent configs: {}", e))),
+        let state = StateId::from(state_id);
+
+        match agent_storage.get_state_agent_configs(&state).await {
+            Ok(configs) => Ok(configs.iter().map(StateAgentConfigGQL::from).collect()),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to get state agent configs: {}",
+                e
+            ))),
         }
     }
 
     /// Get agent execution by ID
-    async fn agent_execution(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<AgentExecutionGQL>> {
+    async fn agent_execution(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+    ) -> async_graphql::Result<Option<AgentExecutionGQL>> {
         let agent_storage = ctx.data::<std::sync::Arc<dyn AgentStorage>>()?;
-        let execution_id = id.parse::<Uuid>()
+        let execution_id = id
+            .parse::<Uuid>()
             .map_err(|_| async_graphql::Error::new("Invalid execution ID format"))?;
-        
+
         match agent_storage.get_execution(&execution_id).await {
             Ok(Some(execution)) => Ok(Some(AgentExecutionGQL::from(&execution))),
             Ok(None) => Ok(None),
-            Err(e) => Err(async_graphql::Error::new(format!("Failed to get agent execution: {}", e))),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to get agent execution: {}",
+                e
+            ))),
         }
     }
 
-    /// Get agent executions for a token
-    async fn token_executions(&self, ctx: &Context<'_>, token_id: String) -> async_graphql::Result<Vec<AgentExecutionGQL>> {
+    /// Get agent executions for a resource
+    async fn resource_executions(
+        &self,
+        ctx: &Context<'_>,
+        resource_id: String,
+    ) -> async_graphql::Result<Vec<AgentExecutionGQL>> {
         let agent_storage = ctx.data::<std::sync::Arc<dyn AgentStorage>>()?;
-        let token_uuid = token_id.parse::<Uuid>()
-            .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
-        
-        match agent_storage.list_executions_for_token(&token_uuid).await {
+        let resource_uuid = resource_id
+            .parse::<Uuid>()
+            .map_err(|_| async_graphql::Error::new("Invalid resource ID format"))?;
+
+        match agent_storage
+            .list_executions_for_resource(&resource_uuid)
+            .await
+        {
             Ok(executions) => Ok(executions.iter().map(AgentExecutionGQL::from).collect()),
-            Err(e) => Err(async_graphql::Error::new(format!("Failed to get token executions: {}", e))),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to get resource executions: {}",
+                e
+            ))),
         }
     }
 
     /// NATS-specific queries for enhanced token operations
-    
-    /// Get token with NATS metadata by ID
-    async fn nats_token(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<NATSTokenGQL>> {
+
+    /// Get resource with NATS metadata by ID
+    async fn nats_resource(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+    ) -> async_graphql::Result<Option<NATSResourceGQL>> {
         let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
-        let token_id = id.parse::<Uuid>()
-            .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
-        
-        match storage.get_token(&token_id).await {
-            Ok(Some(token)) => Ok(Some(NATSTokenGQL::from(&token))),
+        let resource_id = id
+            .parse::<Uuid>()
+            .map_err(|_| async_graphql::Error::new("Invalid resource ID format"))?;
+
+        match storage.get_resource(&resource_id).await {
+            Ok(Some(resource)) => Ok(Some(NATSResourceGQL::from(&resource))),
             Ok(None) => Ok(None),
-            Err(e) => Err(async_graphql::Error::new(format!("Failed to get NATS token: {}", e))),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to get NATS resource: {}",
+                e
+            ))),
         }
     }
 
-    /// Get tokens currently in a specific place (NATS-specific)
-    async fn tokens_in_place(&self, ctx: &Context<'_>, workflow_id: String, place_id: String) -> async_graphql::Result<Vec<NATSTokenGQL>> {
-        // Try to get NATS storage for more efficient place-based queries
-        if let Ok(nats_storage) = ctx.data::<std::sync::Arc<crate::engine::nats_storage::NATSStorage>>() {
-            match nats_storage.get_tokens_in_place(&workflow_id, &place_id).await {
-                Ok(tokens) => Ok(tokens.iter().map(NATSTokenGQL::from).collect()),
-                Err(e) => Err(async_graphql::Error::new(format!("Failed to get tokens in place: {}", e))),
+    /// Get resources currently in a specific state (NATS-specific)
+    async fn resources_in_state(
+        &self,
+        ctx: &Context<'_>,
+        workflow_id: String,
+        state_id: String,
+    ) -> async_graphql::Result<Vec<NATSResourceGQL>> {
+        // Try to get NATS storage for more efficient state-based queries
+        if let Ok(nats_storage) =
+            ctx.data::<std::sync::Arc<crate::engine::nats_storage::NATSStorage>>()
+        {
+            match nats_storage
+                .get_resources_in_state(&workflow_id, &state_id)
+                .await
+            {
+                Ok(resources) => Ok(resources.iter().map(NATSResourceGQL::from).collect()),
+                Err(e) => Err(async_graphql::Error::new(format!(
+                    "Failed to get resources in state: {}",
+                    e
+                ))),
             }
         } else {
             // Fallback to regular storage with filtering
             let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
-            match storage.list_tokens(Some(&workflow_id)).await {
-                Ok(tokens) => {
-                    let filtered: Vec<NATSTokenGQL> = tokens
+            match storage.list_resources(Some(&workflow_id)).await {
+                Ok(resources) => {
+                    let filtered: Vec<NATSResourceGQL> = resources
                         .iter()
-                        .filter(|token| token.place.as_str() == place_id)
-                        .map(NATSTokenGQL::from)
+                        .filter(|resource| resource.state.as_str() == state_id)
+                        .map(NATSResourceGQL::from)
                         .collect();
                     Ok(filtered)
-                },
-                Err(e) => Err(async_graphql::Error::new(format!("Failed to get tokens in place: {}", e))),
+                }
+                Err(e) => Err(async_graphql::Error::new(format!(
+                    "Failed to get resources in state: {}",
+                    e
+                ))),
             }
         }
     }
 
-    /// Find token by ID with workflow context (more efficient for NATS)
-    async fn find_token(&self, ctx: &Context<'_>, workflow_id: String, token_id: String) -> async_graphql::Result<Option<NATSTokenGQL>> {
-        let token_uuid = token_id.parse::<Uuid>()
-            .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
+    /// Find resource by ID with workflow context (more efficient for NATS)
+    async fn find_resource(
+        &self,
+        ctx: &Context<'_>,
+        workflow_id: String,
+        resource_id: String,
+    ) -> async_graphql::Result<Option<NATSResourceGQL>> {
+        let resource_uuid = resource_id
+            .parse::<Uuid>()
+            .map_err(|_| async_graphql::Error::new("Invalid resource ID format"))?;
 
         // Try NATS storage first for more efficient lookup
-        if let Ok(nats_storage) = ctx.data::<std::sync::Arc<crate::engine::nats_storage::NATSStorage>>() {
-            match nats_storage.find_token(&workflow_id, &token_uuid).await {
-                Ok(Some(token)) => Ok(Some(NATSTokenGQL::from(&token))),
+        if let Ok(nats_storage) =
+            ctx.data::<std::sync::Arc<crate::engine::nats_storage::NATSStorage>>()
+        {
+            match nats_storage
+                .get_resource_from_workflow(&resource_uuid, &workflow_id)
+                .await
+            {
+                Ok(Some(resource)) => Ok(Some(NATSResourceGQL::from(&resource))),
                 Ok(None) => Ok(None),
-                Err(e) => Err(async_graphql::Error::new(format!("Failed to find token: {}", e))),
+                Err(e) => Err(async_graphql::Error::new(format!(
+                    "Failed to find resource: {}",
+                    e
+                ))),
             }
         } else {
             // Fallback to regular storage
             let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
-            match storage.get_token(&token_uuid).await {
-                Ok(Some(token)) => {
-                    if token.workflow_id == workflow_id {
-                        Ok(Some(NATSTokenGQL::from(&token)))
+            match storage.get_resource(&resource_uuid).await {
+                Ok(Some(resource)) => {
+                    if resource.workflow_id == workflow_id {
+                        Ok(Some(NATSResourceGQL::from(&resource)))
                     } else {
                         Ok(None)
                     }
-                },
+                }
                 Ok(None) => Ok(None),
-                Err(e) => Err(async_graphql::Error::new(format!("Failed to find token: {}", e))),
+                Err(e) => Err(async_graphql::Error::new(format!(
+                    "Failed to find resource: {}",
+                    e
+                ))),
             }
         }
     }
 
     /// List all configured LLM providers
-    async fn llm_providers(&self, _ctx: &Context<'_>) -> async_graphql::Result<Vec<LLMProviderGQL>> {
+    async fn llm_providers(
+        &self,
+        _ctx: &Context<'_>,
+    ) -> async_graphql::Result<Vec<LLMProviderGQL>> {
         // Create router and get providers
-        let router = crate::llm::router::LLMRouter::new().await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to initialize router: {}", e)))?;
-        
+        let router = crate::llm::router::LLMRouter::new().await.map_err(|e| {
+            async_graphql::Error::new(format!("Failed to initialize router: {}", e))
+        })?;
+
         let providers = router.get_providers().await;
         let health_status = router.get_health_status().await;
-        
-        Ok(providers.into_iter().map(|provider| {
-            let health = health_status.get(&provider.provider_type)
-                .cloned()
-                .unwrap_or_default();
-            
-            LLMProviderGQL {
-                id: ID(provider.id.to_string()),
-                provider_type: provider.provider_type.to_string(),
-                name: provider.name,
-                base_url: provider.base_url,
-                models: provider.models.into_iter().map(|model| LLMModelGQL {
-                    id: model.id,
-                    name: model.name,
-                    max_tokens: model.max_tokens as i32,
-                    context_window: model.context_window as i32,
-                    cost_per_input_token: model.cost_per_input_token,
-                    cost_per_output_token: model.cost_per_output_token,
-                    supports_streaming: model.supports_streaming,
-                    supports_function_calling: model.supports_function_calling,
-                    capabilities: model.capabilities.into_iter().map(|c| format!("{:?}", c)).collect(),
-                }).collect(),
-                health_status: LLMProviderHealthGQL {
-                    is_healthy: health.is_healthy,
-                    last_check: health.last_check.to_rfc3339(),
-                    error_rate: 0.0,
-                    average_latency_ms: 0,
-                    consecutive_failures: health.consecutive_failures as i32,
-                    last_error: health.last_error,
-                },
-                created_at: provider.created_at.to_rfc3339(),
-                updated_at: provider.updated_at.to_rfc3339(),
-            }
-        }).collect())
+
+        Ok(providers
+            .into_iter()
+            .map(|provider| {
+                let health = health_status
+                    .get(&provider.provider_type)
+                    .cloned()
+                    .unwrap_or_default();
+
+                LLMProviderGQL {
+                    id: ID(provider.id.to_string()),
+                    provider_type: provider.provider_type.to_string(),
+                    name: provider.name,
+                    base_url: provider.base_url,
+                    models: provider
+                        .models
+                        .into_iter()
+                        .map(|model| LLMModelGQL {
+                            id: model.id,
+                            name: model.name,
+                            max_tokens: model.max_tokens as i32,
+                            context_window: model.context_window as i32,
+                            cost_per_input_token: model.cost_per_input_token,
+                            cost_per_output_token: model.cost_per_output_token,
+                            supports_streaming: model.supports_streaming,
+                            supports_function_calling: model.supports_function_calling,
+                            capabilities: model
+                                .capabilities
+                                .into_iter()
+                                .map(|c| format!("{:?}", c))
+                                .collect(),
+                        })
+                        .collect(),
+                    health_status: LLMProviderHealthGQL {
+                        is_healthy: health.is_healthy,
+                        last_check: health.last_check.to_rfc3339(),
+                        error_rate: 0.0,
+                        average_latency_ms: 0,
+                        consecutive_failures: health.consecutive_failures as i32,
+                        last_error: health.last_error,
+                    },
+                    created_at: provider.created_at.to_rfc3339(),
+                    updated_at: provider.updated_at.to_rfc3339(),
+                }
+            })
+            .collect())
     }
 
     /// Get LLM provider by ID
-    async fn llm_provider(&self, _ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<LLMProviderGQL>> {
+    async fn llm_provider(
+        &self,
+        _ctx: &Context<'_>,
+        id: String,
+    ) -> async_graphql::Result<Option<LLMProviderGQL>> {
         // Mock implementation
         if id == "openai" {
             Ok(Some(LLMProviderGQL {
@@ -1076,13 +1475,18 @@ impl Query {
     }
 
     /// Get budget status for user or project
-    async fn budget_status(&self, _ctx: &Context<'_>, user_id: Option<String>, project_id: Option<String>) -> async_graphql::Result<BudgetStatusGQL> {
+    async fn budget_status(
+        &self,
+        _ctx: &Context<'_>,
+        user_id: Option<String>,
+        project_id: Option<String>,
+    ) -> async_graphql::Result<BudgetStatusGQL> {
         // Mock implementation
         Ok(BudgetStatusGQL {
-            budget_id: if let Some(pid) = project_id { 
-                format!("project:{}", pid) 
-            } else { 
-                format!("user:{}", user_id.unwrap_or_else(|| "default".to_string())) 
+            budget_id: if let Some(pid) = project_id {
+                format!("project:{}", pid)
+            } else {
+                format!("user:{}", user_id.unwrap_or_else(|| "default".to_string()))
             },
             limit: 100.0,
             used: 25.50,
@@ -1095,7 +1499,11 @@ impl Query {
     }
 
     /// Get cost analytics for a time period
-    async fn cost_analytics(&self, _ctx: &Context<'_>, input: CostAnalyticsInput) -> async_graphql::Result<CostAnalyticsGQL> {
+    async fn cost_analytics(
+        &self,
+        _ctx: &Context<'_>,
+        input: CostAnalyticsInput,
+    ) -> async_graphql::Result<CostAnalyticsGQL> {
         // Mock implementation
         Ok(CostAnalyticsGQL {
             total_cost: 125.75,
@@ -1118,6 +1526,66 @@ impl Query {
             period_end: input.end_date,
         })
     }
+
+    /// Get a rule by ID
+    async fn rule(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<RuleGQL>> {
+        let rule_storage = ctx.data::<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>()?;
+
+        match rule_storage.get_rule(&id).await {
+            Ok(Some(stored_rule)) => Ok(Some(RuleGQL::from(&stored_rule))),
+            Ok(None) => Ok(None),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to get rule: {}",
+                e
+            ))),
+        }
+    }
+
+    /// List all rules, optionally filtered by tags
+    async fn rules(
+        &self,
+        ctx: &Context<'_>,
+        tags: Option<Vec<String>>,
+    ) -> async_graphql::Result<Vec<RuleGQL>> {
+        let rule_storage = ctx.data::<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>()?;
+
+        match rule_storage.list_rules(tags).await {
+            Ok(stored_rules) => {
+                let rules: Vec<RuleGQL> = stored_rules
+                    .iter()
+                    .map(|stored_rule| RuleGQL::from(stored_rule))
+                    .collect();
+                Ok(rules)
+            }
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to list rules: {}",
+                e
+            ))),
+        }
+    }
+
+    /// Get rules for a specific workflow
+    async fn workflow_rules(
+        &self,
+        ctx: &Context<'_>,
+        workflow_id: String,
+    ) -> async_graphql::Result<Vec<RuleGQL>> {
+        let rule_storage = ctx.data::<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>()?;
+
+        match rule_storage.get_workflow_rules(&workflow_id).await {
+            Ok(stored_rules) => {
+                let rules: Vec<RuleGQL> = stored_rules
+                    .iter()
+                    .map(|stored_rule| RuleGQL::from(stored_rule))
+                    .collect();
+                Ok(rules)
+            }
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to get workflow rules: {}",
+                e
+            ))),
+        }
+    }
 }
 
 // GraphQL Mutation root
@@ -1132,141 +1600,236 @@ impl Mutation {
         input: WorkflowDefinitionInput,
     ) -> async_graphql::Result<WorkflowGQL> {
         let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
-        
+
         // Convert input to internal types
         let workflow_id = Uuid::new_v4().to_string();
-        let places: Vec<PlaceId> = input.places.into_iter().map(PlaceId::from).collect();
-        let transitions: Vec<TransitionDefinition> = input.transitions
+        let states: Vec<StateId> = input.states.into_iter().map(StateId::from).collect();
+        let activities: Vec<ActivityDefinition> = input
+            .activities
             .into_iter()
-            .map(|t| TransitionDefinition {
-                id: TransitionId::from(t.id.as_str()),
-                from_places: t.from_places.into_iter().map(PlaceId::from).collect(),
-                to_place: PlaceId::from(t.to_place),
-                conditions: t.conditions,
+            .map(|a| ActivityDefinition {
+                id: ActivityId::from(a.id.as_str()),
+                from_states: a.from_states.into_iter().map(StateId::from).collect(),
+                to_state: StateId::from(a.to_state),
+                conditions: a.conditions,
                 rules: vec![], // Start with empty rules - can be added later via GraphQL
             })
             .collect();
-        
+
         let workflow = WorkflowDefinition {
             id: workflow_id,
             name: input.name,
-            places,
-            transitions,
-            initial_place: PlaceId::from(input.initial_place),
+            states,
+            activities,
+            initial_state: StateId::from(input.initial_state),
         };
-        
+
         // Validate workflow before storing
-        workflow.validate()
+        workflow
+            .validate()
             .map_err(|e| async_graphql::Error::new(format!("Invalid workflow: {}", e)))?;
-        
-        let created = storage.create_workflow(workflow).await
+
+        let created = storage
+            .create_workflow(workflow)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to store workflow: {}", e)))?;
-        
+
         Ok(WorkflowGQL::from(&created))
     }
 
     /// Create a new token in a workflow
-    async fn create_token(
+    /// Create a new resource
+    async fn create_resource(
         &self,
         ctx: &Context<'_>,
-        input: TokenCreateInput,
-    ) -> async_graphql::Result<TokenGQL> {
+        input: ResourceCreateInput,
+    ) -> async_graphql::Result<ResourceGQL> {
         let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
-        
+
         // Get workflow to determine initial place
-        let workflow = storage.get_workflow(&input.workflow_id).await?
-            .ok_or_else(|| async_graphql::Error::new(format!("Workflow not found: {}", input.workflow_id)))?;
-        
-        let initial_place = input.initial_place
-            .map(PlaceId::from)
-            .unwrap_or_else(|| workflow.initial_place.clone());
-        
-        let mut token = Token::new(&input.workflow_id, initial_place);
-        
+        let workflow = storage
+            .get_workflow(&input.workflow_id)
+            .await?
+            .ok_or_else(|| {
+                async_graphql::Error::new(format!("Workflow not found: {}", input.workflow_id))
+            })?;
+
+        let initial_state = input
+            .initial_state
+            .map(StateId::from)
+            .unwrap_or_else(|| workflow.initial_state.clone());
+
+        let mut resource = Resource::new(&input.workflow_id, initial_state);
+
         // Set data if provided
         if let Some(data) = input.data {
-            token.data = data;
+            resource.data = data;
         }
-        
+
         // Set metadata if provided
         if let Some(metadata) = input.metadata {
             if let Some(metadata_obj) = metadata.as_object() {
                 for (key, value) in metadata_obj {
-                    token.set_metadata(key, value.clone());
+                    resource.set_metadata(key, value.clone());
                 }
             }
         }
-        
-        let created = storage.create_token(token).await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to store token: {}", e)))?;
-        
-        Ok(TokenGQL::from(&created))
+
+        let created = storage
+            .create_resource(resource)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to store resource: {}", e)))?;
+
+        Ok(ResourceGQL::from(&created))
     }
 
-    /// Fire a transition on a token
-    async fn fire_transition(
+    /// Execute an activity - automatically uses NATS-aware execution when available
+    async fn execute_activity(
         &self,
         ctx: &Context<'_>,
-        input: TransitionFireInput,
-    ) -> async_graphql::Result<TokenGQL> {
-        let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
-        // TODO: Get EventBus from context once it's properly integrated
-        // For now, we'll create a temporary one and suggest architectural improvement
-        let event_bus = EventBus::new();
-        
-        let token_id = input.token_id.parse::<Uuid>()
-            .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
-        
-        // Get the token with retry logic for timing issues
-        let mut token = None;
-        for attempt in 0..3 {
-            if attempt > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(100 * (2_u64.pow(attempt)))).await;
-            }
-            
-            match storage.get_token(&token_id).await {
-                Ok(Some(found_token)) => {
-                    token = Some(found_token);
-                    break;
-                },
-                Ok(None) => {
-                    if attempt == 2 {
-                        return Err(async_graphql::Error::new("Token not found after retries"));
+        input: ActivityExecuteInput,
+    ) -> async_graphql::Result<ResourceGQL> {
+        // Check if NATS storage is available and use it for proper state persistence
+        if let Ok(nats_storage) =
+            ctx.data::<std::sync::Arc<crate::engine::nats_storage::NATSStorage>>()
+        {
+            let resource_id = input
+                .resource_id
+                .parse::<Uuid>()
+                .map_err(|_| async_graphql::Error::new("Invalid resource ID format"))?;
+
+            // Get the resource with retry logic for timing issues
+            let mut resource = None;
+            for attempt in 0..3 {
+                if attempt > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * (2_u64.pow(attempt)),
+                    ))
+                    .await;
+                }
+
+                match nats_storage.get_resource(&resource_id).await {
+                    Ok(Some(found_resource)) => {
+                        resource = Some(found_resource);
+                        break;
                     }
-                    continue;
-                },
-                Err(e) => {
-                    return Err(async_graphql::Error::new(format!("Failed to get token: {}", e)));
+                    Ok(None) => {
+                        if attempt == 2 {
+                            return Err(async_graphql::Error::new(
+                                "Resource not found after retries",
+                            ));
+                        }
+                        continue;
+                    }
+                    Err(e) => {
+                        return Err(async_graphql::Error::new(format!(
+                            "Failed to get resource: {}",
+                            e
+                        )));
+                    }
                 }
             }
+
+            let resource = resource.unwrap();
+
+            let workflow = nats_storage
+                .get_workflow(&resource.workflow_id)
+                .await?
+                .ok_or_else(|| async_graphql::Error::new("Workflow not found"))?;
+
+            let activity_id = ActivityId::from(input.activity_id.clone());
+            let current_state = StateId::from(resource.current_state());
+
+            // Check if activity is valid
+            let target_state = workflow
+                .can_execute_activity(&current_state, &activity_id)
+                .ok_or_else(|| async_graphql::Error::new("Invalid activity"))?;
+
+            // Use NATS-aware execution for proper state persistence
+            let executed_resource = nats_storage
+                .execute_activity_with_nats(
+                    resource,
+                    target_state.clone(),
+                    activity_id,
+                    Some("graphql-api".to_string()),
+                )
+                .await
+                .map_err(|e| {
+                    async_graphql::Error::new(format!("Failed to execute activity: {}", e))
+                })?;
+
+            Ok(ResourceGQL::from(&executed_resource))
+        } else {
+            // Fallback to generic storage (should not happen with NATS configured)
+            let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
+
+            let resource_id = input
+                .resource_id
+                .parse::<Uuid>()
+                .map_err(|_| async_graphql::Error::new("Invalid resource ID format"))?;
+
+            // Get the resource with retry logic for timing issues
+            let mut resource = None;
+            for attempt in 0..3 {
+                if attempt > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * (2_u64.pow(attempt)),
+                    ))
+                    .await;
+                }
+
+                match storage.get_resource(&resource_id).await {
+                    Ok(Some(found_resource)) => {
+                        resource = Some(found_resource);
+                        break;
+                    }
+                    Ok(None) => {
+                        if attempt == 2 {
+                            return Err(async_graphql::Error::new(
+                                "Resource not found after retries",
+                            ));
+                        }
+                        continue;
+                    }
+                    Err(e) => {
+                        return Err(async_graphql::Error::new(format!(
+                            "Failed to get resource: {}",
+                            e
+                        )));
+                    }
+                }
+            }
+
+            let mut resource = resource.unwrap();
+
+            let workflow = storage
+                .get_workflow(&resource.workflow_id)
+                .await?
+                .ok_or_else(|| async_graphql::Error::new("Workflow not found"))?;
+
+            let activity_id = ActivityId::from(input.activity_id);
+            let current_state = StateId::from(resource.current_state());
+
+            // Check if activity is valid
+            let target_state = workflow
+                .can_execute_activity(&current_state, &activity_id)
+                .ok_or_else(|| async_graphql::Error::new("Invalid activity"))?;
+
+            // Update with any provided data before executing activity
+            if let Some(data) = input.data {
+                resource.data = data;
+            }
+
+            // Execute the activity
+            resource.execute_activity(target_state.clone(), activity_id);
+
+            // Store the updated resource
+            let updated = storage.update_resource(resource).await.map_err(|e| {
+                async_graphql::Error::new(format!("Failed to update resource: {}", e))
+            })?;
+
+            Ok(ResourceGQL::from(&updated))
         }
-        
-        let mut token = token.unwrap();
-        
-        let workflow = storage.get_workflow(&token.workflow_id).await?
-            .ok_or_else(|| async_graphql::Error::new("Workflow not found"))?;
-        
-        let transition_id = TransitionId::from(input.transition_id);
-        let current_place = PlaceId::from(token.current_place());
-        
-        // Check if transition is valid
-        let target_place = workflow.can_transition(&current_place, &transition_id)
-            .ok_or_else(|| async_graphql::Error::new("Invalid transition"))?;
-        
-        // Update with any provided data before transition
-        if let Some(data) = input.data {
-            token.data = data;
-        }
-        
-        // Fire the transition using the combined method that emits events
-        token.transition_to_with_events(target_place.clone(), transition_id, &event_bus).await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to transition token: {}", e)))?;
-        
-        // Store the updated token
-        let updated = storage.update_token(token).await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to update token: {}", e)))?;
-        
-        Ok(TokenGQL::from(&updated))
     }
 
     /// Create a new agent
@@ -1276,10 +1839,10 @@ impl Mutation {
         input: AgentDefinitionInput,
     ) -> async_graphql::Result<AgentDefinitionGQL> {
         let agent_storage = ctx.data::<std::sync::Arc<dyn AgentStorage>>()?;
-        
+
         // Convert input to internal types
         let agent_id = AgentId::from(format!("agent_{}", Uuid::new_v4()));
-        
+
         let llm_provider = match input.llm_provider.provider_type.as_str() {
             "openai" => LLMProvider::OpenAI {
                 api_key: input.llm_provider.api_key,
@@ -1296,7 +1859,10 @@ impl Mutation {
                 model: input.llm_provider.model,
             },
             "ollama" => LLMProvider::Ollama {
-                base_url: input.llm_provider.base_url.unwrap_or_else(|| "http://localhost:11434".to_string()),
+                base_url: input
+                    .llm_provider
+                    .base_url
+                    .unwrap_or_else(|| "http://localhost:11434".to_string()),
                 model: input.llm_provider.model,
             },
             "custom" => LLMProvider::Custom {
@@ -1306,7 +1872,7 @@ impl Mutation {
             },
             _ => return Err(async_graphql::Error::new("Invalid LLM provider type")),
         };
-        
+
         let llm_config = LLMConfig {
             temperature: input.llm_config.temperature as f32,
             max_tokens: input.llm_config.max_tokens.map(|t| t as u32),
@@ -1315,13 +1881,13 @@ impl Mutation {
             presence_penalty: input.llm_config.presence_penalty.map(|p| p as f32),
             stop_sequences: input.llm_config.stop_sequences,
         };
-        
+
         let prompts = AgentPrompts {
             system: input.prompts.system,
             user_template: input.prompts.user_template,
             context_instructions: input.prompts.context_instructions,
         };
-        
+
         let now = chrono::Utc::now();
         let agent = AgentDefinition {
             id: agent_id,
@@ -1335,37 +1901,41 @@ impl Mutation {
             created_at: now,
             updated_at: now,
         };
-        
-        agent_storage.store_agent(&agent).await
+
+        agent_storage
+            .store_agent(&agent)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to store agent: {}", e)))?;
-        
+
         Ok(AgentDefinitionGQL::from(&agent))
     }
 
-    /// Create a place agent configuration
-    async fn create_place_agent_config(
+    /// Create state agent configuration
+    async fn create_state_agent_config(
         &self,
         ctx: &Context<'_>,
-        input: PlaceAgentConfigInput,
-    ) -> async_graphql::Result<PlaceAgentConfigGQL> {
+        input: StateAgentConfigInput,
+    ) -> async_graphql::Result<StateAgentConfigGQL> {
         let agent_storage = ctx.data::<std::sync::Arc<dyn AgentStorage>>()?;
-        
+
         // Verify agent exists
         let agent_id = AgentId::from(input.agent_id);
-        agent_storage.get_agent(&agent_id).await?
+        agent_storage
+            .get_agent(&agent_id)
+            .await?
             .ok_or_else(|| async_graphql::Error::new("Agent not found"))?;
-        
-        let place_id = PlaceId::from(input.place_id);
-        
+
+        let state_id = StateId::from(input.state_id);
+
         // Convert input mappings from JSON
-        let input_mapping: std::collections::HashMap<String, String> = 
+        let input_mapping: std::collections::HashMap<String, String> =
             serde_json::from_value(input.input_mapping)
                 .map_err(|e| async_graphql::Error::new(format!("Invalid input mapping: {}", e)))?;
-        
-        let output_mapping: std::collections::HashMap<String, String> = 
+
+        let output_mapping: std::collections::HashMap<String, String> =
             serde_json::from_value(input.output_mapping)
                 .map_err(|e| async_graphql::Error::new(format!("Invalid output mapping: {}", e)))?;
-        
+
         let llm_config = input.llm_config.map(|config| LLMConfig {
             temperature: config.temperature as f32,
             max_tokens: config.max_tokens.map(|t| t as u32),
@@ -1374,250 +1944,308 @@ impl Mutation {
             presence_penalty: config.presence_penalty.map(|p| p as f32),
             stop_sequences: config.stop_sequences,
         });
-        
-        let schedule = input.schedule.map(|sched| PlaceAgentSchedule {
+
+        let schedule = input.schedule.map(|sched| StateAgentSchedule {
             initial_delay_seconds: sched.initial_delay_seconds.map(|d| d as u64),
             interval_seconds: sched.interval_seconds.map(|i| i as u64),
             max_executions: sched.max_executions.map(|e| e as u32),
         });
-        
+
         let retry_config = input.retry_config.map(|retry| AgentRetryConfig {
             max_attempts: retry.max_attempts as u32,
             backoff_seconds: retry.backoff_seconds as u64,
             retry_on_errors: retry.retry_on_errors,
         });
-        
+
         let now = chrono::Utc::now();
-        let config = PlaceAgentConfig {
+        let config = StateAgentConfig {
             id: Uuid::new_v4(),
-            place_id,
+            state_id,
             agent_id,
             llm_config,
             trigger_conditions: vec![], // TODO: Add trigger conditions input
             input_mapping,
             output_mapping,
-            auto_transition: input.auto_transition.map(TransitionId::from),
+            auto_activity: input.auto_activity.map(ActivityId::from),
             schedule,
             retry_config,
             enabled: input.enabled,
             created_at: now,
             updated_at: now,
         };
-        
-        agent_storage.store_place_agent_config(&config).await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to store place agent config: {}", e)))?;
-        
-        Ok(PlaceAgentConfigGQL::from(&config))
+
+        agent_storage
+            .store_state_agent_config(&config)
+            .await
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to store state agent config: {}", e))
+            })?;
+
+        Ok(StateAgentConfigGQL::from(&config))
     }
 
-    /// Trigger place agents for a token
-    async fn trigger_place_agents(
+    /// Trigger state agents for a resource
+    async fn trigger_state_agents(
         &self,
         ctx: &Context<'_>,
-        input: TriggerPlaceAgentsInput,
+        input: TriggerStateAgentsInput,
     ) -> async_graphql::Result<Vec<AgentExecutionGQL>> {
         let workflow_storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
         let agent_engine = ctx.data::<AgentEngine>()?;
-        
-        let token_id = input.token_id.parse::<Uuid>()
-            .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
-        
-        // Get the token with retry logic for timing issues
-        let mut token = None;
+
+        let resource_id = input
+            .resource_id
+            .parse::<Uuid>()
+            .map_err(|_| async_graphql::Error::new("Invalid resource ID format"))?;
+
+        // Get the resource with retry logic for timing issues
+        let mut resource = None;
         for attempt in 0..3 {
             if attempt > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(100 * (2_u64.pow(attempt)))).await;
+                tokio::time::sleep(std::time::Duration::from_millis(100 * (2_u64.pow(attempt))))
+                    .await;
             }
-            
-            match workflow_storage.get_token(&token_id).await {
-                Ok(Some(found_token)) => {
-                    token = Some(found_token);
+
+            match workflow_storage.get_resource(&resource_id).await {
+                Ok(Some(found_resource)) => {
+                    resource = Some(found_resource);
                     break;
-                },
+                }
                 Ok(None) => {
                     if attempt == 2 {
-                        return Err(async_graphql::Error::new("Token not found after retries"));
+                        return Err(async_graphql::Error::new(
+                            "Resource not found after retries",
+                        ));
                     }
                     continue;
-                },
+                }
                 Err(e) => {
-                    return Err(async_graphql::Error::new(format!("Failed to get token: {}", e)));
+                    return Err(async_graphql::Error::new(format!(
+                        "Failed to get resource: {}",
+                        e
+                    )));
                 }
             }
         }
-        
-        let token = token.unwrap();
-        
-        let executions = agent_engine.execute_place_agents(&token).await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to execute place agents: {}", e)))?;
-        
+
+        let resource = resource.unwrap();
+
+        let executions = agent_engine
+            .execute_state_agents(&resource)
+            .await
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to execute state agents: {}", e))
+            })?;
+
         Ok(executions.iter().map(AgentExecutionGQL::from).collect())
     }
 
     /// NATS-specific mutations for enhanced token operations
-    
+
     /// Create a workflow instance with NATS event tracking
     async fn create_workflow_instance(
         &self,
         ctx: &Context<'_>,
         input: CreateWorkflowInstanceInput,
-    ) -> async_graphql::Result<NATSTokenGQL> {
+    ) -> async_graphql::Result<NATSResourceGQL> {
         let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
-        
+
         // Get the workflow definition to find initial place
-        let workflow = storage.get_workflow(&input.workflow_id).await
+        let workflow = storage
+            .get_workflow(&input.workflow_id)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to get workflow: {}", e)))?
             .ok_or_else(|| async_graphql::Error::new("Workflow not found"))?;
-        
-        // Create new token
-        let mut token = Token::new(&input.workflow_id, workflow.initial_place.clone());
-        
+
+        // Create new resource
+        let mut resource = Resource::new(&input.workflow_id, workflow.initial_state.clone());
+
         // Set initial data if provided
         if let Some(data) = input.initial_data {
-            token.data = data;
+            resource.data = data;
         }
-        
+
         // Set metadata if provided
         if let Some(metadata) = input.metadata {
             if let serde_json::Value::Object(map) = metadata {
                 for (key, value) in map {
-                    token.set_metadata(key, value);
+                    resource.set_metadata(key, value);
                 }
             }
         }
-        
+
         // Try to use NATS storage for enhanced functionality
-        if let Ok(nats_storage) = ctx.data::<std::sync::Arc<crate::engine::nats_storage::NATSStorage>>() {
-            let created_token = nats_storage.create_token_with_event(token, input.triggered_by).await
-                .map_err(|e| async_graphql::Error::new(format!("Failed to create NATS token: {}", e)))?;
-            Ok(NATSTokenGQL::from(&created_token))
+        if let Ok(nats_storage) =
+            ctx.data::<std::sync::Arc<crate::engine::nats_storage::NATSStorage>>()
+        {
+            let created_resource = nats_storage
+                .create_resource_with_event(resource, input.triggered_by)
+                .await
+                .map_err(|e| {
+                    async_graphql::Error::new(format!("Failed to create NATS resource: {}", e))
+                })?;
+            Ok(NATSResourceGQL::from(&created_resource))
         } else {
             // Fallback to regular storage
-            let created_token = storage.create_token(token).await
-                .map_err(|e| async_graphql::Error::new(format!("Failed to create token: {}", e)))?;
-            Ok(NATSTokenGQL::from(&created_token))
+            let created_resource = storage.create_resource(resource).await.map_err(|e| {
+                async_graphql::Error::new(format!("Failed to create resource: {}", e))
+            })?;
+            Ok(NATSResourceGQL::from(&created_resource))
         }
     }
 
     /// Transition token with NATS event publishing
-    async fn transition_token_with_nats(
+    /// Execute activity with NATS
+    async fn execute_activity_with_nats(
         &self,
         ctx: &Context<'_>,
-        input: TransitionTokenWithNATSInput,
-    ) -> async_graphql::Result<NATSTokenGQL> {
-        // Parse token ID
-        let token_id = input.token_id.parse::<Uuid>()
-            .map_err(|_| async_graphql::Error::new("Invalid token ID format"))?;
-        
+        input: ExecuteActivityWithNATSInput,
+    ) -> async_graphql::Result<NATSResourceGQL> {
+        // Parse resource ID
+        let resource_id = input
+            .resource_id
+            .parse::<Uuid>()
+            .map_err(|_| async_graphql::Error::new("Invalid resource ID format"))?;
+
         // Try to use NATS storage directly first for consistent behavior
-        if let Ok(nats_storage) = ctx.data::<std::sync::Arc<crate::engine::nats_storage::NATSStorage>>() {
-            // Get token directly from NATS storage with retry logic
-            let mut token = None;
+        if let Ok(nats_storage) =
+            ctx.data::<std::sync::Arc<crate::engine::nats_storage::NATSStorage>>()
+        {
+            // Get resource directly from NATS storage with retry logic
+            let mut resource = None;
             for attempt in 0..3 {
                 if attempt > 0 {
-                    tokio::time::sleep(std::time::Duration::from_millis(100 * (2_u64.pow(attempt)))).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * (2_u64.pow(attempt)),
+                    ))
+                    .await;
                 }
-                
-                match nats_storage.get_token(&token_id).await {
-                    Ok(Some(found_token)) => {
-                        token = Some(found_token);
+
+                match nats_storage.get_resource(&resource_id).await {
+                    Ok(Some(found_resource)) => {
+                        resource = Some(found_resource);
                         break;
-                    },
+                    }
                     Ok(None) => {
                         if attempt == 2 {
-                            return Err(async_graphql::Error::new("Token not found after retries"));
+                            return Err(async_graphql::Error::new(
+                                "Resource not found after retries",
+                            ));
                         }
                         continue;
-                    },
+                    }
                     Err(e) => {
-                        return Err(async_graphql::Error::new(format!("Failed to get token: {}", e)));
+                        return Err(async_graphql::Error::new(format!(
+                            "Failed to get resource: {}",
+                            e
+                        )));
                     }
                 }
             }
-            
-            let mut token = token.unwrap();
-            
-            // Get the workflow to validate transition
-            let workflow = nats_storage.get_workflow(&token.workflow_id).await
+
+            let mut resource = resource.unwrap();
+
+            // Get the workflow to validate activity
+            let workflow = nats_storage
+                .get_workflow(&resource.workflow_id)
+                .await
                 .map_err(|e| async_graphql::Error::new(format!("Failed to get workflow: {}", e)))?
                 .ok_or_else(|| async_graphql::Error::new("Workflow not found"))?;
-            
-            let transition_id = TransitionId::from(input.transition_id);
-            let new_place = PlaceId::from(input.new_place);
-            let current_place = token.place.clone();
-            
-            // Validate transition
-            if !workflow.can_transition(&current_place, &transition_id).map(|p| *p == new_place).unwrap_or(false) {
-                return Err(async_graphql::Error::new("Invalid transition"));
+
+            let activity_id = ActivityId::from(input.activity_id);
+            let new_state = StateId::from(input.new_state);
+            let current_state = resource.state.clone();
+
+            // Validate activity
+            if !workflow
+                .can_execute_activity(&current_state, &activity_id)
+                .map(|s| *s == new_state)
+                .unwrap_or(false)
+            {
+                return Err(async_graphql::Error::new("Invalid activity"));
             }
-            
-            // Update token data if provided
+
+            // Update resource data if provided
             if let Some(data) = input.data {
-                token.data = data;
+                resource.data = data;
             }
-            
-            let transitioned_token = nats_storage.transition_token_with_event(
-                token,
-                new_place,
-                transition_id,
-                input.triggered_by,
-            ).await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to transition NATS token: {}", e)))?;
-            Ok(NATSTokenGQL::from(&transitioned_token))
+
+            let executed_resource = nats_storage
+                .execute_activity_with_nats(resource, new_state, activity_id, input.triggered_by)
+                .await
+                .map_err(|e| {
+                    async_graphql::Error::new(format!("Failed to execute NATS activity: {}", e))
+                })?;
+            Ok(NATSResourceGQL::from(&executed_resource))
         } else {
             // Fallback to wrapper storage
             let storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
-            
-            // Get the token with retry logic for timing issues
-            let mut token = None;
+
+            // Get the resource with retry logic for timing issues
+            let mut resource = None;
             for attempt in 0..3 {
                 if attempt > 0 {
-                    tokio::time::sleep(std::time::Duration::from_millis(100 * (2_u64.pow(attempt)))).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * (2_u64.pow(attempt)),
+                    ))
+                    .await;
                 }
-                
-                match storage.get_token(&token_id).await {
-                    Ok(Some(found_token)) => {
-                        token = Some(found_token);
+
+                match storage.get_resource(&resource_id).await {
+                    Ok(Some(found_resource)) => {
+                        resource = Some(found_resource);
                         break;
-                    },
+                    }
                     Ok(None) => {
                         if attempt == 2 {
-                            return Err(async_graphql::Error::new("Token not found after retries"));
+                            return Err(async_graphql::Error::new(
+                                "Resource not found after retries",
+                            ));
                         }
                         continue;
-                    },
+                    }
                     Err(e) => {
-                        return Err(async_graphql::Error::new(format!("Failed to get token: {}", e)));
+                        return Err(async_graphql::Error::new(format!(
+                            "Failed to get resource: {}",
+                            e
+                        )));
                     }
                 }
             }
-            
-            let mut token = token.unwrap();
-            
-            // Get the workflow to validate transition
-            let workflow = storage.get_workflow(&token.workflow_id).await
+
+            let mut resource = resource.unwrap();
+
+            // Get the workflow to validate activity
+            let workflow = storage
+                .get_workflow(&resource.workflow_id)
+                .await
                 .map_err(|e| async_graphql::Error::new(format!("Failed to get workflow: {}", e)))?
                 .ok_or_else(|| async_graphql::Error::new("Workflow not found"))?;
-            
-            let transition_id = TransitionId::from(input.transition_id);
-            let new_place = PlaceId::from(input.new_place);
-            let current_place = token.place.clone();
-            
-            // Validate transition
-            if !workflow.can_transition(&current_place, &transition_id).map(|p| *p == new_place).unwrap_or(false) {
-                return Err(async_graphql::Error::new("Invalid transition"));
+
+            let activity_id = ActivityId::from(input.activity_id);
+            let new_state = StateId::from(input.new_state);
+            let current_state = resource.state.clone();
+
+            // Validate activity
+            if !workflow
+                .can_execute_activity(&current_state, &activity_id)
+                .map(|s| *s == new_state)
+                .unwrap_or(false)
+            {
+                return Err(async_graphql::Error::new("Invalid activity"));
             }
-            
-            // Update token data if provided
+
+            // Update resource data if provided
             if let Some(data) = input.data {
-                token.data = data;
+                resource.data = data;
             }
-            
-            // Regular transition
-            token.transition_to(new_place, transition_id);
-            let updated_token = storage.update_token(token).await
-                .map_err(|e| async_graphql::Error::new(format!("Failed to update token: {}", e)))?;
-            Ok(NATSTokenGQL::from(&updated_token))
+
+            // Regular activity execution
+            resource.execute_activity(new_state, activity_id);
+            let updated_resource = storage.update_resource(resource).await.map_err(|e| {
+                async_graphql::Error::new(format!("Failed to update resource: {}", e))
+            })?;
+            Ok(NATSResourceGQL::from(&updated_resource))
         }
     }
 
@@ -1628,25 +2256,30 @@ impl Mutation {
         input: LLMChatCompletionInput,
     ) -> async_graphql::Result<LLMResponseGQL> {
         // Create router
-        let router = crate::llm::router::LLMRouter::new().await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to initialize router: {}", e)))?;
-        
+        let router = crate::llm::router::LLMRouter::new().await.map_err(|e| {
+            async_graphql::Error::new(format!("Failed to initialize router: {}", e))
+        })?;
+
         // Convert GraphQL input to LLM request
         let llm_request = crate::llm::LLMRequest {
             id: uuid::Uuid::new_v4(),
             model: input.model,
-            messages: input.messages.into_iter().map(|msg| crate::llm::ChatMessage {
-                role: match msg.role.as_str() {
-                    "system" => crate::llm::MessageRole::System,
-                    "user" => crate::llm::MessageRole::User,
-                    "assistant" => crate::llm::MessageRole::Assistant,
-                    "function" => crate::llm::MessageRole::Function,
-                    _ => crate::llm::MessageRole::User,
-                },
-                content: msg.content,
-                name: msg.name,
-                function_call: None,
-            }).collect(),
+            messages: input
+                .messages
+                .into_iter()
+                .map(|msg| crate::llm::ChatMessage {
+                    role: match msg.role.as_str() {
+                        "system" => crate::llm::MessageRole::System,
+                        "user" => crate::llm::MessageRole::User,
+                        "assistant" => crate::llm::MessageRole::Assistant,
+                        "function" => crate::llm::MessageRole::Function,
+                        _ => crate::llm::MessageRole::User,
+                    },
+                    content: msg.content,
+                    name: msg.name,
+                    function_call: None,
+                })
+                .collect(),
             temperature: input.temperature.map(|t| t as f64),
             max_tokens: input.max_tokens.map(|t| t as u32),
             top_p: input.top_p.map(|p| p as f64),
@@ -1660,34 +2293,43 @@ impl Mutation {
             metadata: {
                 let mut meta = std::collections::HashMap::new();
                 if let Some(project_id) = input.project_id {
-                    meta.insert("project_id".to_string(), serde_json::Value::String(project_id));
+                    meta.insert(
+                        "project_id".to_string(),
+                        serde_json::Value::String(project_id),
+                    );
                 }
                 meta
             },
         };
-        
+
         // Make the actual LLM request
-        let response = router.chat_completion(llm_request).await
+        let response = router
+            .chat_completion(llm_request)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("LLM request failed: {}", e)))?;
-        
+
         // Convert response back to GraphQL format
         Ok(LLMResponseGQL {
             id: response.id,
             model: response.model,
-            choices: response.choices.into_iter().map(|choice| LLMChoiceGQL {
-                index: choice.index as i32,
-                message: ChatMessageGQL {
-                    role: match choice.message.role {
-                        crate::llm::MessageRole::System => "system".to_string(),
-                        crate::llm::MessageRole::User => "user".to_string(),
-                        crate::llm::MessageRole::Assistant => "assistant".to_string(),
-                        crate::llm::MessageRole::Function => "function".to_string(),
+            choices: response
+                .choices
+                .into_iter()
+                .map(|choice| LLMChoiceGQL {
+                    index: choice.index as i32,
+                    message: ChatMessageGQL {
+                        role: match choice.message.role {
+                            crate::llm::MessageRole::System => "system".to_string(),
+                            crate::llm::MessageRole::User => "user".to_string(),
+                            crate::llm::MessageRole::Assistant => "assistant".to_string(),
+                            crate::llm::MessageRole::Function => "function".to_string(),
+                        },
+                        content: choice.message.content,
+                        name: choice.message.name,
                     },
-                    content: choice.message.content,
-                    name: choice.message.name,
-                },
-                finish_reason: choice.finish_reason,
-            }).collect(),
+                    finish_reason: choice.finish_reason,
+                })
+                .collect(),
             usage: TokenUsageGQL {
                 prompt_tokens: response.usage.prompt_tokens as i32,
                 completion_tokens: response.usage.completion_tokens as i32,
@@ -1705,8 +2347,6 @@ impl Mutation {
         })
     }
 
-
-
     /// Configure LLM provider
     async fn configure_llm_provider(
         &self,
@@ -1719,17 +2359,21 @@ impl Mutation {
             provider_type: input.provider_type.clone(),
             name: input.name.clone(),
             base_url: input.base_url.clone(),
-            models: input.models.into_iter().map(|model| LLMModelGQL {
-                id: model.id,
-                name: model.name,
-                max_tokens: model.max_tokens,
-                context_window: model.context_window,
-                cost_per_input_token: model.cost_per_input_token,
-                cost_per_output_token: model.cost_per_output_token,
-                supports_streaming: model.supports_streaming,
-                supports_function_calling: model.supports_function_calling,
-                capabilities: model.capabilities,
-            }).collect(),
+            models: input
+                .models
+                .into_iter()
+                .map(|model| LLMModelGQL {
+                    id: model.id,
+                    name: model.name,
+                    max_tokens: model.max_tokens,
+                    context_window: model.context_window,
+                    cost_per_input_token: model.cost_per_input_token,
+                    cost_per_output_token: model.cost_per_output_token,
+                    supports_streaming: model.supports_streaming,
+                    supports_function_calling: model.supports_function_calling,
+                    capabilities: model.capabilities,
+                })
+                .collect(),
             health_status: LLMProviderHealthGQL {
                 is_healthy: true,
                 last_check: chrono::Utc::now().to_rfc3339(),
@@ -1769,6 +2413,124 @@ impl Mutation {
             message: format!("Budget set to ${:.2}", input.limit),
         })
     }
+
+    /// Create a new rule
+    async fn create_rule(
+        &self,
+        ctx: &Context<'_>,
+        input: RuleInput,
+    ) -> async_graphql::Result<RuleGQL> {
+        let rule_storage = ctx.data::<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>()?;
+
+        let stored_rule = crate::engine::rules::StoredRule {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: input.name,
+            description: input.description,
+            condition: RuleCondition::from(input.condition),
+            version: 1,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            created_by: None, // TODO: Get from auth context
+            tags: input.tags.unwrap_or_default(),
+            workflow_id: None,
+        };
+
+        match rule_storage.create_rule(stored_rule).await {
+            Ok(created_rule) => Ok(RuleGQL::from(&created_rule)),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to create rule: {}",
+                e
+            ))),
+        }
+    }
+
+    /// Update an existing rule
+    async fn update_rule(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+        input: RuleInput,
+    ) -> async_graphql::Result<RuleGQL> {
+        let rule_storage = ctx.data::<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>()?;
+
+        let stored_rule = crate::engine::rules::StoredRule {
+            id: id.clone(),
+            name: input.name,
+            description: input.description,
+            condition: RuleCondition::from(input.condition),
+            version: 1,                     // Will be incremented in update_rule
+            created_at: chrono::Utc::now(), // Will be preserved in update_rule
+            updated_at: chrono::Utc::now(),
+            created_by: None,
+            tags: input.tags.unwrap_or_default(),
+            workflow_id: None,
+        };
+
+        match rule_storage.update_rule(&id, stored_rule).await {
+            Ok(updated_rule) => Ok(RuleGQL::from(&updated_rule)),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to update rule: {}",
+                e
+            ))),
+        }
+    }
+
+    /// Delete a rule
+    async fn delete_rule(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<bool> {
+        let rule_storage = ctx.data::<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>()?;
+
+        match rule_storage.delete_rule(&id).await {
+            Ok(deleted) => Ok(deleted),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to delete rule: {}",
+                e
+            ))),
+        }
+    }
+
+    /// Evaluate a rule against data
+    async fn evaluate_rule(
+        &self,
+        ctx: &Context<'_>,
+        input: RuleEvaluationInput,
+    ) -> async_graphql::Result<RuleEvaluationResultGQL> {
+        let rule_storage = ctx.data::<std::sync::Arc<dyn crate::engine::rules::RuleStorage>>()?;
+
+        match rule_storage.get_rule(&input.rule_id).await {
+            Ok(Some(stored_rule)) => {
+                let rule: Rule = stored_rule.into();
+
+                // Combine data and metadata for evaluation
+                let mut combined_data = input.data;
+                if let Some(metadata) = input.metadata {
+                    if let serde_json::Value::Object(metadata_obj) = metadata {
+                        if let serde_json::Value::Object(ref mut data_obj) = combined_data {
+                            data_obj.extend(metadata_obj);
+                        }
+                    }
+                }
+
+                let metadata = ResourceMetadata::new();
+                let result = rule.evaluate_detailed(&metadata, &combined_data);
+
+                Ok(RuleEvaluationResultGQL {
+                    rule_id: result.rule_id,
+                    passed: result.passed,
+                    reason: result.explanation,
+                    details: Some(serde_json::to_value(&result.sub_results).unwrap_or_default()),
+                    sub_results: vec![], // TODO: Convert sub_results properly
+                })
+            }
+            Ok(None) => Err(async_graphql::Error::new(format!(
+                "Rule not found: {}",
+                input.rule_id
+            ))),
+            Err(e) => Err(async_graphql::Error::new(format!(
+                "Failed to evaluate rule: {}",
+                e
+            ))),
+        }
+    }
 }
 
 // GraphQL Subscription root (for real-time updates)
@@ -1776,9 +2538,12 @@ pub struct Subscription;
 
 #[Subscription]
 impl Subscription {
-    /// Subscribe to token state changes
-    async fn token_updates(&self, _token_id: String) -> impl futures::Stream<Item = TokenGQL> {
-        // TODO: Implement real-time token updates using NATS streams
+    /// Subscribe to resource state changes
+    async fn resource_updates(
+        &self,
+        _resource_id: String,
+    ) -> impl futures::Stream<Item = ResourceGQL> {
+        // TODO: Implement real-time resource updates using NATS streams
         futures::stream::empty()
     }
 
@@ -1789,28 +2554,39 @@ impl Subscription {
     }
 
     /// Subscribe to agent execution stream events
-    async fn agent_execution_stream(&self, ctx: &Context<'_>, execution_id: String) -> async_graphql::Result<impl futures::Stream<Item = String>> {
+    async fn agent_execution_stream(
+        &self,
+        ctx: &Context<'_>,
+        execution_id: String,
+    ) -> async_graphql::Result<impl futures::Stream<Item = String>> {
         let _agent_engine = ctx.data::<AgentEngine>()?;
-        let _execution_uuid = execution_id.parse::<Uuid>()
+        let _execution_uuid = execution_id
+            .parse::<Uuid>()
             .map_err(|_| async_graphql::Error::new("Invalid execution ID format"))?;
-        
+
         // TODO: Implement real-time agent execution streaming
         // For now, return empty stream
         Ok(futures::stream::empty())
     }
 
     /// Subscribe to LLM response stream for real-time streaming
-    async fn llm_stream(&self, _ctx: &Context<'_>, _request_id: String) -> async_graphql::Result<impl futures::Stream<Item = String>> {
+    async fn llm_stream(
+        &self,
+        _ctx: &Context<'_>,
+        _request_id: String,
+    ) -> async_graphql::Result<impl futures::Stream<Item = String>> {
         // Create router and real LLM request
-        let router = crate::llm::router::LLMRouter::new().await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to initialize router: {}", e)))?;
-        
+        let router = crate::llm::router::LLMRouter::new().await.map_err(|e| {
+            async_graphql::Error::new(format!("Failed to initialize router: {}", e))
+        })?;
+
         let llm_request = crate::llm::LLMRequest {
             id: uuid::Uuid::new_v4(),
             model: "claude-sonnet-4-20250514".to_string(),
             messages: vec![crate::llm::ChatMessage {
                 role: crate::llm::MessageRole::User,
-                content: "How much wood would a woodchuck chuck if a woodchuck could chuck wood?".to_string(),
+                content: "How much wood would a woodchuck chuck if a woodchuck could chuck wood?"
+                    .to_string(),
                 name: None,
                 function_call: None,
             }],
@@ -1826,63 +2602,68 @@ impl Subscription {
             user: None,
             metadata: std::collections::HashMap::new(),
         };
-        
+
         // Get the real streaming response
-        let stream = router.stream_chat_completion(llm_request).await
-            .map_err(|e| async_graphql::Error::new(format!("LLM streaming request failed: {}", e)))?;
-        
+        let stream = router
+            .stream_chat_completion(llm_request)
+            .await
+            .map_err(|e| {
+                async_graphql::Error::new(format!("LLM streaming request failed: {}", e))
+            })?;
+
         // Convert the stream to JSON strings for WebSocket
         use futures::StreamExt;
-        let json_stream = stream.map(|chunk_result| {
-            match chunk_result {
-                Ok(chunk) => {
-                    serde_json::to_string(&serde_json::json!({
-                        "type": "chunk",
-                        "data": {
-                            "id": chunk.id,
-                            "model": chunk.model,
-                            "choices": chunk.choices.iter().map(|choice| {
-                                serde_json::json!({
-                                    "index": choice.index,
-                                    "delta": {
-                                        "role": match choice.delta.role {
-                                            crate::llm::MessageRole::Assistant => "assistant",
-                                            crate::llm::MessageRole::User => "user",
-                                            crate::llm::MessageRole::System => "system",
-                                            crate::llm::MessageRole::Function => "function",
-                                        },
-                                        "content": choice.delta.content
-                                    },
-                                    "finish_reason": choice.finish_reason
-                                })
-                            }).collect::<Vec<_>>()
-                        }
-                    })).unwrap_or_else(|_| r#"{"type":"error","error":"JSON serialization failed"}"#.to_string())
+        let json_stream = stream.map(|chunk_result| match chunk_result {
+            Ok(chunk) => serde_json::to_string(&serde_json::json!({
+                "type": "chunk",
+                "data": {
+                    "id": chunk.id,
+                    "model": chunk.model,
+                    "choices": chunk.choices.iter().map(|choice| {
+                        serde_json::json!({
+                            "index": choice.index,
+                            "delta": {
+                                "role": match choice.delta.role {
+                                    crate::llm::MessageRole::Assistant => "assistant",
+                                    crate::llm::MessageRole::User => "user",
+                                    crate::llm::MessageRole::System => "system",
+                                    crate::llm::MessageRole::Function => "function",
+                                },
+                                "content": choice.delta.content
+                            },
+                            "finish_reason": choice.finish_reason
+                        })
+                    }).collect::<Vec<_>>()
                 }
-                Err(e) => {
-                    serde_json::to_string(&serde_json::json!({
-                        "type": "error",
-                        "error": e.to_string()
-                    })).unwrap_or_else(|_| r#"{"type":"error","error":"Unknown error"}"#.to_string())
-                }
-            }
+            }))
+            .unwrap_or_else(|_| {
+                r#"{"type":"error","error":"JSON serialization failed"}"#.to_string()
+            }),
+            Err(e) => serde_json::to_string(&serde_json::json!({
+                "type": "error",
+                "error": e.to_string()
+            }))
+            .unwrap_or_else(|_| r#"{"type":"error","error":"Unknown error"}"#.to_string()),
         });
-        
+
         Ok(json_stream)
     }
 
     /// Subscribe to cost updates for real-time budget monitoring
-    async fn cost_updates(&self, _ctx: &Context<'_>, _user_id: Option<String>) -> async_graphql::Result<impl futures::Stream<Item = String>> {
+    async fn cost_updates(
+        &self,
+        ctx: &Context<'_>,
+        _user_id: Option<String>,
+    ) -> async_graphql::Result<impl futures::Stream<Item = String>> {
         // Mock cost update stream - in production this would track real cost changes
         let mock_updates = vec![
             r#"{"type":"cost_update","user_id":"user123","cost_delta":0.025,"total_cost":15.50,"timestamp":"2024-01-15T10:30:00Z"}"#,
             r#"{"type":"budget_warning","user_id":"user123","percentage_used":0.85,"message":"Budget warning: 85% of daily budget used"}"#,
         ];
-        
-        let stream = futures::stream::iter(mock_updates.into_iter().map(|update| {
-            update.to_string()
-        }));
-        
+
+        let stream =
+            futures::stream::iter(mock_updates.into_iter().map(|update| update.to_string()));
+
         Ok(stream)
     }
 }
@@ -1922,9 +2703,9 @@ pub fn create_schema_with_nats(
 ) -> CircuitBreakerSchema {
     // Use NATS storage as the primary WorkflowStorage implementation
     let storage_boxed: Box<dyn WorkflowStorage> = Box::new(
-        crate::engine::nats_storage::NATSStorageWrapper::new(nats_storage.clone())
+        crate::engine::nats_storage::NATSStorageWrapper::new(nats_storage.clone()),
     );
-    
+
     Schema::build(Query, Mutation, Subscription)
         .data(storage_boxed)
         .data(nats_storage)
@@ -1940,13 +2721,34 @@ pub fn create_schema_with_nats_and_agents(
 ) -> CircuitBreakerSchema {
     // Use NATS storage as the primary WorkflowStorage implementation
     let storage_boxed: Box<dyn WorkflowStorage> = Box::new(
-        crate::engine::nats_storage::NATSStorageWrapper::new(nats_storage.clone())
+        crate::engine::nats_storage::NATSStorageWrapper::new(nats_storage.clone()),
     );
-    
+
     Schema::build(Query, Mutation, Subscription)
         .data(storage_boxed)
         .data(nats_storage)
         .data(agent_storage)
         .data(agent_engine)
+        .finish()
+}
+
+/// Create GraphQL schema with NATS storage, agents, and rule storage
+pub fn create_schema_with_full_storage(
+    nats_storage: std::sync::Arc<crate::engine::nats_storage::NATSStorage>,
+    agent_storage: std::sync::Arc<dyn AgentStorage>,
+    agent_engine: std::sync::Arc<AgentEngine>,
+    rule_storage: std::sync::Arc<dyn crate::engine::rules::RuleStorage>,
+) -> CircuitBreakerSchema {
+    // Use NATS storage as the primary WorkflowStorage implementation
+    let storage_boxed: Box<dyn WorkflowStorage> = Box::new(
+        crate::engine::nats_storage::NATSStorageWrapper::new(nats_storage.clone()),
+    );
+
+    Schema::build(Query, Mutation, Subscription)
+        .data(storage_boxed)
+        .data(nats_storage)
+        .data(agent_storage)
+        .data(agent_engine)
+        .data(rule_storage)
         .finish()
 }

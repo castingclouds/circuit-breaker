@@ -1,18 +1,18 @@
 // Function domain models with chaining support
 
 //! # Function Models with Chaining Support
-//! 
+//!
 //! This module defines event-driven functions that can be chained together:
 //! - Functions have well-defined input/output schemas using JSON Schema
 //! - Function outputs can trigger other functions based on conditions
 //! - Function results are available to the rules engine
 //! - Supports complex data flow between functions
 
-use std::collections::HashMap;
-use chrono::{DateTime, Utc, Duration};
+use super::{ActivityId, ResourceMetadata, Rule, StateId};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
-use super::{PlaceId, TransitionId, TokenMetadata, Rule};
 
 /// Unique identifier for functions
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -61,23 +61,23 @@ pub struct FunctionSchema {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventType {
     /// Token was created in a specific place
-    TokenCreated { place: Option<PlaceId> },
+    TokenCreated { place: Option<StateId> },
     /// Token transitioned from one place to another
-    TokenTransitioned { 
-        from: Option<PlaceId>, 
-        to: Option<PlaceId>, 
-        transition: Option<TransitionId> 
+    TokenTransitioned {
+        from: Option<StateId>,
+        to: Option<StateId>,
+        transition: Option<ActivityId>,
     },
     /// Token was updated (metadata or data changed)
-    TokenUpdated { place: Option<PlaceId> },
-    /// Token reached a final state
-    TokenCompleted { place: Option<PlaceId> },
+    TokenUpdated { place: Option<StateId> },
+    /// Token completed in a specific place
+    TokenCompleted { place: Option<StateId> },
     /// Workflow was created
     WorkflowCreated,
     /// Function completed execution (for chaining)
-    FunctionCompleted { 
-        function_id: FunctionId, 
-        success: bool 
+    FunctionCompleted {
+        function_id: FunctionId,
+        success: bool,
     },
     /// Custom event with arbitrary data
     Custom { event_name: String },
@@ -119,7 +119,7 @@ pub struct EventTrigger {
     pub id: String,
     pub event_type: EventType,
     pub workflow_id: Option<String>, // Optional: only trigger for specific workflows
-    pub conditions: Vec<String>, // Optional: additional conditions using rules engine
+    pub conditions: Vec<String>,     // Optional: additional conditions using rules engine
     pub description: Option<String>,
     /// How to extract/transform data for function input
     pub input_mapping: InputMapping,
@@ -263,7 +263,7 @@ pub struct FunctionDefinition {
 pub struct FunctionExecution {
     pub id: Uuid,
     pub function_id: FunctionId,
-    pub trigger_event: String, // JSON-serialized event data
+    pub trigger_event: String,         // JSON-serialized event data
     pub input_data: serde_json::Value, // Processed input for the function
     pub status: ExecutionStatus,
     pub container_id: Option<String>, // Docker container ID
@@ -277,7 +277,7 @@ pub struct FunctionExecution {
     pub retry_count: u32,
     pub next_retry_at: Option<DateTime<Utc>>,
     pub parent_execution_id: Option<Uuid>, // If this was triggered by another function
-    pub chain_position: u32, // Position in the execution chain
+    pub chain_position: u32,               // Position in the execution chain
     pub created_at: DateTime<Utc>,
 }
 
@@ -289,7 +289,7 @@ pub struct TriggerEvent {
     pub workflow_id: String,
     pub token_id: Option<Uuid>,
     pub data: serde_json::Value, // Event-specific data
-    pub metadata: TokenMetadata,
+    pub metadata: ResourceMetadata,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -298,7 +298,7 @@ pub struct TriggerEvent {
 pub struct ChainExecution {
     pub id: Uuid,
     pub root_execution_id: Uuid, // The first execution that started this chain
-    pub executions: Vec<Uuid>, // All executions in this chain
+    pub executions: Vec<Uuid>,   // All executions in this chain
     pub status: ChainStatus,
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
@@ -394,35 +394,66 @@ impl FunctionDefinition {
     }
 
     /// Check if event types match with optional filters
-    pub fn event_type_matches(&self, trigger_type: &EventType, event_type: &EventType, _event: &TriggerEvent) -> bool {
+    pub fn event_type_matches(
+        &self,
+        trigger_type: &EventType,
+        event_type: &EventType,
+        _event: &TriggerEvent,
+    ) -> bool {
         match (trigger_type, event_type) {
-            (EventType::TokenCreated { place: filter_place }, EventType::TokenCreated { place: event_place }) => {
-                filter_place.is_none() || filter_place == event_place
-            },
             (
-                EventType::TokenTransitioned { from: filter_from, to: filter_to, transition: filter_transition },
-                EventType::TokenTransitioned { from: event_from, to: event_to, transition: event_transition }
+                EventType::TokenCreated {
+                    place: filter_place,
+                },
+                EventType::TokenCreated { place: event_place },
+            ) => filter_place.is_none() || filter_place == event_place,
+            (
+                EventType::TokenTransitioned {
+                    from: filter_from,
+                    to: filter_to,
+                    transition: filter_transition,
+                },
+                EventType::TokenTransitioned {
+                    from: event_from,
+                    to: event_to,
+                    transition: event_transition,
+                },
             ) => {
-                (filter_from.is_none() || filter_from == event_from) &&
-                (filter_to.is_none() || filter_to == event_to) &&
-                (filter_transition.is_none() || filter_transition == event_transition)
-            },
-            (EventType::TokenUpdated { place: filter_place }, EventType::TokenUpdated { place: event_place }) => {
-                filter_place.is_none() || filter_place == event_place
-            },
-            (EventType::TokenCompleted { place: filter_place }, EventType::TokenCompleted { place: event_place }) => {
-                filter_place.is_none() || filter_place == event_place
-            },
+                (filter_from.is_none() || filter_from == event_from)
+                    && (filter_to.is_none() || filter_to == event_to)
+                    && (filter_transition.is_none() || filter_transition == event_transition)
+            }
+            (
+                EventType::TokenUpdated {
+                    place: filter_place,
+                },
+                EventType::TokenUpdated { place: event_place },
+            ) => filter_place.is_none() || filter_place == event_place,
+            (
+                EventType::TokenCompleted {
+                    place: filter_place,
+                },
+                EventType::TokenCompleted { place: event_place },
+            ) => filter_place.is_none() || filter_place == event_place,
             (EventType::WorkflowCreated, EventType::WorkflowCreated) => true,
-            (EventType::Custom { event_name: filter_name }, EventType::Custom { event_name }) => {
-                filter_name == event_name
-            },
             (
-                EventType::FunctionCompleted { function_id: filter_id, success: filter_success },
-                EventType::FunctionCompleted { function_id: event_id, success: event_success }
-            ) => {
-                filter_id == event_id && filter_success == event_success
-            },
+                EventType::Custom {
+                    event_name: filter_name,
+                },
+                EventType::Custom {
+                    event_name: event_name,
+                },
+            ) => filter_name == event_name,
+            (
+                EventType::FunctionCompleted {
+                    function_id: filter_id,
+                    success: filter_success,
+                },
+                EventType::FunctionCompleted {
+                    function_id: event_id,
+                    success: event_success,
+                },
+            ) => filter_id == event_id && filter_success == event_success,
             _ => false,
         }
     }
@@ -432,7 +463,13 @@ impl FunctionDefinition {
         if let Some(schema) = &self.input_schema {
             // TODO: Implement JSON Schema validation
             // For now, just check if it's valid JSON
-            if data.is_null() && !schema.schema.get("required").unwrap_or(&serde_json::Value::Null).is_null() {
+            if data.is_null()
+                && !schema
+                    .schema
+                    .get("required")
+                    .unwrap_or(&serde_json::Value::Null)
+                    .is_null()
+            {
                 return Err("Input data is required".to_string());
             }
         }
@@ -479,10 +516,10 @@ impl FunctionExecution {
 
     /// Create a chained execution (triggered by another function)
     pub fn new_chained(
-        function_id: FunctionId, 
+        function_id: FunctionId,
         parent_execution_id: Uuid,
         chain_position: u32,
-        input_data: serde_json::Value
+        input_data: serde_json::Value,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -515,7 +552,11 @@ impl FunctionExecution {
 
     /// Mark execution as completed
     pub fn complete(&mut self, exit_code: i32, stdout: Option<String>, stderr: Option<String>) {
-        self.status = if exit_code == 0 { ExecutionStatus::Completed } else { ExecutionStatus::Failed };
+        self.status = if exit_code == 0 {
+            ExecutionStatus::Completed
+        } else {
+            ExecutionStatus::Failed
+        };
         self.exit_code = Some(exit_code);
         self.stdout = stdout;
         self.stderr = stderr;
@@ -551,7 +592,10 @@ impl FunctionExecution {
 
     /// Check if execution failed
     pub fn failed(&self) -> bool {
-        matches!(self.status, ExecutionStatus::Failed | ExecutionStatus::Timeout)
+        matches!(
+            self.status,
+            ExecutionStatus::Failed | ExecutionStatus::Timeout
+        )
     }
 }
 
@@ -585,7 +629,11 @@ impl ContainerConfig {
     }
 
     /// Add secret environment variable
-    pub fn with_secret_var(mut self, key: impl Into<String>, secret_ref: impl Into<String>) -> Self {
+    pub fn with_secret_var(
+        mut self,
+        key: impl Into<String>,
+        secret_ref: impl Into<String>,
+    ) -> Self {
         self.secret_vars.insert(key.into(), secret_ref.into());
         self
     }
@@ -640,29 +688,46 @@ impl EventTrigger {
         }
     }
 
-    /// Create trigger for token creation
-    pub fn on_token_created(id: impl Into<String>, place: Option<PlaceId>) -> Self {
+    /// Create trigger for token created
+    pub fn on_token_created(id: impl Into<String>, place: Option<StateId>) -> Self {
         Self::new(id, EventType::TokenCreated { place })
     }
 
     /// Create trigger for token transition
     pub fn on_token_transitioned(
-        id: impl Into<String>, 
-        from: Option<PlaceId>, 
-        to: Option<PlaceId>,
-        transition: Option<TransitionId>
+        id: impl Into<String>,
+        from: Option<StateId>,
+        to: Option<StateId>,
+        transition: Option<ActivityId>,
     ) -> Self {
-        Self::new(id, EventType::TokenTransitioned { from, to, transition })
+        Self::new(
+            id,
+            EventType::TokenTransitioned {
+                from,
+                to,
+                transition,
+            },
+        )
     }
 
     /// Create trigger for token update
-    pub fn on_token_updated(id: impl Into<String>, place: Option<PlaceId>) -> Self {
+    pub fn on_token_updated(id: impl Into<String>, place: Option<StateId>) -> Self {
         Self::new(id, EventType::TokenUpdated { place })
     }
 
     /// Create trigger for function completion
-    pub fn on_function_completed(id: impl Into<String>, function_id: FunctionId, success: bool) -> Self {
-        Self::new(id, EventType::FunctionCompleted { function_id, success })
+    pub fn on_function_completed(
+        id: impl Into<String>,
+        function_id: FunctionId,
+        success: bool,
+    ) -> Self {
+        Self::new(
+            id,
+            EventType::FunctionCompleted {
+                function_id,
+                success,
+            },
+        )
     }
 
     /// Limit trigger to specific workflow
@@ -689,9 +754,9 @@ impl TriggerEvent {
     pub fn token_created(
         workflow_id: impl Into<String>,
         token_id: Uuid,
-        place: PlaceId,
+        place: StateId,
         data: serde_json::Value,
-        metadata: TokenMetadata,
+        metadata: ResourceMetadata,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -708,18 +773,18 @@ impl TriggerEvent {
     pub fn token_transitioned(
         workflow_id: impl Into<String>,
         token_id: Uuid,
-        from: PlaceId,
-        to: PlaceId,
-        transition: TransitionId,
+        from: StateId,
+        to: StateId,
+        transition: ActivityId,
         data: serde_json::Value,
-        metadata: TokenMetadata,
+        metadata: ResourceMetadata,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
-            event_type: EventType::TokenTransitioned { 
-                from: Some(from), 
-                to: Some(to), 
-                transition: Some(transition) 
+            event_type: EventType::TokenTransitioned {
+                from: Some(from),
+                to: Some(to),
+                transition: Some(transition),
             },
             workflow_id: workflow_id.into(),
             token_id: Some(token_id),
@@ -738,11 +803,14 @@ impl TriggerEvent {
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
-            event_type: EventType::FunctionCompleted { function_id, success },
+            event_type: EventType::FunctionCompleted {
+                function_id,
+                success,
+            },
             workflow_id: workflow_id.into(),
             token_id: None,
             data: output_data,
-            metadata: TokenMetadata::new(),
+            metadata: HashMap::new(),
             timestamp: Utc::now(),
         }
     }
@@ -809,4 +877,4 @@ impl ChainExecution {
         self.status = status;
         self.completed_at = Some(Utc::now());
     }
-} 
+}

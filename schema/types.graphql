@@ -1,0 +1,315 @@
+# Shared Types Schema
+# Defines common types, scalars, and root operation types used across all schemas
+
+# ============================================================================
+# ROOT OPERATION TYPES
+# ============================================================================
+
+"""Root query type"""
+type Query {
+  """Health check endpoint"""
+  health: String!
+}
+
+"""Root mutation type"""
+type Mutation {
+  """No-op mutation for schema validation"""
+  noop: Boolean
+}
+
+"""Root subscription type"""
+type Subscription {
+  """No-op subscription for schema validation"""
+  noop: String
+}
+
+# ============================================================================
+# SHARED SCALARS
+# ============================================================================
+
+"""JSON scalar type for arbitrary data"""
+scalar JSON
+
+"""Date-time scalar in ISO 8601 format"""
+scalar DateTime
+
+"""Upload scalar for file uploads"""
+scalar Upload
+
+# ============================================================================
+# SHARED TYPES
+# ============================================================================
+
+"""Standard API response wrapper"""
+type ApiResponse {
+  """Whether the operation was successful"""
+  success: Boolean!
+
+  """Human-readable message"""
+  message: String!
+
+  """Error code if operation failed"""
+  errorCode: String
+
+  """Additional response data"""
+  data: JSON
+}
+
+"""Pagination information"""
+type PageInfo {
+  """Whether there are more items after this page"""
+  hasNextPage: Boolean!
+
+  """Whether there are items before this page"""
+  hasPreviousPage: Boolean!
+
+  """Cursor for the first item in this page"""
+  startCursor: String
+
+  """Cursor for the last item in this page"""
+  endCursor: String
+
+  """Total number of items"""
+  totalCount: Int
+}
+
+"""Connection wrapper for paginated results"""
+interface Connection {
+  """Pagination information"""
+  pageInfo: PageInfo!
+
+  """Total number of items in the connection"""
+  totalCount: Int!
+}
+
+"""Generic edge type for connections"""
+interface Edge {
+  """Cursor for this edge"""
+  cursor: String!
+}
+
+# ============================================================================
+# SHARED INPUT TYPES
+# ============================================================================
+
+"""Pagination input parameters"""
+input PaginationInput {
+  """Number of items to return"""
+  first: Int
+
+  """Cursor to start after"""
+  after: String
+
+  """Number of items to return from the end"""
+  last: Int
+
+  """Cursor to start before"""
+  before: String
+}
+
+"""Sorting input parameters"""
+input SortInput {
+  """Field to sort by"""
+  field: String!
+
+  """Sort direction"""
+  direction: SortDirection!
+}
+
+"""Filter input for queries"""
+input FilterInput {
+  """Field to filter on"""
+  field: String!
+
+  """Filter operator"""
+  operator: FilterOperator!
+
+  """Value to filter by"""
+  value: JSON!
+}
+
+# ============================================================================
+# SHARED ENUMS
+# ============================================================================
+
+"""Sort direction enumeration"""
+enum SortDirection {
+  """Ascending order"""
+  ASC
+
+  """Descending order"""
+  DESC
+}
+
+"""Filter operator enumeration"""
+enum FilterOperator {
+  """Equal to"""
+  EQUALS
+
+  """Not equal to"""
+  NOT_EQUALS
+
+  """Contains substring"""
+  CONTAINS
+
+  """Does not contain substring"""
+  NOT_CONTAINS
+
+  """Starts with"""
+  STARTS_WITH
+
+  """Ends with"""
+  ENDS_WITH
+
+  """Greater than"""
+  GREATER_THAN
+
+  """Greater than or equal to"""
+  GREATER_THAN_OR_EQUAL
+
+  """Less than"""
+  LESS_THAN
+
+  """Less than or equal to"""
+  LESS_THAN_OR_EQUAL
+
+  """In array of values"""
+  IN
+
+  """Not in array of values"""
+  NOT_IN
+
+  """Is null"""
+  IS_NULL
+
+  """Is not null"""
+  IS_NOT_NULL
+}
+
+"""Generic status enumeration"""
+enum Status {
+  """Active status"""
+  ACTIVE
+
+  """Inactive status"""
+  INACTIVE
+
+  """Pending status"""
+  PENDING
+
+  """Disabled status"""
+  DISABLED
+
+  """Archived status"""
+  ARCHIVED
+}
+
+# ============================================================================
+# ERROR TYPES
+# ============================================================================
+
+"""Generic error type"""
+type Error {
+  """Error code"""
+  code: String!
+
+  """Human-readable error message"""
+  message: String!
+
+  """Field that caused the error"""
+  field: String
+
+  """Additional error details"""
+  details: JSON
+}
+
+"""Validation error type"""
+type ValidationError {
+  """Field that failed validation"""
+  field: String!
+
+  """Validation error message"""
+  message: String!
+
+  """Validation rule that was violated"""
+  rule: String
+
+  """Expected value or format"""
+  expected: JSON
+
+  """Actual value that was provided"""
+  actual: JSON
+}
+
+# ============================================================================
+# AUDIT TYPES
+# ============================================================================
+
+"""Audit trail information"""
+type AuditInfo {
+  """User who created the entity"""
+  createdBy: String
+
+  """Timestamp when entity was created"""
+  createdAt: DateTime!
+
+  """User who last updated the entity"""
+  updatedBy: String
+
+  """Timestamp when entity was last updated"""
+  updatedAt: DateTime!
+
+  """Version number for optimistic locking"""
+  version: Int!
+}
+
+"""Audit log entry"""
+type AuditLogEntry {
+  """Unique audit entry identifier"""
+  id: ID!
+
+  """Type of entity that was modified"""
+  entityType: String!
+
+  """ID of the entity that was modified"""
+  entityId: String!
+
+  """Action that was performed"""
+  action: AuditAction!
+
+  """User who performed the action"""
+  userId: String
+
+  """Timestamp of the action"""
+  timestamp: DateTime!
+
+  """Changes that were made"""
+  changes: JSON
+
+  """Additional context information"""
+  context: JSON
+}
+
+"""Audit action enumeration"""
+enum AuditAction {
+  """Entity was created"""
+  CREATE
+
+  """Entity was updated"""
+  UPDATE
+
+  """Entity was deleted"""
+  DELETE
+
+  """Entity was viewed/accessed"""
+  READ
+
+  """Entity was exported"""
+  EXPORT
+
+  """Entity was imported"""
+  IMPORT
+
+  """Custom action"""
+  CUSTOM
+}

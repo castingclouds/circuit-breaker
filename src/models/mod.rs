@@ -2,44 +2,44 @@
 // These are the generic, language-agnostic data structures
 
 //! # Domain Models Module
-//! 
+//!
 //! This module contains the core domain models for Circuit Breaker. These are
 //! **generic, language-agnostic** data structures that form the foundation of
 //! the workflow engine.
-//! 
+//!
 //! ## Rust Learning Notes:
-//! 
+//!
 //! ### Module Organization
 //! This `mod.rs` file serves as the **module root** for the `models` directory.
 //! When you have a directory with a `mod.rs` file, Rust treats the directory
 //! as a module, and `mod.rs` acts as the entry point.
-//! 
+//!
 //! ### Module Declarations
 //! Each `pub mod` declaration tells Rust to:
 //! 1. Look for a `.rs` file with that name in the same directory
 //! 2. Include that file's code as a submodule
 //! 3. Make it publicly accessible (because of `pub`)
-//! 
+//!
 //! ### Re-exports for Clean APIs
 //! The `pub use` statements at the bottom create a clean, flat API.
 //! Users can import `use circuit_breaker::models::Token` instead of
 //! `use circuit_breaker::models::token::Token`.
 
-// Declares the `place` submodule from `place.rs`
-// Contains PlaceId and TransitionId - the basic building blocks of Petri nets
-pub mod place;
+// Declares the `state` submodule from `state.rs`
+// Contains StateId and ActivityId - the basic building blocks of workflows
+pub mod state;
 
-// Declares the `transition` submodule from `transition.rs`  
-// Contains TransitionDefinition - defines how places connect
-pub mod transition;
+// Declares the `activity` submodule from `activity.rs`
+// Contains ActivityDefinition - defines how states connect
+pub mod activity;
 
 // Declares the `workflow` submodule from `workflow.rs`
 // Contains WorkflowDefinition - the complete workflow structure
 pub mod workflow;
 
-// Declares the `token` submodule from `token.rs`
-// Contains Token - represents workflow execution instances
-pub mod token;
+// Declares the `resource` submodule from `resource.rs`
+// Contains Resource - represents workflow execution instances
+pub mod resource;
 
 // Declares the `rule` submodule from `rule.rs`
 // Contains Rule and RuleCondition - the rules engine for token gating
@@ -56,24 +56,24 @@ pub mod agent;
 // Re-export main types for convenience
 // This creates shortcuts so users don't need to know the internal structure
 
-/// Re-export the fundamental Petri net building blocks
-/// PlaceId represents states, TransitionId represents actions
-pub use place::{PlaceId, TransitionId};
+/// Re-export the fundamental workflow building blocks
+/// StateId represents states, ActivityId represents actions
+pub use state::{ActivityId, StateId};
 
-/// Re-export transition definitions
-/// TransitionDefinition defines how tokens can move between places
-pub use transition::TransitionDefinition;
+/// Re-export activity definitions
+/// ActivityDefinition defines how resources can move between states
+pub use activity::ActivityDefinition;
 
-/// Re-export workflow definitions  
+/// Re-export workflow definitions
 /// WorkflowDefinition contains the complete workflow structure
 pub use workflow::WorkflowDefinition;
 
-/// Re-export token types
-/// - Token: The main workflow execution instance
+/// Re-export resource types
+/// - Resource: The main workflow execution instance
 /// - HistoryEvent: Records each state transition
-/// - TokenMetadata: Key-value metadata storage
-/// - TransitionRecord: NATS-specific transition tracking
-pub use token::{Token, HistoryEvent, TokenMetadata, TransitionRecord};
+/// - ResourceMetadata: Key-value metadata storage
+/// - ActivityRecord: NATS-specific activity tracking
+pub use resource::{ActivityRecord, HistoryEvent, Resource, ResourceMetadata};
 
 /// Re-export rules engine types
 /// - Rule: A single evaluatable condition
@@ -100,10 +100,10 @@ pub use rule::{Rule, RuleCondition, RuleEvaluationResult};
 /// - ChainExecution: Chain execution tracking
 /// - ChainStatus: Status of function execution chains
 pub use function::{
-    FunctionDefinition, FunctionId, EventTrigger, ContainerConfig, ContainerMount,
-    ResourceLimits, FunctionExecution, ExecutionStatus, TriggerEvent, EventType,
-    FunctionSchema, InputMapping, ChainCondition, FunctionChain, RetryConfig,
-    BackoffStrategy, RetryCondition, ChainExecution, ChainStatus
+    BackoffStrategy, ChainCondition, ChainExecution, ChainStatus, ContainerConfig, ContainerMount,
+    EventTrigger, EventType, ExecutionStatus, FunctionChain, FunctionDefinition, FunctionExecution,
+    FunctionId, FunctionSchema, InputMapping, ResourceLimits, RetryCondition, RetryConfig,
+    TriggerEvent,
 };
 
 /// Re-export agent types
@@ -112,9 +112,9 @@ pub use function::{
 /// - LLMProvider: AI provider configuration (OpenAI, Anthropic, etc.)
 /// - LLMConfig: LLM generation parameters
 /// - AgentPrompts: System and user prompt templates
-/// - AgentTransitionConfig: Agent execution in workflow transitions
-/// - PlaceAgentConfig: Agent execution for tokens in specific places
-/// - PlaceAgentSchedule: Scheduling configuration for place agents
+/// - AgentActivityConfig: Agent execution in workflow activities
+/// - StateAgentConfig: Agent execution for resources in specific states
+/// - StateAgentSchedule: Scheduling configuration for state agents
 /// - AgentRetryConfig: Retry configuration for agent failures
 /// - AgentExecution: Records of agent execution
 /// - AgentExecutionStatus: Status of agent executions
@@ -123,8 +123,7 @@ pub use function::{
 /// - ConversationMessage: Individual messages in conversations
 /// - MessageRole: Role of messages (system, user, assistant, tool)
 pub use agent::{
-    AgentId, AgentDefinition, LLMProvider, LLMConfig, AgentPrompts,
-    AgentTransitionConfig, PlaceAgentConfig, PlaceAgentSchedule, AgentRetryConfig,
-    AgentExecution, AgentExecutionStatus, AgentStreamEvent, Conversation,
-    ConversationMessage, MessageRole
+    AgentActivityConfig, AgentDefinition, AgentExecution, AgentExecutionStatus, AgentId,
+    AgentPrompts, AgentRetryConfig, AgentStreamEvent, Conversation, ConversationMessage, LLMConfig,
+    LLMProvider, MessageRole, StateAgentConfig, StateAgentSchedule,
 };

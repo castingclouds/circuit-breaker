@@ -1,0 +1,302 @@
+# LLM Provider Management Schema
+# Defines GraphQL operations for LLM providers, chat completions, and model management
+
+# ============================================================================
+# QUERIES
+# ============================================================================
+
+extend type Query {
+  """List all configured LLM providers"""
+  llmProviders: [LlmProviderGQL!]!
+
+  """Get LLM provider by ID"""
+  llmProvider(id: String!): LlmProviderGQL
+}
+
+# ============================================================================
+# MUTATIONS
+# ============================================================================
+
+extend type Mutation {
+  """Send LLM chat completion request"""
+  llmChatCompletion(input: LlmChatCompletionInput!): LlmResponseGQL!
+
+  """Configure LLM provider"""
+  configureLlmProvider(input: LlmProviderConfigInput!): LlmProviderGQL!
+}
+
+# ============================================================================
+# SUBSCRIPTIONS
+# ============================================================================
+
+extend type Subscription {
+  """Subscribe to LLM response stream for real-time streaming"""
+  llmStream(requestId: String!): String!
+}
+
+# ============================================================================
+# TYPES
+# ============================================================================
+
+"""LLM provider configuration and status"""
+type LlmProviderGQL {
+  """Unique provider identifier"""
+  id: ID!
+
+  """Type of provider (openai, anthropic, ollama, etc.)"""
+  providerType: String!
+
+  """Human-readable provider name"""
+  name: String!
+
+  """Base URL for the provider API"""
+  baseUrl: String!
+
+  """Available models for this provider"""
+  models: [LlmModelGQL!]!
+
+  """Provider health status"""
+  healthStatus: LlmProviderHealthGQL!
+
+  """Timestamp when provider was created"""
+  createdAt: String!
+
+  """Timestamp when provider was last updated"""
+  updatedAt: String!
+}
+
+"""LLM model configuration and capabilities"""
+type LlmModelGQL {
+  """Unique model identifier"""
+  id: String!
+
+  """Human-readable model name"""
+  name: String!
+
+  """Maximum tokens this model can generate"""
+  maxTokens: Int!
+
+  """Context window size for this model"""
+  contextWindow: Int!
+
+  """Cost per input token"""
+  costPerInputToken: Float!
+
+  """Cost per output token"""
+  costPerOutputToken: Float!
+
+  """Whether this model supports streaming"""
+  supportsStreaming: Boolean!
+
+  """Whether this model supports function calling"""
+  supportsFunctionCalling: Boolean!
+
+  """Model capabilities and features"""
+  capabilities: [String!]!
+}
+
+"""LLM provider health status"""
+type LlmProviderHealthGQL {
+  """Whether the provider is currently healthy"""
+  isHealthy: Boolean!
+
+  """Timestamp of last health check"""
+  lastCheck: String!
+
+  """Error rate percentage (0.0 to 1.0)"""
+  errorRate: Float!
+
+  """Average response latency in milliseconds"""
+  averageLatencyMs: Int!
+
+  """Number of consecutive failures"""
+  consecutiveFailures: Int!
+
+  """Last error message (if any)"""
+  lastError: String
+}
+
+"""LLM chat completion response"""
+type LlmResponseGQL {
+  """Unique response identifier"""
+  id: String!
+
+  """Model used for completion"""
+  model: String!
+
+  """Generated completion choices"""
+  choices: [LlmChoiceGQL!]!
+
+  """Token usage statistics"""
+  usage: TokenUsageGQL!
+
+  """Provider that handled the request"""
+  provider: String!
+
+  """Routing information for the request"""
+  routingInfo: RoutingInfoGQL!
+}
+
+"""Individual completion choice"""
+type LlmChoiceGQL {
+  """Choice index in the response"""
+  index: Int!
+
+  """Generated message"""
+  message: ChatMessageGQL!
+
+  """Reason why generation finished"""
+  finishReason: String
+}
+
+"""Chat message structure"""
+type ChatMessageGQL {
+  """Message role (system, user, assistant)"""
+  role: String!
+
+  """Message content"""
+  content: String!
+
+  """Optional message name"""
+  name: String
+}
+
+"""Token usage statistics"""
+type TokenUsageGQL {
+  """Number of tokens in the prompt"""
+  promptTokens: Int!
+
+  """Number of tokens in the completion"""
+  completionTokens: Int!
+
+  """Total tokens used"""
+  totalTokens: Int!
+
+  """Estimated cost for this request"""
+  estimatedCost: Float!
+}
+
+"""Request routing information"""
+type RoutingInfoGQL {
+  """Provider selected for the request"""
+  selectedProvider: String!
+
+  """Routing strategy used"""
+  routingStrategy: String!
+
+  """Request latency in milliseconds"""
+  latencyMs: Int!
+
+  """Number of retry attempts"""
+  retryCount: Int!
+
+  """Whether fallback provider was used"""
+  fallbackUsed: Boolean!
+}
+
+# ============================================================================
+# INPUT TYPES
+# ============================================================================
+
+"""Input for LLM chat completion request"""
+input LlmChatCompletionInput {
+  """Model to use for completion"""
+  model: String!
+
+  """Array of chat messages"""
+  messages: [ChatMessageInput!]!
+
+  """Sampling temperature (0.0 to 2.0)"""
+  temperature: Float
+
+  """Maximum tokens to generate"""
+  maxTokens: Int
+
+  """Top-p nucleus sampling parameter"""
+  topP: Float
+
+  """Frequency penalty (-2.0 to 2.0)"""
+  frequencyPenalty: Float
+
+  """Presence penalty (-2.0 to 2.0)"""
+  presencePenalty: Float
+
+  """Stop sequences"""
+  stop: [String!]
+
+  """Whether to stream the response"""
+  stream: Boolean
+
+  """User identifier for tracking"""
+  user: String
+
+  """Project identifier for billing"""
+  projectId: String
+}
+
+"""Input for chat message"""
+input ChatMessageInput {
+  """Message role (system, user, assistant)"""
+  role: String!
+
+  """Message content"""
+  content: String!
+
+  """Optional message name"""
+  name: String
+}
+
+"""Input for configuring LLM provider"""
+input LlmProviderConfigInput {
+  """Type of provider (openai, anthropic, ollama, etc.)"""
+  providerType: String!
+
+  """Human-readable provider name"""
+  name: String!
+
+  """Base URL for the provider API"""
+  baseUrl: String!
+
+  """API key identifier for authentication"""
+  apiKeyId: String!
+
+  """Available models for this provider"""
+  models: [LlmModelInput!]!
+}
+
+"""Input for LLM model configuration"""
+input LlmModelInput {
+  """Unique model identifier"""
+  id: String!
+
+  """Human-readable model name"""
+  name: String!
+
+  """Maximum tokens this model can generate"""
+  maxTokens: Int!
+
+  """Context window size for this model"""
+  contextWindow: Int!
+
+  """Cost per input token"""
+  costPerInputToken: Float!
+
+  """Cost per output token"""
+  costPerOutputToken: Float!
+
+  """Whether this model supports streaming"""
+  supportsStreaming: Boolean!
+
+  """Whether this model supports function calling"""
+  supportsFunctionCalling: Boolean!
+
+  """Model capabilities and features"""
+  capabilities: [String!]!
+}
+
+# ============================================================================
+# SCALARS
+# ============================================================================
+
+"""JSON scalar type for arbitrary data"""
+scalar JSON

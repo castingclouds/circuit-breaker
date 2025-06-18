@@ -1,0 +1,50 @@
+# Analytics & Budget Management GraphQL Operations
+# These are the actual operations that can be executed against the analytics schema
+# Import the schema: ../analytics.graphql
+
+# Get budget status for user or project
+query GetBudgetStatus($userId: String, $projectId: String) {
+    budgetStatus(userId: $userId, projectId: $projectId) {
+        budgetId
+        limit
+        used
+        percentageUsed
+        isExhausted
+        isWarning
+        remaining
+        message
+    }
+}
+
+# Get cost analytics for a time period
+query GetCostAnalytics($input: CostAnalyticsInput!) {
+    costAnalytics(input: $input) {
+        totalCost
+        totalTokens
+        averageCostPerToken
+        providerBreakdown
+        modelBreakdown
+        dailyCosts
+        periodStart
+        periodEnd
+    }
+}
+
+# Set budget limits
+mutation SetBudget($input: BudgetInput!) {
+    setBudget(input: $input) {
+        budgetId
+        limit
+        used
+        percentageUsed
+        isExhausted
+        isWarning
+        remaining
+        message
+    }
+}
+
+# Subscribe to cost updates for real-time budget monitoring
+subscription CostUpdates($userId: String) {
+    costUpdates(userId: $userId)
+}
