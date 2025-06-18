@@ -1,0 +1,477 @@
+# Real-time Subscriptions Schema
+# Defines GraphQL subscription operations for real-time event streaming
+
+# ============================================================================
+# SUBSCRIPTIONS
+# ============================================================================
+
+extend type Subscription {
+  """Subscribe to resource state changes"""
+  resourceUpdates(resourceId: String!): ResourceGQL!
+
+  """Subscribe to workflow events"""
+  workflowEvents(workflowId: String!): WorkflowEventGQL!
+
+  """Subscribe to agent execution stream events"""
+  agentExecutionStream(executionId: String!): AgentExecutionEventGQL!
+
+  """Subscribe to LLM response stream for real-time streaming"""
+  llmStream(requestId: String!): LlmStreamEventGQL!
+
+  """Subscribe to cost updates for real-time budget monitoring"""
+  costUpdates(userId: String): CostUpdateEventGQL!
+
+  """Subscribe to NATS resource events with enhanced metadata"""
+  natsResourceStream(workflowId: String!, stateId: String): NatsResourceEventGQL!
+
+  """Subscribe to rule evaluation events"""
+  ruleEvaluationStream(ruleId: String): RuleEvaluationEventGQL!
+
+  """Subscribe to system health events"""
+  systemHealthStream: SystemHealthEventGQL!
+}
+
+# ============================================================================
+# SUBSCRIPTION EVENT TYPES
+# ============================================================================
+
+"""Workflow event for real-time updates"""
+type WorkflowEventGQL {
+  """Type of workflow event"""
+  eventType: WorkflowEventType!
+
+  """ID of the workflow"""
+  workflowId: String!
+
+  """ID of the resource (if applicable)"""
+  resourceId: String
+
+  """Event timestamp"""
+  timestamp: String!
+
+  """Event data payload"""
+  data: JSON!
+
+  """User or system that triggered the event"""
+  triggeredBy: String
+
+  """NATS sequence number"""
+  natsSequence: String
+}
+
+"""Agent execution stream event"""
+type AgentExecutionEventGQL {
+  """Type of execution event"""
+  eventType: AgentExecutionEventType!
+
+  """Execution ID"""
+  executionId: String!
+
+  """Agent ID"""
+  agentId: String!
+
+  """Resource ID being processed"""
+  resourceId: String!
+
+  """Current execution status"""
+  status: AgentExecutionStatusGQL!
+
+  """Event timestamp"""
+  timestamp: String!
+
+  """Event data (logs, progress, results)"""
+  data: JSON
+
+  """Error information (if applicable)"""
+  error: String
+}
+
+"""LLM streaming response event"""
+type LlmStreamEventGQL {
+  """Type of stream event"""
+  eventType: LlmStreamEventType!
+
+  """Request ID"""
+  requestId: String!
+
+  """Content delta (for streaming responses)"""
+  delta: String
+
+  """Token information"""
+  token: String
+
+  """Whether this is the final event"""
+  isComplete: Boolean!
+
+  """Event timestamp"""
+  timestamp: String!
+
+  """Token usage (for complete events)"""
+  usage: TokenUsageGQL
+
+  """Error information (if applicable)"""
+  error: String
+}
+
+"""Cost update event for budget monitoring"""
+type CostUpdateEventGQL {
+  """Type of cost event"""
+  eventType: CostEventType!
+
+  """User ID"""
+  userId: String
+
+  """Project ID"""
+  projectId: String
+
+  """Cost delta (positive for charges, negative for credits)"""
+  costDelta: Float!
+
+  """New total cost"""
+  totalCost: Float!
+
+  """Budget information"""
+  budget: BudgetStatusGQL
+
+  """Event timestamp"""
+  timestamp: String!
+
+  """Provider that generated the cost"""
+  provider: String
+
+  """Model used"""
+  model: String
+
+  """Token usage information"""
+  tokenUsage: TokenUsageGQL
+}
+
+"""NATS resource event with enhanced metadata"""
+type NatsResourceEventGQL {
+  """Type of resource event"""
+  eventType: ResourceEventType!
+
+  """Resource information"""
+  resource: NatsResourceGQL!
+
+  """NATS subject"""
+  subject: String!
+
+  """NATS sequence number"""
+  sequence: String!
+
+  """Event timestamp"""
+  timestamp: String!
+
+  """Activity that caused the event (if applicable)"""
+  activity: String
+
+  """Previous state (for transition events)"""
+  previousState: String
+
+  """Additional event metadata"""
+  metadata: JSON
+}
+
+"""Rule evaluation stream event"""
+type RuleEvaluationEventGQL {
+  """Type of evaluation event"""
+  eventType: RuleEvaluationEventType!
+
+  """Rule ID"""
+  ruleId: String!
+
+  """Evaluation result"""
+  result: RuleEvaluationResultGQL!
+
+  """Event timestamp"""
+  timestamp: String!
+
+  """Input data that triggered the evaluation"""
+  inputData: JSON!
+
+  """Evaluation context"""
+  context: JSON
+}
+
+"""System health event"""
+type SystemHealthEventGQL {
+  """Type of health event"""
+  eventType: SystemHealthEventType!
+
+  """Component that generated the event"""
+  component: String!
+
+  """Health status"""
+  status: HealthStatus!
+
+  """Event timestamp"""
+  timestamp: String!
+
+  """Health metrics"""
+  metrics: JSON
+
+  """Error information (if unhealthy)"""
+  error: String
+
+  """Recovery actions taken"""
+  recoveryActions: [String!]
+}
+
+# ============================================================================
+# SUBSCRIPTION ENUMS
+# ============================================================================
+
+"""Types of workflow events"""
+enum WorkflowEventType {
+  """Resource was created"""
+  RESOURCE_CREATED
+
+  """Resource state changed"""
+  RESOURCE_STATE_CHANGED
+
+  """Activity was executed"""
+  ACTIVITY_EXECUTED
+
+  """Workflow was updated"""
+  WORKFLOW_UPDATED
+
+  """Agent was triggered"""
+  AGENT_TRIGGERED
+}
+
+"""Types of agent execution events"""
+enum AgentExecutionEventType {
+  """Execution started"""
+  STARTED
+
+  """Execution progress update"""
+  PROGRESS
+
+  """Execution completed successfully"""
+  COMPLETED
+
+  """Execution failed"""
+  FAILED
+
+  """Execution was cancelled"""
+  CANCELLED
+
+  """Log message from execution"""
+  LOG
+
+  """Retry attempt"""
+  RETRY
+}
+
+"""Types of LLM stream events"""
+enum LlmStreamEventType {
+  """Stream started"""
+  STREAM_START
+
+  """Content delta received"""
+  CONTENT_DELTA
+
+  """Stream completed"""
+  STREAM_END
+
+  """Stream error occurred"""
+  STREAM_ERROR
+
+  """Token received"""
+  TOKEN
+
+  """Function call received"""
+  FUNCTION_CALL
+}
+
+"""Types of cost events"""
+enum CostEventType {
+  """Cost was incurred"""
+  COST_INCURRED
+
+  """Budget threshold reached"""
+  BUDGET_WARNING
+
+  """Budget exhausted"""
+  BUDGET_EXHAUSTED
+
+  """Budget reset"""
+  BUDGET_RESET
+
+  """Credit applied"""
+  CREDIT_APPLIED
+}
+
+"""Types of resource events"""
+enum ResourceEventType {
+  """Resource was created"""
+  CREATED
+
+  """Resource state transitioned"""
+  STATE_CHANGED
+
+  """Resource data updated"""
+  DATA_UPDATED
+
+  """Resource metadata updated"""
+  METADATA_UPDATED
+
+  """Resource was deleted"""
+  DELETED
+}
+
+"""Types of rule evaluation events"""
+enum RuleEvaluationEventType {
+  """Rule evaluation started"""
+  EVALUATION_STARTED
+
+  """Rule evaluation completed"""
+  EVALUATION_COMPLETED
+
+  """Rule evaluation failed"""
+  EVALUATION_FAILED
+
+  """Rule condition matched"""
+  CONDITION_MATCHED
+
+  """Rule condition not matched"""
+  CONDITION_NOT_MATCHED
+}
+
+"""Types of system health events"""
+enum SystemHealthEventType {
+  """Component became healthy"""
+  HEALTHY
+
+  """Component became unhealthy"""
+  UNHEALTHY
+
+  """Component is degraded"""
+  DEGRADED
+
+  """Component is recovering"""
+  RECOVERING
+
+  """Maintenance mode started"""
+  MAINTENANCE_START
+
+  """Maintenance mode ended"""
+  MAINTENANCE_END
+}
+
+"""Health status enumeration"""
+enum HealthStatus {
+  """Component is healthy"""
+  HEALTHY
+
+  """Component is unhealthy"""
+  UNHEALTHY
+
+  """Component is degraded but functional"""
+  DEGRADED
+
+  """Component is recovering"""
+  RECOVERING
+
+  """Component is in maintenance mode"""
+  MAINTENANCE
+}
+
+# ============================================================================
+# SHARED TYPES (referenced from other schemas)
+# ============================================================================
+
+"""Resource with current state and history"""
+type ResourceGQL {
+  id: ID!
+  workflowId: String!
+  state: String!
+  data: JSON!
+  metadata: JSON!
+  createdAt: String!
+  updatedAt: String!
+  history: [HistoryEventGQL!]!
+}
+
+"""Resource with NATS-specific metadata"""
+type NatsResourceGQL {
+  id: ID!
+  workflowId: String!
+  state: String!
+  data: JSON!
+  metadata: JSON!
+  createdAt: String!
+  updatedAt: String!
+  history: [HistoryEventGQL!]!
+  natsSequence: String
+  natsTimestamp: String
+  natsSubject: String
+  activityHistory: [ActivityRecordGQL!]!
+}
+
+"""Historical state transition event"""
+type HistoryEventGQL {
+  timestamp: String!
+  activity: String!
+  fromState: String!
+  toState: String!
+  data: JSON
+}
+
+"""Activity execution record"""
+type ActivityRecordGQL {
+  fromState: String!
+  toState: String!
+  activityId: String!
+  timestamp: String!
+  triggeredBy: String
+  natsSequence: String
+  metadata: JSON
+}
+
+"""Agent execution status"""
+enum AgentExecutionStatusGQL {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  TIMEOUT
+  CANCELLED
+}
+
+"""Token usage statistics"""
+type TokenUsageGQL {
+  promptTokens: Int!
+  completionTokens: Int!
+  totalTokens: Int!
+  estimatedCost: Float!
+}
+
+"""Budget status and limits"""
+type BudgetStatusGQL {
+  budgetId: String!
+  limit: Float!
+  used: Float!
+  percentageUsed: Float!
+  isExhausted: Boolean!
+  isWarning: Boolean!
+  remaining: Float!
+  message: String!
+}
+
+"""Rule evaluation result"""
+type RuleEvaluationResultGQL {
+  ruleId: String!
+  passed: Boolean!
+  reason: String!
+  details: JSON
+  subResults: [RuleEvaluationResultGQL!]!
+}
+
+# ============================================================================
+# SCALARS
+# ============================================================================
+
+"""JSON scalar type for arbitrary data"""
+scalar JSON

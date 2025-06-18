@@ -1,0 +1,134 @@
+# Analytics & Budget Management Schema
+# Defines GraphQL operations for cost tracking, budget management, and analytics
+
+# ============================================================================
+# QUERIES
+# ============================================================================
+
+extend type Query {
+  """Get budget status for user or project"""
+  budgetStatus(userId: String, projectId: String): BudgetStatusGQL!
+
+  """Get cost analytics for a time period"""
+  costAnalytics(input: CostAnalyticsInput!): CostAnalyticsGQL!
+}
+
+# ============================================================================
+# MUTATIONS
+# ============================================================================
+
+extend type Mutation {
+  """Set budget limits"""
+  setBudget(input: BudgetInput!): BudgetStatusGQL!
+}
+
+# ============================================================================
+# SUBSCRIPTIONS
+# ============================================================================
+
+extend type Subscription {
+  """Subscribe to cost updates for real-time budget monitoring"""
+  costUpdates(userId: String): String!
+}
+
+# ============================================================================
+# TYPES
+# ============================================================================
+
+"""Budget status and limits"""
+type BudgetStatusGQL {
+  """Unique budget identifier"""
+  budgetId: String!
+
+  """Budget limit amount"""
+  limit: Float!
+
+  """Amount already used"""
+  used: Float!
+
+  """Percentage of budget used (0.0 to 100.0)"""
+  percentageUsed: Float!
+
+  """Whether budget is exhausted"""
+  isExhausted: Boolean!
+
+  """Whether budget is in warning state"""
+  isWarning: Boolean!
+
+  """Remaining budget amount"""
+  remaining: Float!
+
+  """Status message"""
+  message: String!
+}
+
+"""Cost analytics data"""
+type CostAnalyticsGQL {
+  """Total cost for the period"""
+  totalCost: Float!
+
+  """Total tokens used"""
+  totalTokens: Int!
+
+  """Average cost per token"""
+  averageCostPerToken: Float!
+
+  """Cost breakdown by provider"""
+  providerBreakdown: JSON!
+
+  """Cost breakdown by model"""
+  modelBreakdown: JSON!
+
+  """Daily costs over the period"""
+  dailyCosts: JSON!
+
+  """Start of the analytics period"""
+  periodStart: String!
+
+  """End of the analytics period"""
+  periodEnd: String!
+}
+
+# ============================================================================
+# INPUT TYPES
+# ============================================================================
+
+"""Input for setting budget limits"""
+input BudgetInput {
+  """User ID for user-specific budget"""
+  userId: String
+
+  """Project ID for project-specific budget"""
+  projectId: String
+
+  """Budget limit amount"""
+  limit: Float!
+
+  """Budget period (daily, weekly, monthly)"""
+  period: String!
+
+  """Warning threshold (0.0 to 1.0)"""
+  warningThreshold: Float!
+}
+
+"""Input for cost analytics query"""
+input CostAnalyticsInput {
+  """User ID to filter analytics"""
+  userId: String
+
+  """Project ID to filter analytics"""
+  projectId: String
+
+  """Start date for analytics (ISO 8601)"""
+  startDate: String!
+
+  """End date for analytics (ISO 8601)"""
+  endDate: String!
+}
+
+# ============================================================================
+# SCALARS
+# ============================================================================
+
+"""JSON scalar type for arbitrary data"""
+scalar JSON

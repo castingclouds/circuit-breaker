@@ -1,0 +1,248 @@
+# Workflow GraphQL Operations
+# These are the actual operations that can be executed against the workflow schema
+# Import the schema: ../workflow.graphql
+
+# Get a specific workflow with all details
+query GetWorkflow($workflowId: String!) {
+    workflow(id: $workflowId) {
+        id
+        name
+        states {
+            id
+            name
+            stateType
+            isInitial
+            isTerminal
+            config {
+                timeoutSeconds
+                autoTransition {
+                    enabled
+                    delaySeconds
+                    targetState
+                    conditions
+                }
+                notifications {
+                    enabled
+                    channels
+                }
+            }
+            allowedTransitions
+        }
+        activities {
+            id
+            name
+            fromStates
+            toState
+            conditions
+            description
+        }
+        initialState {
+            id
+            name
+            stateType
+        }
+        createdAt
+        updatedAt
+    }
+}
+
+# List all workflows
+query ListWorkflows {
+    workflows {
+        id
+        name
+        states {
+            id
+            name
+            stateType
+            isInitial
+            isTerminal
+        }
+        initialState {
+            id
+            name
+        }
+        createdAt
+    }
+}
+
+# Get a specific resource with state information
+query GetResource($resourceId: String!) {
+    resource(id: $resourceId) {
+        id
+        workflowId
+        state
+        stateDefinition {
+            id
+            name
+            stateType
+            isTerminal
+        }
+        data
+        metadata
+        history {
+            timestamp
+            activity
+            fromState
+            toState
+            data
+        }
+        createdAt
+        updatedAt
+    }
+}
+
+# Get available activities for a resource
+query GetAvailableActivities($resourceId: String!) {
+    availableActivities(resourceId: $resourceId) {
+        id
+        name
+        fromStates
+        toState
+        conditions
+        description
+    }
+}
+
+# Get specific state definition
+query GetState($workflowId: String!, $stateId: String!) {
+    state(workflowId: $workflowId, stateId: $stateId) {
+        id
+        name
+        description
+        stateType
+        isInitial
+        isTerminal
+        config {
+            timeoutSeconds
+            autoTransition {
+                enabled
+                delaySeconds
+                targetState
+                conditions
+            }
+            notifications {
+                enabled
+                channels
+                templates
+            }
+            metadata
+        }
+        allowedTransitions
+        availableActivities {
+            id
+            name
+        }
+        createdAt
+        updatedAt
+    }
+}
+
+# List all states for a workflow
+query ListWorkflowStates($workflowId: String!) {
+    workflowStates(workflowId: $workflowId) {
+        id
+        name
+        stateType
+        isInitial
+        isTerminal
+        allowedTransitions
+        config {
+            timeoutSeconds
+        }
+    }
+}
+
+# Create a new workflow
+mutation CreateWorkflow($input: WorkflowDefinitionInput!) {
+    createWorkflow(input: $input) {
+        id
+        name
+        states {
+            id
+            name
+            stateType
+            isInitial
+            isTerminal
+        }
+        activities {
+            id
+            name
+            fromStates
+            toState
+            conditions
+            description
+        }
+        initialState {
+            id
+            name
+            stateType
+        }
+        createdAt
+        updatedAt
+    }
+}
+
+# Create a new resource in a workflow
+mutation CreateResource($input: ResourceCreateInput!) {
+    createResource(input: $input) {
+        id
+        workflowId
+        state
+        stateDefinition {
+            id
+            name
+            stateType
+        }
+        data
+        metadata
+        createdAt
+        updatedAt
+    }
+}
+
+# Execute an activity to transition a resource
+mutation ExecuteActivity($input: ActivityExecuteInput!) {
+    executeActivity(input: $input) {
+        id
+        state
+        stateDefinition {
+            name
+            stateType
+        }
+        data
+        history {
+            timestamp
+            activity
+            fromState
+            toState
+            data
+        }
+        updatedAt
+    }
+}
+
+# Subscribe to resource state changes
+subscription ResourceUpdates($resourceId: String!) {
+    resourceUpdates(resourceId: $resourceId) {
+        id
+        state
+        stateDefinition {
+            name
+            stateType
+        }
+        data
+        history {
+            timestamp
+            activity
+            fromState
+            toState
+        }
+        updatedAt
+    }
+}
+
+# Subscribe to workflow events
+subscription WorkflowEvents($workflowId: String!) {
+    workflowEvents(workflowId: $workflowId)
+}

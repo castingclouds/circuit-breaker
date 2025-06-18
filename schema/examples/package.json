@@ -1,0 +1,55 @@
+{
+  "name": "circuit-breaker-graphql-examples",
+  "version": "1.0.0",
+  "description": "GraphQL API examples for Circuit Breaker LLM Router",
+  "main": "index.js",
+  "scripts": {
+    "workflow": "node workflow-examples.js",
+    "agents": "node agents-examples.js",
+    "llm": "node llm-examples.js",
+    "analytics": "node analytics-examples.js",
+    "rules": "node rules-examples.js",
+    "nats": "node nats-examples.js",
+    "all": "npm run workflow && npm run agents && npm run llm && npm run analytics && npm run rules && npm run nats",
+    "install-deps": "npm install",
+    "test": "node --check *.js",
+    "validate": "npm run test && echo 'All examples validated successfully'",
+    "demo": "npm run workflow && echo '\n--- Workflow Demo Complete ---' && npm run agents && echo '\n--- Agents Demo Complete ---' && npm run llm && echo '\n--- LLM Demo Complete ---'",
+    "quick-test": "npm run workflow && npm run analytics"
+  },
+  "dependencies": {
+    "graphql": "^16.8.1",
+    "graphql-request": "^6.1.0",
+    "graphql-ws": "^5.14.2",
+    "@graphql-tools/load": "^8.0.2",
+    "@graphql-tools/graphql-file-loader": "^8.0.1",
+    "@graphql-tools/schema": "^10.0.0",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.0",
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "graphql",
+    "circuit-breaker",
+    "llm",
+    "router",
+    "examples",
+    "api"
+  ],
+  "author": "Circuit Breaker Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-org/circuit-breaker.git",
+    "directory": "schema/examples"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/circuit-breaker/issues"
+  },
+  "homepage": "https://github.com/your-org/circuit-breaker#readme"
+}

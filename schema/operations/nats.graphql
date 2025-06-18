@@ -1,0 +1,155 @@
+# NATS-Enhanced Operations GraphQL Operations
+# These are the actual operations that can be executed against the NATS schema
+# Import the schema: ../nats.graphql
+
+# Get resource with NATS metadata by ID
+query GetNatsResource($id: String!) {
+    natsResource(id: $id) {
+        id
+        workflowId
+        state
+        data
+        metadata
+        createdAt
+        updatedAt
+        history {
+            timestamp
+            activity
+            fromState
+            toState
+            data
+        }
+        natsSequence
+        natsTimestamp
+        natsSubject
+        activityHistory {
+            fromState
+            toState
+            activityId
+            timestamp
+            triggeredBy
+            natsSequence
+            metadata
+        }
+    }
+}
+
+# Get resources currently in a specific state (NATS-specific)
+query GetResourcesInState($workflowId: String!, $stateId: String!) {
+    resourcesInState(workflowId: $workflowId, stateId: $stateId) {
+        id
+        workflowId
+        state
+        data
+        metadata
+        createdAt
+        updatedAt
+        natsSequence
+        natsTimestamp
+        natsSubject
+        activityHistory {
+            fromState
+            toState
+            activityId
+            timestamp
+            triggeredBy
+            natsSequence
+        }
+    }
+}
+
+# Find resource by ID with workflow context (more efficient for NATS)
+query FindResource($workflowId: String!, $resourceId: String!) {
+    findResource(workflowId: $workflowId, resourceId: $resourceId) {
+        id
+        workflowId
+        state
+        data
+        metadata
+        createdAt
+        updatedAt
+        history {
+            timestamp
+            activity
+            fromState
+            toState
+            data
+        }
+        natsSequence
+        natsTimestamp
+        natsSubject
+        activityHistory {
+            fromState
+            toState
+            activityId
+            timestamp
+            triggeredBy
+            natsSequence
+            metadata
+        }
+    }
+}
+
+# Create a workflow instance with NATS event tracking
+mutation CreateWorkflowInstance($input: CreateWorkflowInstanceInput!) {
+    createWorkflowInstance(input: $input) {
+        id
+        workflowId
+        state
+        data
+        metadata
+        createdAt
+        updatedAt
+        history {
+            timestamp
+            activity
+            fromState
+            toState
+            data
+        }
+        natsSequence
+        natsTimestamp
+        natsSubject
+        activityHistory {
+            fromState
+            toState
+            activityId
+            timestamp
+            triggeredBy
+            natsSequence
+            metadata
+        }
+    }
+}
+
+# Execute activity with NATS event publishing
+mutation ExecuteActivityWithNats($input: ExecuteActivityWithNatsInput!) {
+    executeActivityWithNats(input: $input) {
+        id
+        workflowId
+        state
+        data
+        metadata
+        createdAt
+        updatedAt
+        history {
+            timestamp
+            activity
+            fromState
+            toState
+            data
+        }
+        natsSequence
+        natsTimestamp
+        natsSubject
+        activityHistory {
+            fromState
+            toState
+            activityId
+            timestamp
+            triggeredBy
+            natsSequence
+            metadata
+        }
+    }
+}
