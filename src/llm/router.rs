@@ -3,15 +3,14 @@
 //! This module implements a router that uses the new modular provider architecture
 //! with support for multiple providers and proper API key management.
 
-use super::traits::LLMProviderClient;
 use super::providers;
+use super::traits::LLMProviderClient;
 use super::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
-use tracing::{warn, info, debug, error};
-
+use tracing::{debug, error, info, warn};
 
 /// Provider health status tracking
 #[derive(Debug, Clone)]
@@ -87,7 +86,7 @@ impl LLMRouter {
     /// Create a new LLM router with provided API keys
     pub async fn new_with_keys(
         openai_key: Option<String>,
-        anthropic_key: Option<String>, 
+        anthropic_key: Option<String>,
         google_key: Option<String>,
         ollama_base_url: Option<String>,
     ) -> Result<Self, LLMError> {
@@ -99,7 +98,10 @@ impl LLMRouter {
         // Initialize OpenAI provider if key is available
         if let Some(key) = openai_key.or_else(|| std::env::var("OPENAI_API_KEY").ok()) {
             let client = providers::openai::create_client(key.clone(), None);
-            providers.insert(LLMProviderType::OpenAI, Box::new(client) as Box<dyn LLMProviderClient>);
+            providers.insert(
+                LLMProviderType::OpenAI,
+                Box::new(client) as Box<dyn LLMProviderClient>,
+            );
             health_status.insert(LLMProviderType::OpenAI, ProviderHealthStatus::default());
             configured_api_keys.insert(LLMProviderType::OpenAI, key);
             info!("✅ OpenAI provider initialized");
@@ -108,7 +110,10 @@ impl LLMRouter {
         // Initialize Anthropic provider if key is available
         if let Some(key) = anthropic_key.or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()) {
             let client = providers::anthropic::create_client(key.clone(), None);
-            providers.insert(LLMProviderType::Anthropic, Box::new(client) as Box<dyn LLMProviderClient>);
+            providers.insert(
+                LLMProviderType::Anthropic,
+                Box::new(client) as Box<dyn LLMProviderClient>,
+            );
             health_status.insert(LLMProviderType::Anthropic, ProviderHealthStatus::default());
             configured_api_keys.insert(LLMProviderType::Anthropic, key);
             info!("✅ Anthropic provider initialized");
@@ -117,39 +122,51 @@ impl LLMRouter {
         // Initialize Google provider if key is available
         if let Some(key) = google_key.or_else(|| std::env::var("GOOGLE_API_KEY").ok()) {
             let client = providers::google::create_client(key.clone(), None);
-            providers.insert(LLMProviderType::Google, Box::new(client) as Box<dyn LLMProviderClient>);
+            providers.insert(
+                LLMProviderType::Google,
+                Box::new(client) as Box<dyn LLMProviderClient>,
+            );
             health_status.insert(LLMProviderType::Google, ProviderHealthStatus::default());
             configured_api_keys.insert(LLMProviderType::Google, key);
             info!("✅ Google provider initialized");
         }
 
         // Initialize Ollama provider if base URL is available
-        let ollama_url = ollama_base_url.or_else(|| std::env::var("OLLAMA_BASE_URL").ok()).unwrap_or_else(|| "http://localhost:11434".to_string());
-        
+        let ollama_url = ollama_base_url
+            .or_else(|| std::env::var("OLLAMA_BASE_URL").ok())
+            .unwrap_or_else(|| "http://localhost:11434".to_string());
+
         // Check if Ollama is available by trying to connect
         if providers::ollama::check_availability(&ollama_url).await {
             let client = providers::ollama::create_client(ollama_url.clone());
-            providers.insert(LLMProviderType::Ollama, Box::new(client) as Box<dyn LLMProviderClient>);
+            providers.insert(
+                LLMProviderType::Ollama,
+                Box::new(client) as Box<dyn LLMProviderClient>,
+            );
             health_status.insert(LLMProviderType::Ollama, ProviderHealthStatus::default());
             configured_api_keys.insert(LLMProviderType::Ollama, ollama_url);
             info!("✅ Ollama provider initialized");
         } else {
-            warn!("⚠️  Ollama not available at {} - skipping initialization", ollama_url);
+            warn!(
+                "⚠️  Ollama not available at {} - skipping initialization",
+                ollama_url
+            );
         }
 
         // Initialize vLLM provider if base URL is available
-        let vllm_url = std::env::var("VLLM_BASE_URL").ok().unwrap_or_else(|| "http://localhost:8000".to_string());
-        
-        // Check if vLLM is available by trying to connect
-        if providers::vllm::check_availability(&vllm_url).await {
-            let client = providers::vllm::create_client(vllm_url.clone());
-            providers.insert(LLMProviderType::VLLM, Box::new(client) as Box<dyn LLMProviderClient>);
-            health_status.insert(LLMProviderType::VLLM, ProviderHealthStatus::default());
-            configured_api_keys.insert(LLMProviderType::VLLM, vllm_url);
-            info!("✅ vLLM provider initialized");
-        } else {
-            warn!("⚠️  vLLM not available at {} - skipping initialization", vllm_url);
-        }
+        // COMMENTED OUT: to avoid startup delays when vLLM server is not running
+        // let vllm_url = std::env::var("VLLM_BASE_URL").ok().unwrap_or_else(|| "http://localhost:8000".to_string());
+        //
+        // // Check if vLLM is available by trying to connect
+        // if providers::vllm::check_availability(&vllm_url).await {
+        //     let client = providers::vllm::create_client(vllm_url.clone());
+        //     providers.insert(LLMProviderType::VLLM, Box::new(client) as Box<dyn LLMProviderClient>);
+        //     health_status.insert(LLMProviderType::VLLM, ProviderHealthStatus::default());
+        //     configured_api_keys.insert(LLMProviderType::VLLM, vllm_url);
+        //     info!("✅ vLLM provider initialized");
+        // } else {
+        //     warn!("⚠️  vLLM not available at {} - skipping initialization", vllm_url);
+        // }
 
         if providers.is_empty() {
             warn!("No providers configured with valid API keys - router will have limited functionality");
@@ -168,11 +185,15 @@ impl LLMRouter {
         // Resolve virtual model to actual model
         let resolved_model = self.resolve_virtual_model(&request.model);
         let provider_type = self.determine_provider_for_model(&resolved_model);
-        
-        debug!("Router: Model '{}' -> Resolved '{}' -> Provider '{}'", request.model, resolved_model, provider_type);
-        
-        let provider_client = self.providers.get(&provider_type)
-            .ok_or_else(|| LLMError::Internal(format!("Provider {} not available", provider_type)))?;
+
+        debug!(
+            "Router: Model '{}' -> Resolved '{}' -> Provider '{}'",
+            request.model, resolved_model, provider_type
+        );
+
+        let provider_client = self.providers.get(&provider_type).ok_or_else(|| {
+            LLMError::Internal(format!("Provider {} not available", provider_type))
+        })?;
 
         let api_key = self.get_api_key(&provider_type).await?;
 
@@ -184,13 +205,16 @@ impl LLMRouter {
         let mut retry_count = 0;
 
         while retry_count <= max_retries {
-            match provider_client.chat_completion(&resolved_request, &api_key).await {
+            match provider_client
+                .chat_completion(&resolved_request, &api_key)
+                .await
+            {
                 Ok(mut response) => {
                     // Update routing info
                     response.routing_info.latency_ms = 0; // TODO: Measure actual latency
                     response.routing_info.retry_count = retry_count;
                     response.routing_info.selected_provider = provider_type.clone();
-                    response.routing_info.routing_strategy = 
+                    response.routing_info.routing_strategy =
                         RoutingStrategy::ModelSpecific(provider_type.to_string());
                     response.routing_info.fallback_used = retry_count > 0;
 
@@ -209,7 +233,8 @@ impl LLMRouter {
                     if retry_count <= max_retries {
                         tokio::time::sleep(std::time::Duration::from_millis(
                             self.config.retry_delay_ms * retry_count as u64,
-                        )).await;
+                        ))
+                        .await;
                     } else {
                         return Err(e);
                     }
@@ -227,13 +252,13 @@ impl LLMRouter {
     ) -> LLMResult<Box<dyn futures::Stream<Item = LLMResult<StreamingChunk>> + Send + Unpin>> {
         let provider = self.determine_provider_for_model(&request.model);
         let api_key = self.get_api_key(&provider).await?;
-        
+
         if let Some(client) = self.providers.get(&provider) {
-            let stream_result = client.chat_completion_stream(request.clone(), api_key).await;
+            let stream_result = client
+                .chat_completion_stream(request.clone(), api_key)
+                .await;
             match stream_result {
-                Ok(stream) => {
-                    Ok(Box::new(Box::pin(stream)))
-                }
+                Ok(stream) => Ok(Box::new(Box::pin(stream))),
                 Err(e) => {
                     error!("Router: provider returned error: {}", e);
                     Err(e)
@@ -242,20 +267,24 @@ impl LLMRouter {
         } else {
             // For unsupported providers, fall back to mock streaming
             let response = self.chat_completion(request).await?;
-            
+
             let chunk = StreamingChunk {
                 id: response.id,
                 object: "chat.completion.chunk".to_string(),
                 created: response.created,
                 model: response.model,
-                choices: response.choices.into_iter().map(|choice| StreamingChoice {
-                    index: choice.index,
-                    delta: choice.message,
-                    finish_reason: choice.finish_reason,
-                }).collect(),
+                choices: response
+                    .choices
+                    .into_iter()
+                    .map(|choice| StreamingChoice {
+                        index: choice.index,
+                        delta: choice.message,
+                        finish_reason: choice.finish_reason,
+                    })
+                    .collect(),
                 provider: response.provider,
             };
-            
+
             let stream = futures::stream::once(async move { Ok(chunk) });
             Ok(Box::new(Box::pin(stream)))
         }
@@ -271,7 +300,7 @@ impl LLMRouter {
             "cb:coding" => "claude-3-5-sonnet-20240620".to_string(), // Best for coding
             "cb:analysis" => "claude-3-5-sonnet-20240620".to_string(), // Best for analysis
             "cb:creative" => "claude-3-opus-20240229".to_string(), // Most creative
-            _ => model.to_string(), // Return as-is if not a virtual model
+            _ => model.to_string(),                          // Return as-is if not a virtual model
         }
     }
 
@@ -290,12 +319,15 @@ impl LLMRouter {
                     return provider_type.clone();
                 }
             }
-            
+
             // Default to OpenAI if available, otherwise first available provider
             if self.providers.contains_key(&LLMProviderType::OpenAI) {
                 LLMProviderType::OpenAI
             } else {
-                self.providers.keys().next().cloned()
+                self.providers
+                    .keys()
+                    .next()
+                    .cloned()
                     .unwrap_or(LLMProviderType::OpenAI)
             }
         }
@@ -304,15 +336,25 @@ impl LLMRouter {
     /// Get API key for provider
     async fn get_api_key(&self, provider_type: &LLMProviderType) -> LLMResult<String> {
         debug!("Getting API key for provider: {}", provider_type);
-        debug!("Configured keys available: {:?}", self.configured_api_keys.keys().collect::<Vec<_>>());
-        
+        debug!(
+            "Configured keys available: {:?}",
+            self.configured_api_keys.keys().collect::<Vec<_>>()
+        );
+
         if let Some(key) = self.configured_api_keys.get(provider_type) {
-            debug!("Found configured key for {}: {}...", provider_type, &key[..8.min(key.len())]);
+            debug!(
+                "Found configured key for {}: {}...",
+                provider_type,
+                &key[..8.min(key.len())]
+            );
             return Ok(key.clone());
         }
 
-        debug!("No configured key found for {}, checking environment...", provider_type);
-        
+        debug!(
+            "No configured key found for {}, checking environment...",
+            provider_type
+        );
+
         // Fallback to environment variables if not configured
         match provider_type {
             LLMProviderType::OpenAI => std::env::var("OPENAI_API_KEY").map_err(|_| {
@@ -330,9 +372,10 @@ impl LLMRouter {
                     "GOOGLE_API_KEY not configured in server or environment".to_string(),
                 )
             }),
-            _ => Err(LLMError::AuthenticationFailed(
-                format!("API key not configured for provider: {}", provider_type),
-            )),
+            _ => Err(LLMError::AuthenticationFailed(format!(
+                "API key not configured for provider: {}",
+                provider_type
+            ))),
         }
     }
 
@@ -354,17 +397,23 @@ impl LLMRouter {
             status.consecutive_failures += 1;
             status.last_check = chrono::Utc::now();
             status.last_error = Some(error.to_string());
-            
+
             // Mark as unhealthy after 3 consecutive failures
             if status.consecutive_failures >= 3 {
                 status.is_healthy = false;
-                warn!("Provider {} marked as unhealthy after {} failures", provider_type, status.consecutive_failures);
+                warn!(
+                    "Provider {} marked as unhealthy after {} failures",
+                    provider_type, status.consecutive_failures
+                );
             }
         }
     }
 
     /// Get health status for a provider
-    pub async fn get_provider_health(&self, provider_type: &LLMProviderType) -> Option<ProviderHealthStatus> {
+    pub async fn get_provider_health(
+        &self,
+        provider_type: &LLMProviderType,
+    ) -> Option<ProviderHealthStatus> {
         let health_map = self.health_status.read().await;
         health_map.get(provider_type).cloned()
     }
@@ -380,8 +429,13 @@ impl LLMRouter {
     }
 
     /// Get provider client for direct access (for advanced use cases)
-    pub fn get_provider_client(&self, provider_type: &LLMProviderType) -> Option<&dyn LLMProviderClient> {
-        self.providers.get(provider_type).map(|client| client.as_ref())
+    pub fn get_provider_client(
+        &self,
+        provider_type: &LLMProviderType,
+    ) -> Option<&dyn LLMProviderClient> {
+        self.providers
+            .get(provider_type)
+            .map(|client| client.as_ref())
     }
 
     /// Get providers (for GraphQL compatibility)
@@ -391,43 +445,70 @@ impl LLMRouter {
             let models = match provider_type {
                 LLMProviderType::Ollama => {
                     // For Ollama, fetch actual models from the instance
-                    if let Some(ollama_client) = client.as_any().downcast_ref::<crate::llm::providers::ollama::OllamaClient>() {
+                    if let Some(ollama_client) = client
+                        .as_any()
+                        .downcast_ref::<crate::llm::providers::ollama::OllamaClient>(
+                    ) {
                         ollama_client.get_available_models_async().await
                     } else {
                         client.get_available_models()
                     }
-                },
+                }
                 LLMProviderType::VLLM => {
                     // For vLLM, fetch actual models from the server
-                    if let Some(vllm_client) = client.as_any().downcast_ref::<crate::llm::providers::vllm::VLLMClient>() {
+                    if let Some(vllm_client) = client
+                        .as_any()
+                        .downcast_ref::<crate::llm::providers::vllm::VLLMClient>(
+                    ) {
                         vllm_client.get_available_models_async().await
                     } else {
                         client.get_available_models()
                     }
-                },
+                }
                 _ => client.get_available_models(),
             };
-            let llm_models: Vec<LLMModel> = models.into_iter().map(|model| LLMModel {
-                id: model.id,
-                name: model.name,
-                provider_id: uuid::Uuid::new_v4(),
-                max_tokens: model.max_output_tokens,
-                context_window: model.context_window,
-                cost_per_input_token: model.cost_per_input_token,
-                cost_per_output_token: model.cost_per_output_token,
-                supports_streaming: model.supports_streaming,
-                supports_function_calling: model.supports_function_calling,
-                capabilities: model.capabilities.into_iter().map(|cap| match cap {
-                    crate::llm::traits::ModelCapability::TextGeneration => ModelCapability::TextGeneration,
-                    crate::llm::traits::ModelCapability::CodeGeneration => ModelCapability::CodeGeneration,
-                    crate::llm::traits::ModelCapability::ConversationalAI => ModelCapability::TextAnalysis,
-                    crate::llm::traits::ModelCapability::FunctionCalling => ModelCapability::FunctionCalling,
-                    crate::llm::traits::ModelCapability::Translation => ModelCapability::Translation,
-                    crate::llm::traits::ModelCapability::Summarization => ModelCapability::Summarization,
-                    crate::llm::traits::ModelCapability::ReasoningChain => ModelCapability::Reasoning,
-                    _ => ModelCapability::TextGeneration,
-                }).collect(),
-            }).collect();
+            let llm_models: Vec<LLMModel> = models
+                .into_iter()
+                .map(|model| LLMModel {
+                    id: model.id,
+                    name: model.name,
+                    provider_id: uuid::Uuid::new_v4(),
+                    max_tokens: model.max_output_tokens,
+                    context_window: model.context_window,
+                    cost_per_input_token: model.cost_per_input_token,
+                    cost_per_output_token: model.cost_per_output_token,
+                    supports_streaming: model.supports_streaming,
+                    supports_function_calling: model.supports_function_calling,
+                    capabilities: model
+                        .capabilities
+                        .into_iter()
+                        .map(|cap| match cap {
+                            crate::llm::traits::ModelCapability::TextGeneration => {
+                                ModelCapability::TextGeneration
+                            }
+                            crate::llm::traits::ModelCapability::CodeGeneration => {
+                                ModelCapability::CodeGeneration
+                            }
+                            crate::llm::traits::ModelCapability::ConversationalAI => {
+                                ModelCapability::TextAnalysis
+                            }
+                            crate::llm::traits::ModelCapability::FunctionCalling => {
+                                ModelCapability::FunctionCalling
+                            }
+                            crate::llm::traits::ModelCapability::Translation => {
+                                ModelCapability::Translation
+                            }
+                            crate::llm::traits::ModelCapability::Summarization => {
+                                ModelCapability::Summarization
+                            }
+                            crate::llm::traits::ModelCapability::ReasoningChain => {
+                                ModelCapability::Reasoning
+                            }
+                            _ => ModelCapability::TextGeneration,
+                        })
+                        .collect(),
+                })
+                .collect();
 
             providers.push(LLMProvider {
                 id: uuid::Uuid::new_v4(),
@@ -436,8 +517,14 @@ impl LLMRouter {
                 base_url: match provider_type {
                     LLMProviderType::OpenAI => "https://api.openai.com/v1".to_string(),
                     LLMProviderType::Anthropic => "https://api.anthropic.com".to_string(),
-                    LLMProviderType::Google => "https://generativelanguage.googleapis.com/v1beta".to_string(),
-                    LLMProviderType::Ollama => self.configured_api_keys.get(provider_type).cloned().unwrap_or_else(|| "http://localhost:11434".to_string()),
+                    LLMProviderType::Google => {
+                        "https://generativelanguage.googleapis.com/v1beta".to_string()
+                    }
+                    LLMProviderType::Ollama => self
+                        .configured_api_keys
+                        .get(provider_type)
+                        .cloned()
+                        .unwrap_or_else(|| "http://localhost:11434".to_string()),
                     _ => "".to_string(),
                 },
                 api_key_id: Some(format!("{}_key", provider_type.to_string())),
@@ -458,9 +545,9 @@ impl LLMRouter {
 
     /// Smart chat completion (for API handler compatibility)
     pub async fn smart_chat_completion(
-        &self, 
-        request: LLMRequest, 
-        _config: Option<crate::api::types::CircuitBreakerConfig>
+        &self,
+        request: LLMRequest,
+        _config: Option<crate::api::types::CircuitBreakerConfig>,
     ) -> LLMResult<LLMResponse> {
         // For now, just use regular chat completion
         self.chat_completion(request).await
@@ -470,20 +557,27 @@ impl LLMRouter {
     pub async fn smart_chat_completion_stream(
         &self,
         request: LLMRequest,
-        _config: Option<crate::api::types::CircuitBreakerConfig>
+        _config: Option<crate::api::types::CircuitBreakerConfig>,
     ) -> LLMResult<Box<dyn futures::Stream<Item = LLMResult<StreamingChunk>> + Send + Unpin>> {
         // For now, just use regular streaming
         self.stream_chat_completion(request).await
     }
 
     /// Generate embeddings using the appropriate provider
-    pub async fn embeddings(&self, request: &crate::llm::EmbeddingsRequest, api_key: &str) -> LLMResult<crate::llm::EmbeddingsResponse> {
+    pub async fn embeddings(
+        &self,
+        request: &crate::llm::EmbeddingsRequest,
+        api_key: &str,
+    ) -> LLMResult<crate::llm::EmbeddingsResponse> {
         let provider_type = self.determine_provider_for_model(&request.model);
-        
+
         if let Some(client) = self.providers.get(&provider_type) {
             client.embeddings(request, api_key).await
         } else {
-            Err(LLMError::Provider(format!("No provider available for model: {}", request.model)))
+            Err(LLMError::Provider(format!(
+                "No provider available for model: {}",
+                request.model
+            )))
         }
     }
 
@@ -515,8 +609,10 @@ impl LLMRouter {
 
 impl std::fmt::Display for LLMRouter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "LLMRouter with {} providers: {:?}", 
-            self.providers.len(), 
+        write!(
+            f,
+            "LLMRouter with {} providers: {:?}",
+            self.providers.len(),
             self.providers.keys().collect::<Vec<_>>()
         )
     }
@@ -537,15 +633,29 @@ mod tests {
     async fn test_provider_determination() {
         // Mock router with keys for all providers
         if let Ok(router) = LLMRouter::new_with_keys(
-            Some("test-openai-key".to_string()), 
-            Some("test-anthropic-key".to_string()), 
-            Some("test-google-key".to_string()), 
-            None
-        ).await {
-            assert_eq!(router.determine_provider_for_model("gpt-4"), LLMProviderType::OpenAI);
-            assert_eq!(router.determine_provider_for_model("o4-mini-2025-04-16"), LLMProviderType::OpenAI);
-            assert_eq!(router.determine_provider_for_model("claude-3"), LLMProviderType::Anthropic); // Correctly determines Anthropic
-            assert_eq!(router.determine_provider_for_model("unknown-model"), LLMProviderType::OpenAI); // Falls back to first available provider (OpenAI)
+            Some("test-openai-key".to_string()),
+            Some("test-anthropic-key".to_string()),
+            Some("test-google-key".to_string()),
+            None,
+        )
+        .await
+        {
+            assert_eq!(
+                router.determine_provider_for_model("gpt-4"),
+                LLMProviderType::OpenAI
+            );
+            assert_eq!(
+                router.determine_provider_for_model("o4-mini-2025-04-16"),
+                LLMProviderType::OpenAI
+            );
+            assert_eq!(
+                router.determine_provider_for_model("claude-3"),
+                LLMProviderType::Anthropic
+            ); // Correctly determines Anthropic
+            assert_eq!(
+                router.determine_provider_for_model("unknown-model"),
+                LLMProviderType::OpenAI
+            ); // Falls back to first available provider (OpenAI)
         }
     }
 
@@ -558,7 +668,7 @@ mod tests {
             health_status: Arc::new(RwLock::new(HashMap::new())),
             configured_api_keys: HashMap::new(),
         };
-        
+
         let display = format!("{}", router);
         assert!(display.contains("LLMRouter"));
         assert!(display.contains("0 providers"));

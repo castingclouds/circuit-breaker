@@ -10,12 +10,13 @@
     "analytics": "node analytics-examples.js",
     "rules": "node rules-examples.js",
     "nats": "node nats-examples.js",
-    "all": "npm run workflow && npm run agents && npm run llm && npm run analytics && npm run rules && npm run nats",
+    "mcp": "node mcp-examples.js",
+    "all": "npm run workflow && npm run agents && npm run llm && npm run analytics && npm run rules && npm run nats && npm run mcp",
     "install-deps": "npm install",
     "test": "node --check *.js",
     "validate": "npm run test && echo 'All examples validated successfully'",
-    "demo": "npm run workflow && echo '\n--- Workflow Demo Complete ---' && npm run agents && echo '\n--- Agents Demo Complete ---' && npm run llm && echo '\n--- LLM Demo Complete ---'",
-    "quick-test": "npm run workflow && npm run analytics"
+    "demo": "npm run workflow && echo '\n--- Workflow Demo Complete ---' && npm run agents && echo '\n--- Agents Demo Complete ---' && npm run llm && echo '\n--- LLM Demo Complete ---' && npm run mcp && echo '\n--- MCP Demo Complete ---'",
+    "quick-test": "npm run workflow && npm run analytics && npm run mcp"
   },
   "dependencies": {
     "graphql": "^16.8.1",
@@ -39,7 +40,10 @@
     "llm",
     "router",
     "examples",
-    "api"
+    "api",
+    "mcp",
+    "oauth",
+    "jwt"
   ],
   "author": "Circuit Breaker Team",
   "license": "MIT",

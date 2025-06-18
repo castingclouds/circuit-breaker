@@ -1,0 +1,1250 @@
+# Model Context Protocol (MCP) Schema
+# Defines types and operations for MCP server management with OAuth and JWT authentication
+
+extend type Query {
+  """Get all MCP servers"""
+  mcpServers(
+    """Filter servers by type"""
+    type: McpServerType
+    """Filter servers by status"""
+    status: McpServerStatus
+    """Pagination parameters"""
+    pagination: PaginationInput
+  ): McpServerConnection!
+
+  """Get a specific MCP server by ID"""
+  mcpServer(id: ID!): McpServer
+
+  """Get MCP servers for a specific tenant"""
+  mcpServersByTenant(
+    """Tenant identifier"""
+    tenantId: String!
+    """Pagination parameters"""
+    pagination: PaginationInput
+  ): McpServerConnection!
+
+  """Get OAuth providers available for MCP authentication"""
+  mcpOAuthProviders: [McpOAuthProvider!]!
+
+  """Get MCP server capabilities"""
+  mcpServerCapabilities(serverId: ID!): McpServerCapabilities
+
+  """Get MCP server health status"""
+  mcpServerHealth(serverId: ID!): McpServerHealth!
+
+  """Get active MCP sessions for a user"""
+  mcpSessions(
+    """User identifier"""
+    userId: String
+    """Server identifier"""
+    serverId: ID
+    """Pagination parameters"""
+    pagination: PaginationInput
+  ): McpSessionConnection!
+}
+
+extend type Mutation {
+  """Create a new MCP server instance"""
+  createMcpServer(input: CreateMcpServerInput!): McpServer!
+
+  """Update an existing MCP server"""
+  updateMcpServer(
+    """Server ID"""
+    id: ID!
+    """Update input"""
+    input: UpdateMcpServerInput!
+  ): McpServer!
+
+  """Delete an MCP server"""
+  deleteMcpServer(id: ID!): ApiResponse!
+
+  """Configure OAuth for an MCP server"""
+  configureMcpOAuth(input: ConfigureMcpOAuthInput!): McpOAuthConfig!
+
+  """Configure JWT authentication for an MCP server"""
+  configureMcpJwt(input: ConfigureMcpJwtInput!): McpJwtConfig!
+
+  """Initiate OAuth flow for MCP server"""
+  initiateMcpOAuth(input: InitiateMcpOAuthInput!): McpOAuthInitiation!
+
+  """Complete OAuth flow and create session"""
+  completeMcpOAuth(input: CompleteMcpOAuthInput!): McpSession!
+
+  """Authenticate with JWT for MCP server"""
+  authenticateMcpJwt(input: AuthenticateMcpJwtInput!): McpSession!
+
+  """Refresh MCP session token"""
+  refreshMcpSession(sessionId: ID!): McpSession!
+
+  """Revoke MCP session"""
+  revokeMcpSession(sessionId: ID!): ApiResponse!
+
+  """Register MCP server tools and capabilities"""
+  registerMcpCapabilities(input: RegisterMcpCapabilitiesInput!): McpServerCapabilities!
+
+  """Enable/disable MCP server"""
+  toggleMcpServer(
+    """Server ID"""
+    id: ID!
+    """Enable or disable"""
+    enabled: Boolean!
+  ): McpServer!
+
+  """Test MCP server connection"""
+  testMcpConnection(serverId: ID!): McpConnectionTest!
+}
+
+extend type Subscription {
+  """Subscribe to MCP server status changes"""
+  mcpServerStatusUpdates(serverId: ID): McpServerStatusEvent!
+
+  """Subscribe to MCP session events"""
+  mcpSessionEvents(
+    """User identifier"""
+    userId: String
+    """Server identifier"""
+    serverId: ID
+  ): McpSessionEvent!
+
+  """Subscribe to MCP server capability updates"""
+  mcpCapabilityUpdates(serverId: ID!): McpServerCapabilities!
+
+  """Subscribe to MCP authentication events"""
+  mcpAuthEvents(tenantId: String): McpAuthEvent!
+}
+
+# ============================================================================
+# MCP SERVER TYPES
+# ============================================================================
+
+"""MCP Server instance"""
+type McpServer implements Node {
+  """Unique server identifier"""
+  id: ID!
+
+  """Human-readable server name"""
+  name: String!
+
+  """Server description"""
+  description: String
+
+  """Server type (local or remote)"""
+  type: McpServerType!
+
+  """Current server status"""
+  status: McpServerStatus!
+
+  """Tenant this server belongs to"""
+  tenantId: String!
+
+  """Server configuration"""
+  config: McpServerConfig!
+
+  """Authentication configuration"""
+  auth: McpAuthConfig
+
+  """Server capabilities"""
+  capabilities: McpServerCapabilities
+
+  """Server health information"""
+  health: McpServerHealth
+
+  """Active sessions count"""
+  activeSessionsCount: Int!
+
+  """Server metadata"""
+  metadata: JSON
+
+  """Server tags for organization"""
+  tags: [String!]!
+
+  """Whether server is enabled"""
+  enabled: Boolean!
+
+  """Audit information"""
+  audit: AuditInfo!
+}
+
+"""MCP Server configuration"""
+type McpServerConfig {
+  """Server endpoint URL (for remote servers)"""
+  endpoint: String
+
+  """Connection timeout in seconds"""
+  timeoutSeconds: Int!
+
+  """Maximum concurrent connections"""
+  maxConnections: Int!
+
+  """SSL/TLS configuration"""
+  ssl: McpSslConfig
+
+  """Retry configuration"""
+  retry: McpRetryConfig!
+
+  """Rate limiting configuration"""
+  rateLimit: McpRateLimitConfig
+
+  """Custom headers for requests"""
+  headers: JSON
+}
+
+"""SSL/TLS configuration for MCP servers"""
+type McpSslConfig {
+  """Whether to verify SSL certificates"""
+  verify: Boolean!
+
+  """Custom CA certificate"""
+  caCert: String
+
+  """Client certificate"""
+  clientCert: String
+
+  """Client private key"""
+  clientKey: String
+}
+
+"""Retry configuration for MCP operations"""
+type McpRetryConfig {
+  """Maximum number of retry attempts"""
+  maxAttempts: Int!
+
+  """Initial retry delay in milliseconds"""
+  initialDelayMs: Int!
+
+  """Maximum retry delay in milliseconds"""
+  maxDelayMs: Int!
+
+  """Backoff multiplier"""
+  backoffMultiplier: Float!
+
+  """Jitter factor for retry delays"""
+  jitterFactor: Float!
+}
+
+"""Rate limiting configuration"""
+type McpRateLimitConfig {
+  """Requests per second limit"""
+  requestsPerSecond: Int!
+
+  """Burst size"""
+  burstSize: Int!
+
+  """Rate limit window in seconds"""
+  windowSeconds: Int!
+}
+
+"""MCP Server capabilities"""
+type McpServerCapabilities {
+  """Server identifier"""
+  serverId: ID!
+
+  """Available tools"""
+  tools: [McpTool!]!
+
+  """Available resources"""
+  resources: [McpResource!]!
+
+  """Supported prompts"""
+  prompts: [McpPrompt!]!
+
+  """Server features"""
+  features: McpServerFeatures!
+
+  """Protocol version"""
+  protocolVersion: String!
+
+  """Last updated timestamp"""
+  lastUpdated: DateTime!
+}
+
+"""MCP Server features"""
+type McpServerFeatures {
+  """Supports streaming responses"""
+  streaming: Boolean!
+
+  """Supports file operations"""
+  fileOperations: Boolean!
+
+  """Supports real-time notifications"""
+  notifications: Boolean!
+
+  """Supports batch operations"""
+  batchOperations: Boolean!
+
+  """Maximum request size in bytes"""
+  maxRequestSize: Int
+
+  """Supported content types"""
+  contentTypes: [String!]!
+}
+
+"""MCP Tool definition"""
+type McpTool {
+  """Tool name"""
+  name: String!
+
+  """Tool description"""
+  description: String!
+
+  """Input schema"""
+  inputSchema: JSON!
+
+  """Tool category"""
+  category: String
+
+  """Whether tool is deprecated"""
+  deprecated: Boolean!
+
+  """Tool metadata"""
+  metadata: JSON
+}
+
+"""MCP Resource definition"""
+type McpResource {
+  """Resource URI"""
+  uri: String!
+
+  """Resource name"""
+  name: String!
+
+  """Resource description"""
+  description: String
+
+  """Resource type"""
+  type: String!
+
+  """MIME type"""
+  mimeType: String
+
+  """Resource metadata"""
+  metadata: JSON
+}
+
+"""MCP Prompt definition"""
+type McpPrompt {
+  """Prompt name"""
+  name: String!
+
+  """Prompt description"""
+  description: String!
+
+  """Prompt template"""
+  template: String!
+
+  """Input parameters"""
+  parameters: [McpPromptParameter!]!
+
+  """Prompt category"""
+  category: String
+
+  """Prompt metadata"""
+  metadata: JSON
+}
+
+"""MCP Prompt parameter"""
+type McpPromptParameter {
+  """Parameter name"""
+  name: String!
+
+  """Parameter description"""
+  description: String
+
+  """Parameter type"""
+  type: String!
+
+  """Whether parameter is required"""
+  required: Boolean!
+
+  """Default value"""
+  defaultValue: JSON
+
+  """Parameter constraints"""
+  constraints: JSON
+}
+
+"""MCP Server health information"""
+type McpServerHealth {
+  """Overall health status"""
+  status: McpHealthStatus!
+
+  """Last health check timestamp"""
+  lastCheckAt: DateTime!
+
+  """Response time in milliseconds"""
+  responseTimeMs: Int
+
+  """Health check details"""
+  details: McpHealthDetails!
+
+  """Uptime in seconds"""
+  uptimeSeconds: Int
+
+  """Error information if unhealthy"""
+  error: String
+}
+
+"""MCP Health check details"""
+type McpHealthDetails {
+  """Connection status"""
+  connection: McpHealthStatus!
+
+  """Authentication status"""
+  authentication: McpHealthStatus!
+
+  """Capabilities status"""
+  capabilities: McpHealthStatus!
+
+  """Resource availability"""
+  resources: McpHealthStatus!
+
+  """Tool availability"""
+  tools: McpHealthStatus!
+}
+
+# ============================================================================
+# AUTHENTICATION TYPES
+# ============================================================================
+
+"""MCP Authentication configuration"""
+union McpAuthConfig = McpOAuthConfig | McpJwtConfig
+
+"""OAuth configuration for MCP server"""
+type McpOAuthConfig {
+  """OAuth provider"""
+  provider: McpOAuthProvider!
+
+  """Client ID"""
+  clientId: String!
+
+  """OAuth scopes"""
+  scopes: [String!]!
+
+  """Redirect URI"""
+  redirectUri: String!
+
+  """Additional OAuth parameters"""
+  additionalParams: JSON
+
+  """Token refresh configuration"""
+  refreshConfig: McpTokenRefreshConfig!
+
+  """OAuth configuration metadata"""
+  metadata: JSON
+}
+
+"""JWT configuration for MCP server"""
+type McpJwtConfig {
+  """JWT issuer"""
+  issuer: String!
+
+  """JWT audience"""
+  audience: String
+
+  """Public key for JWT verification"""
+  publicKey: String!
+
+  """JWT algorithm"""
+  algorithm: String!
+
+  """Token expiration in seconds"""
+  expirationSeconds: Int!
+
+  """Custom JWT claims"""
+  customClaims: JSON
+
+  """JWT configuration metadata"""
+  metadata: JSON
+}
+
+"""OAuth provider configuration"""
+type McpOAuthProvider {
+  """Provider identifier"""
+  id: String!
+
+  """Provider name"""
+  name: String!
+
+  """Provider type"""
+  type: McpOAuthProviderType!
+
+  """Authorization endpoint"""
+  authorizationEndpoint: String!
+
+  """Token endpoint"""
+  tokenEndpoint: String!
+
+  """User info endpoint"""
+  userInfoEndpoint: String
+
+  """Revocation endpoint"""
+  revocationEndpoint: String
+
+  """Supported scopes"""
+  supportedScopes: [String!]!
+
+  """Provider configuration"""
+  config: JSON
+
+  """Whether provider is enabled"""
+  enabled: Boolean!
+}
+
+"""Token refresh configuration"""
+type McpTokenRefreshConfig {
+  """Whether to automatically refresh tokens"""
+  autoRefresh: Boolean!
+
+  """Refresh threshold in seconds before expiration"""
+  refreshThresholdSeconds: Int!
+
+  """Maximum refresh attempts"""
+  maxRefreshAttempts: Int!
+
+  """Refresh retry delay in seconds"""
+  refreshRetryDelaySeconds: Int!
+}
+
+# ============================================================================
+# SESSION TYPES
+# ============================================================================
+
+"""MCP Session"""
+type McpSession implements Node {
+  """Session identifier"""
+  id: ID!
+
+  """Associated MCP server"""
+  server: McpServer!
+
+  """User identifier"""
+  userId: String!
+
+  """Session status"""
+  status: McpSessionStatus!
+
+  """Authentication method used"""
+  authMethod: McpAuthMethod!
+
+  """Access token (if applicable)"""
+  accessToken: String
+
+  """Token expiration timestamp"""
+  tokenExpiresAt: DateTime
+
+  """Refresh token (if applicable)"""
+  refreshToken: String
+
+  """Session metadata"""
+  metadata: JSON
+
+  """Session creation timestamp"""
+  createdAt: DateTime!
+
+  """Last activity timestamp"""
+  lastActivityAt: DateTime!
+
+  """Session expiration timestamp"""
+  expiresAt: DateTime!
+
+  """Number of requests made in this session"""
+  requestCount: Int!
+
+  """User agent information"""
+  userAgent: String
+
+  """IP address"""
+  ipAddress: String
+}
+
+"""OAuth initiation response"""
+type McpOAuthInitiation {
+  """Authorization URL to redirect user to"""
+  authorizationUrl: String!
+
+  """State parameter for CSRF protection"""
+  state: String!
+
+  """Code verifier for PKCE"""
+  codeVerifier: String
+
+  """OAuth provider"""
+  provider: McpOAuthProvider!
+
+  """Expiration time for the initiation"""
+  expiresAt: DateTime!
+}
+
+"""Connection test result"""
+type McpConnectionTest {
+  """Whether connection was successful"""
+  success: Boolean!
+
+  """Response time in milliseconds"""
+  responseTimeMs: Int
+
+  """Error message if connection failed"""
+  error: String
+
+  """Test details"""
+  details: McpConnectionTestDetails!
+
+  """Test timestamp"""
+  testedAt: DateTime!
+}
+
+"""Connection test details"""
+type McpConnectionTestDetails {
+  """DNS resolution status"""
+  dnsResolution: Boolean!
+
+  """TCP connection status"""
+  tcpConnection: Boolean!
+
+  """SSL/TLS handshake status"""
+  sslHandshake: Boolean
+
+  """HTTP response status"""
+  httpStatus: Int
+
+  """Authentication status"""
+  authentication: Boolean
+
+  """Capabilities discovery status"""
+  capabilities: Boolean
+}
+
+# ============================================================================
+# CONNECTION TYPES
+# ============================================================================
+
+"""Connection wrapper for MCP servers"""
+type McpServerConnection implements Connection {
+  """List of MCP server edges"""
+  edges: [McpServerEdge!]!
+
+  """Pagination information"""
+  pageInfo: PageInfo!
+
+  """Total number of servers"""
+  totalCount: Int!
+}
+
+"""Edge type for MCP servers"""
+type McpServerEdge implements Edge {
+  """MCP server node"""
+  node: McpServer!
+
+  """Edge cursor"""
+  cursor: String!
+}
+
+"""Connection wrapper for MCP sessions"""
+type McpSessionConnection implements Connection {
+  """List of MCP session edges"""
+  edges: [McpSessionEdge!]!
+
+  """Pagination information"""
+  pageInfo: PageInfo!
+
+  """Total number of sessions"""
+  totalCount: Int!
+}
+
+"""Edge type for MCP sessions"""
+type McpSessionEdge implements Edge {
+  """MCP session node"""
+  node: McpSession!
+
+  """Edge cursor"""
+  cursor: String!
+}
+
+# ============================================================================
+# INPUT TYPES
+# ============================================================================
+
+"""Input for creating a new MCP server"""
+input CreateMcpServerInput {
+  """Server name"""
+  name: String!
+
+  """Server description"""
+  description: String
+
+  """Server type"""
+  type: McpServerType!
+
+  """Tenant identifier"""
+  tenantId: String!
+
+  """Server configuration"""
+  config: McpServerConfigInput!
+
+  """Authentication configuration"""
+  auth: McpAuthConfigInput
+
+  """Server metadata"""
+  metadata: JSON
+
+  """Server tags"""
+  tags: [String!]
+
+  """Whether server is enabled"""
+  enabled: Boolean = true
+}
+
+"""Input for updating an MCP server"""
+input UpdateMcpServerInput {
+  """Server name"""
+  name: String
+
+  """Server description"""
+  description: String
+
+  """Server configuration"""
+  config: McpServerConfigInput
+
+  """Authentication configuration"""
+  auth: McpAuthConfigInput
+
+  """Server metadata"""
+  metadata: JSON
+
+  """Server tags"""
+  tags: [String!]
+
+  """Whether server is enabled"""
+  enabled: Boolean
+}
+
+"""Input for MCP server configuration"""
+input McpServerConfigInput {
+  """Server endpoint URL"""
+  endpoint: String
+
+  """Connection timeout in seconds"""
+  timeoutSeconds: Int = 30
+
+  """Maximum concurrent connections"""
+  maxConnections: Int = 10
+
+  """SSL/TLS configuration"""
+  ssl: McpSslConfigInput
+
+  """Retry configuration"""
+  retry: McpRetryConfigInput
+
+  """Rate limiting configuration"""
+  rateLimit: McpRateLimitConfigInput
+
+  """Custom headers"""
+  headers: JSON
+}
+
+"""Input for SSL configuration"""
+input McpSslConfigInput {
+  """Whether to verify SSL certificates"""
+  verify: Boolean = true
+
+  """Custom CA certificate"""
+  caCert: String
+
+  """Client certificate"""
+  clientCert: String
+
+  """Client private key"""
+  clientKey: String
+}
+
+"""Input for retry configuration"""
+input McpRetryConfigInput {
+  """Maximum retry attempts"""
+  maxAttempts: Int = 3
+
+  """Initial retry delay in milliseconds"""
+  initialDelayMs: Int = 1000
+
+  """Maximum retry delay in milliseconds"""
+  maxDelayMs: Int = 30000
+
+  """Backoff multiplier"""
+  backoffMultiplier: Float = 2.0
+
+  """Jitter factor"""
+  jitterFactor: Float = 0.1
+}
+
+"""Input for rate limiting configuration"""
+input McpRateLimitConfigInput {
+  """Requests per second"""
+  requestsPerSecond: Int = 100
+
+  """Burst size"""
+  burstSize: Int = 200
+
+  """Window size in seconds"""
+  windowSeconds: Int = 60
+}
+
+"""Input for authentication configuration"""
+input McpAuthConfigInput {
+  """OAuth configuration"""
+  oauth: McpOAuthConfigInput
+
+  """JWT configuration"""
+  jwt: McpJwtConfigInput
+}
+
+"""Input for OAuth configuration"""
+input McpOAuthConfigInput {
+  """OAuth provider ID"""
+  providerId: String!
+
+  """Client ID"""
+  clientId: String!
+
+  """Client secret"""
+  clientSecret: String!
+
+  """OAuth scopes"""
+  scopes: [String!]!
+
+  """Redirect URI"""
+  redirectUri: String!
+
+  """Additional parameters"""
+  additionalParams: JSON
+
+  """Token refresh configuration"""
+  refreshConfig: McpTokenRefreshConfigInput
+}
+
+"""Input for JWT configuration"""
+input McpJwtConfigInput {
+  """JWT issuer"""
+  issuer: String!
+
+  """JWT audience"""
+  audience: String
+
+  """Public key"""
+  publicKey: String!
+
+  """Private key (for signing)"""
+  privateKey: String
+
+  """JWT algorithm"""
+  algorithm: String = "RS256"
+
+  """Token expiration in seconds"""
+  expirationSeconds: Int = 3600
+
+  """Custom claims"""
+  customClaims: JSON
+}
+
+"""Input for token refresh configuration"""
+input McpTokenRefreshConfigInput {
+  """Auto refresh enabled"""
+  autoRefresh: Boolean = true
+
+  """Refresh threshold in seconds"""
+  refreshThresholdSeconds: Int = 300
+
+  """Maximum refresh attempts"""
+  maxRefreshAttempts: Int = 3
+
+  """Refresh retry delay in seconds"""
+  refreshRetryDelaySeconds: Int = 5
+}
+
+"""Input for configuring OAuth"""
+input ConfigureMcpOAuthInput {
+  """Server ID"""
+  serverId: ID!
+
+  """OAuth configuration"""
+  config: McpOAuthConfigInput!
+}
+
+"""Input for configuring JWT"""
+input ConfigureMcpJwtInput {
+  """Server ID"""
+  serverId: ID!
+
+  """JWT configuration"""
+  config: McpJwtConfigInput!
+}
+
+"""Input for initiating OAuth flow"""
+input InitiateMcpOAuthInput {
+  """Server ID"""
+  serverId: ID!
+
+  """User ID"""
+  userId: String!
+
+  """Redirect URI override"""
+  redirectUri: String
+
+  """Additional OAuth parameters"""
+  additionalParams: JSON
+}
+
+"""Input for completing OAuth flow"""
+input CompleteMcpOAuthInput {
+  """Server ID"""
+  serverId: ID!
+
+  """User ID"""
+  userId: String!
+
+  """Authorization code"""
+  code: String!
+
+  """State parameter"""
+  state: String!
+
+  """Code verifier (for PKCE)"""
+  codeVerifier: String
+}
+
+"""Input for JWT authentication"""
+input AuthenticateMcpJwtInput {
+  """Server ID"""
+  serverId: ID!
+
+  """User ID"""
+  userId: String!
+
+  """JWT token"""
+  token: String!
+
+  """Session metadata"""
+  metadata: JSON
+}
+
+"""Input for registering capabilities"""
+input RegisterMcpCapabilitiesInput {
+  """Server ID"""
+  serverId: ID!
+
+  """Available tools"""
+  tools: [McpToolInput!]!
+
+  """Available resources"""
+  resources: [McpResourceInput!]!
+
+  """Available prompts"""
+  prompts: [McpPromptInput!]!
+
+  """Server features"""
+  features: McpServerFeaturesInput!
+
+  """Protocol version"""
+  protocolVersion: String!
+}
+
+"""Input for MCP tool"""
+input McpToolInput {
+  """Tool name"""
+  name: String!
+
+  """Tool description"""
+  description: String!
+
+  """Input schema"""
+  inputSchema: JSON!
+
+  """Tool category"""
+  category: String
+
+  """Tool metadata"""
+  metadata: JSON
+}
+
+"""Input for MCP resource"""
+input McpResourceInput {
+  """Resource URI"""
+  uri: String!
+
+  """Resource name"""
+  name: String!
+
+  """Resource description"""
+  description: String
+
+  """Resource type"""
+  type: String!
+
+  """MIME type"""
+  mimeType: String
+
+  """Resource metadata"""
+  metadata: JSON
+}
+
+"""Input for MCP prompt"""
+input McpPromptInput {
+  """Prompt name"""
+  name: String!
+
+  """Prompt description"""
+  description: String!
+
+  """Prompt template"""
+  template: String!
+
+  """Input parameters"""
+  parameters: [McpPromptParameterInput!]!
+
+  """Prompt category"""
+  category: String
+
+  """Prompt metadata"""
+  metadata: JSON
+}
+
+"""Input for MCP prompt parameter"""
+input McpPromptParameterInput {
+  """Parameter name"""
+  name: String!
+
+  """Parameter description"""
+  description: String
+
+  """Parameter type"""
+  type: String!
+
+  """Whether required"""
+  required: Boolean!
+
+  """Default value"""
+  defaultValue: JSON
+
+  """Parameter constraints"""
+  constraints: JSON
+}
+
+"""Input for server features"""
+input McpServerFeaturesInput {
+  """Supports streaming"""
+  streaming: Boolean!
+
+  """Supports file operations"""
+  fileOperations: Boolean!
+
+  """Supports notifications"""
+  notifications: Boolean!
+
+  """Supports batch operations"""
+  batchOperations: Boolean!
+
+  """Maximum request size"""
+  maxRequestSize: Int
+
+  """Supported content types"""
+  contentTypes: [String!]!
+}
+
+# ============================================================================
+# EVENT TYPES
+# ============================================================================
+
+"""MCP Server status event"""
+type McpServerStatusEvent {
+  """Server ID"""
+  serverId: ID!
+
+  """Old status"""
+  oldStatus: McpServerStatus!
+
+  """New status"""
+  newStatus: McpServerStatus!
+
+  """Event timestamp"""
+  timestamp: DateTime!
+
+  """Additional event data"""
+  data: JSON
+}
+
+"""MCP Session event"""
+type McpSessionEvent {
+  """Session ID"""
+  sessionId: ID!
+
+  """Event type"""
+  type: McpSessionEventType!
+
+  """Session data"""
+  session: McpSession!
+
+  """Event timestamp"""
+  timestamp: DateTime!
+
+  """Additional event data"""
+  data: JSON
+}
+
+"""MCP Authentication event"""
+type McpAuthEvent {
+  """Event type"""
+  type: McpAuthEventType!
+
+  """Server ID"""
+  serverId: ID!
+
+  """User ID"""
+  userId: String!
+
+  """Authentication method"""
+  authMethod: McpAuthMethod!
+
+  """Event timestamp"""
+  timestamp: DateTime!
+
+  """Success status"""
+  success: Boolean!
+
+  """Error message if failed"""
+  error: String
+
+  """Additional event data"""
+  data: JSON
+}
+
+# ============================================================================
+# ENUMS
+# ============================================================================
+
+"""MCP Server type"""
+enum McpServerType {
+  """Local MCP server"""
+  LOCAL
+
+  """Remote MCP server"""
+  REMOTE
+}
+
+"""MCP Server status"""
+enum McpServerStatus {
+  """Server is online and healthy"""
+  ONLINE
+
+  """Server is offline"""
+  OFFLINE
+
+  """Server is starting up"""
+  STARTING
+
+  """Server is shutting down"""
+  STOPPING
+
+  """Server has errors"""
+  ERROR
+
+  """Server status is unknown"""
+  UNKNOWN
+}
+
+"""MCP Health status"""
+enum McpHealthStatus {
+  """Healthy"""
+  HEALTHY
+
+  """Unhealthy"""
+  UNHEALTHY
+
+  """Unknown health status"""
+  UNKNOWN
+}
+
+"""OAuth provider type"""
+enum McpOAuthProviderType {
+  """GitLab OAuth"""
+  GITLAB
+
+  """GitHub OAuth"""
+  GITHUB
+
+  """Google OAuth"""
+  GOOGLE
+
+  """Microsoft OAuth"""
+  MICROSOFT
+
+  """Custom OAuth provider"""
+  CUSTOM
+}
+
+"""MCP Session status"""
+enum McpSessionStatus {
+  """Session is active"""
+  ACTIVE
+
+  """Session is expired"""
+  EXPIRED
+
+  """Session is revoked"""
+  REVOKED
+
+  """Session is pending activation"""
+  PENDING
+}
+
+"""MCP Authentication method"""
+enum McpAuthMethod {
+  """OAuth authentication"""
+  OAUTH
+
+  """JWT authentication"""
+  JWT
+
+  """No authentication"""
+  NONE
+}
+
+"""MCP Session event type"""
+enum McpSessionEventType {
+  """Session created"""
+  CREATED
+
+  """Session refreshed"""
+  REFRESHED
+
+  """Session expired"""
+  EXPIRED
+
+  """Session revoked"""
+  REVOKED
+
+  """Session error"""
+  ERROR
+}
+
+"""MCP Authentication event type"""
+enum McpAuthEventType {
+  """Authentication successful"""
+  SUCCESS
+
+  """Authentication failed"""
+  FAILURE
+
+  """Token refreshed"""
+  REFRESH
+
+  """Token revoked"""
+  REVOCATION
+}
+
+# ============================================================================
+# INTERFACES
+# ============================================================================
+
+"""Node interface for entities with IDs"""
+interface Node {
+  """Unique identifier"""
+  id: ID!
+}
