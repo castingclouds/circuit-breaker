@@ -1,0 +1,132 @@
+# LLM Provider Management GraphQL Operations
+# These are the actual operations that can be executed against the LLM schema
+# Import the schema: ../llm.graphql
+
+# List all configured LLM providers
+query ListLLMProviders {
+    llmProviders {
+        id
+        providerType
+        name
+        baseUrl
+        models {
+            id
+            name
+            maxTokens
+            contextWindow
+            costPerInputToken
+            costPerOutputToken
+            supportsStreaming
+            supportsFunctionCalling
+            capabilities
+        }
+        healthStatus {
+            isHealthy
+            lastCheck
+            errorRate
+            averageLatencyMs
+            consecutiveFailures
+            lastError
+        }
+        createdAt
+        updatedAt
+    }
+}
+
+# Get specific LLM provider details
+query GetLLMProvider($providerId: String!) {
+    llmProvider(id: $providerId) {
+        id
+        providerType
+        name
+        baseUrl
+        models {
+            id
+            name
+            maxTokens
+            contextWindow
+            costPerInputToken
+            costPerOutputToken
+            supportsStreaming
+            supportsFunctionCalling
+            capabilities
+        }
+        healthStatus {
+            isHealthy
+            lastCheck
+            errorRate
+            averageLatencyMs
+            consecutiveFailures
+            lastError
+        }
+        createdAt
+        updatedAt
+    }
+}
+
+# Send a chat completion request
+mutation LLMChatCompletion($input: LlmChatCompletionInput!) {
+    llmChatCompletion(input: $input) {
+        id
+        model
+        choices {
+            index
+            message {
+                role
+                content
+                name
+            }
+            finishReason
+        }
+        usage {
+            promptTokens
+            completionTokens
+            totalTokens
+            estimatedCost
+        }
+        provider
+        routingInfo {
+            selectedProvider
+            routingStrategy
+            latencyMs
+            retryCount
+            fallbackUsed
+        }
+    }
+}
+
+# Configure LLM provider
+mutation ConfigureLLMProvider($input: LlmProviderConfigInput!) {
+    configureLlmProvider(input: $input) {
+        id
+        providerType
+        name
+        baseUrl
+        models {
+            id
+            name
+            maxTokens
+            contextWindow
+            costPerInputToken
+            costPerOutputToken
+            supportsStreaming
+            supportsFunctionCalling
+            capabilities
+        }
+        healthStatus {
+            isHealthy
+            lastCheck
+            errorRate
+            averageLatencyMs
+            consecutiveFailures
+            lastError
+        }
+        createdAt
+        updatedAt
+    }
+}
+
+# Subscribe to LLM response stream for real-time streaming
+subscription LLMStream($requestId: String!) {
+    llmStream(requestId: $requestId)
+}

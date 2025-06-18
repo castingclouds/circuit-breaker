@@ -1,0 +1,160 @@
+# Rules Engine GraphQL Operations
+# These are the actual operations that can be executed against the rules schema
+# Import the schema: ../rules.graphql
+
+# Get a specific rule by ID
+query GetRule($ruleId: String!) {
+    rule(id: $ruleId) {
+        id
+        name
+        description
+        condition {
+            conditionType
+            field
+            value
+            substring
+            rules {
+                id
+                name
+                condition {
+                    conditionType
+                    field
+                    value
+                }
+            }
+            rule {
+                id
+                name
+                condition {
+                    conditionType
+                    field
+                    value
+                }
+            }
+            script
+        }
+        version
+        createdAt
+        updatedAt
+        createdBy
+        tags
+    }
+}
+
+# List all rules, optionally filtered by tags
+query ListRules($tags: [String!]) {
+    rules(tags: $tags) {
+        id
+        name
+        description
+        condition {
+            conditionType
+            field
+            value
+        }
+        version
+        createdAt
+        updatedAt
+        createdBy
+        tags
+    }
+}
+
+# Get rules for a specific workflow
+query GetWorkflowRules($workflowId: String!) {
+    workflowRules(workflowId: $workflowId) {
+        id
+        name
+        description
+        condition {
+            conditionType
+            field
+            value
+            substring
+            script
+        }
+        version
+        createdAt
+        updatedAt
+        tags
+    }
+}
+
+# Create a new rule
+mutation CreateRule($input: RuleInput!) {
+    createRule(input: $input) {
+        id
+        name
+        description
+        condition {
+            conditionType
+            field
+            value
+            substring
+            rules {
+                id
+                name
+            }
+            rule {
+                id
+                name
+            }
+            script
+        }
+        version
+        createdAt
+        updatedAt
+        createdBy
+        tags
+    }
+}
+
+# Update an existing rule
+mutation UpdateRule($id: String!, $input: RuleInput!) {
+    updateRule(id: $id, input: $input) {
+        id
+        name
+        description
+        condition {
+            conditionType
+            field
+            value
+            substring
+            rules {
+                id
+                name
+            }
+            rule {
+                id
+                name
+            }
+            script
+        }
+        version
+        createdAt
+        updatedAt
+        createdBy
+        tags
+    }
+}
+
+# Delete a rule
+mutation DeleteRule($id: String!) {
+    deleteRule(id: $id)
+}
+
+# Evaluate a rule against data
+mutation EvaluateRule($input: RuleEvaluationInput!) {
+    evaluateRule(input: $input) {
+        ruleId
+        passed
+        reason
+        details
+        subResults {
+            ruleId
+            passed
+            reason
+            details
+        }
+    }
+}

@@ -1,0 +1,205 @@
+# Agent Management GraphQL Operations
+# These are the actual operations that can be executed against the agents schema
+# Import the schema: ../agents.graphql
+
+# Get a specific agent with full configuration
+query GetAgent($agentId: String!) {
+    agent(id: $agentId) {
+        id
+        name
+        description
+        llmProvider {
+            providerType
+            model
+            baseUrl
+        }
+        llmConfig {
+            temperature
+            maxTokens
+            topP
+            frequencyPenalty
+            presencePenalty
+            stopSequences
+        }
+        prompts {
+            system
+            userTemplate
+            contextInstructions
+        }
+        capabilities
+        tools
+        createdAt
+        updatedAt
+    }
+}
+
+# List all agents with basic information
+query ListAgents {
+    agents {
+        id
+        name
+        description
+        llmProvider {
+            providerType
+            model
+        }
+        capabilities
+        tools
+        createdAt
+    }
+}
+
+# Get state agent configurations for a specific state
+query GetStateAgentConfigs($stateId: String!) {
+    stateAgentConfigs(stateId: $stateId) {
+        id
+        stateId
+        agentId
+        llmConfig {
+            temperature
+            maxTokens
+            topP
+            frequencyPenalty
+            presencePenalty
+            stopSequences
+        }
+        inputMapping
+        outputMapping
+        autoActivity
+        schedule {
+            initialDelaySeconds
+            intervalSeconds
+            maxExecutions
+        }
+        retryConfig {
+            maxAttempts
+            backoffSeconds
+            retryOnErrors
+        }
+        enabled
+        createdAt
+        updatedAt
+    }
+}
+
+# Get agent execution details
+query GetAgentExecution($executionId: String!) {
+    agentExecution(id: $executionId) {
+        id
+        agentId
+        resourceId
+        stateId
+        status
+        inputData
+        outputData
+        errorMessage
+        startedAt
+        completedAt
+        durationMs
+        retryCount
+    }
+}
+
+# Get all executions for a resource
+query GetResourceExecutions($resourceId: String!) {
+    resourceExecutions(resourceId: $resourceId) {
+        id
+        agentId
+        stateId
+        status
+        inputData
+        outputData
+        errorMessage
+        startedAt
+        completedAt
+        durationMs
+        retryCount
+    }
+}
+
+# Create a new agent
+mutation CreateAgent($input: AgentDefinitionInput!) {
+    createAgent(input: $input) {
+        id
+        name
+        description
+        llmProvider {
+            providerType
+            model
+            baseUrl
+        }
+        llmConfig {
+            temperature
+            maxTokens
+            topP
+            frequencyPenalty
+            presencePenalty
+            stopSequences
+        }
+        prompts {
+            system
+            userTemplate
+            contextInstructions
+        }
+        capabilities
+        tools
+        createdAt
+        updatedAt
+    }
+}
+
+# Create state agent configuration
+mutation CreateStateAgentConfig($input: StateAgentConfigInput!) {
+    createStateAgentConfig(input: $input) {
+        id
+        stateId
+        agentId
+        llmConfig {
+            temperature
+            maxTokens
+            topP
+            frequencyPenalty
+            presencePenalty
+            stopSequences
+        }
+        inputMapping
+        outputMapping
+        autoActivity
+        schedule {
+            initialDelaySeconds
+            intervalSeconds
+            maxExecutions
+        }
+        retryConfig {
+            maxAttempts
+            backoffSeconds
+            retryOnErrors
+        }
+        enabled
+        createdAt
+        updatedAt
+    }
+}
+
+# Trigger state agents for a resource
+mutation TriggerStateAgents($input: TriggerStateAgentsInput!) {
+    triggerStateAgents(input: $input) {
+        id
+        agentId
+        resourceId
+        stateId
+        status
+        inputData
+        outputData
+        errorMessage
+        startedAt
+        completedAt
+        durationMs
+        retryCount
+    }
+}
+
+# Subscribe to agent execution stream events
+subscription AgentExecutionStream($executionId: String!) {
+    agentExecutionStream(executionId: $executionId)
+}

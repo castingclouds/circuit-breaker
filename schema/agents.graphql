@@ -1,0 +1,395 @@
+# Agent Management Schema
+# Defines GraphQL operations for agent definitions, executions, and state configurations
+
+# ============================================================================
+# QUERIES
+# ============================================================================
+
+extend type Query {
+  """Get an agent by ID"""
+  agent(id: String!): AgentDefinitionGQL
+
+  """List all agents"""
+  agents: [AgentDefinitionGQL!]!
+
+  """Get state agent configurations for a specific state"""
+  stateAgentConfigs(stateId: String!): [StateAgentConfigGQL!]!
+
+  """Get agent execution by ID"""
+  agentExecution(id: String!): AgentExecutionGQL
+
+  """Get agent executions for a resource"""
+  resourceExecutions(resourceId: String!): [AgentExecutionGQL!]!
+}
+
+# ============================================================================
+# MUTATIONS
+# ============================================================================
+
+extend type Mutation {
+  """Create a new agent"""
+  createAgent(input: AgentDefinitionInput!): AgentDefinitionGQL!
+
+  """Create state agent configuration"""
+  createStateAgentConfig(input: StateAgentConfigInput!): StateAgentConfigGQL!
+
+  """Trigger state agents for a resource"""
+  triggerStateAgents(input: TriggerStateAgentsInput!): [AgentExecutionGQL!]!
+}
+
+# ============================================================================
+# SUBSCRIPTIONS
+# ============================================================================
+
+extend type Subscription {
+  """Subscribe to agent execution stream events"""
+  agentExecutionStream(executionId: String!): String!
+}
+
+# ============================================================================
+# TYPES
+# ============================================================================
+
+"""Agent configuration and capabilities"""
+type AgentDefinitionGQL {
+  """Unique agent identifier"""
+  id: String!
+
+  """Human-readable agent name"""
+  name: String!
+
+  """Agent description"""
+  description: String!
+
+  """LLM provider configuration for this agent"""
+  llmProvider: AgentLLMProviderGQL!
+
+  """LLM model configuration"""
+  llmConfig: LlmConfigGQL!
+
+  """Agent prompt templates"""
+  prompts: AgentPromptsGQL!
+
+  """Agent capabilities"""
+  capabilities: [String!]!
+
+  """Available tools for this agent"""
+  tools: [String!]!
+
+  """Timestamp when agent was created"""
+  createdAt: String!
+
+  """Timestamp when agent was last updated"""
+  updatedAt: String!
+}
+
+"""Agent's LLM provider configuration"""
+type AgentLLMProviderGQL {
+  """Type of LLM provider (openai, anthropic, etc.)"""
+  providerType: String!
+
+  """Model name/identifier"""
+  model: String!
+
+  """Base URL for the provider API"""
+  baseUrl: String
+}
+
+"""Agent prompt templates"""
+type AgentPromptsGQL {
+  """System prompt for the agent"""
+  system: String!
+
+  """User message template"""
+  userTemplate: String!
+
+  """Additional context instructions"""
+  contextInstructions: String
+}
+
+"""LLM model configuration"""
+type LlmConfigGQL {
+  """Sampling temperature (0.0 to 2.0)"""
+  temperature: Float!
+
+  """Maximum tokens to generate"""
+  maxTokens: Int
+
+  """Top-p nucleus sampling parameter"""
+  topP: Float
+
+  """Frequency penalty (-2.0 to 2.0)"""
+  frequencyPenalty: Float
+
+  """Presence penalty (-2.0 to 2.0)"""
+  presencePenalty: Float
+
+  """Stop sequences"""
+  stopSequences: [String!]!
+}
+
+"""Agent execution details and results"""
+type AgentExecutionGQL {
+  """Unique execution identifier"""
+  id: String!
+
+  """ID of the agent that was executed"""
+  agentId: String!
+
+  """ID of the resource being processed"""
+  resourceId: String!
+
+  """ID of the state where execution occurred"""
+  stateId: String!
+
+  """Current execution status"""
+  status: AgentExecutionStatusGQL!
+
+  """Input data provided to the agent"""
+  inputData: JSON!
+
+  """Output data from the agent execution"""
+  outputData: JSON
+
+  """Error message if execution failed"""
+  errorMessage: String
+
+  """Timestamp when execution started"""
+  startedAt: String!
+
+  """Timestamp when execution completed"""
+  completedAt: String
+
+  """Execution duration in milliseconds"""
+  durationMs: Int
+
+  """Number of retry attempts"""
+  retryCount: Int!
+}
+
+"""Agent execution status enumeration"""
+enum AgentExecutionStatusGQL {
+  """Execution is queued and waiting to start"""
+  PENDING
+
+  """Execution is currently running"""
+  RUNNING
+
+  """Execution completed successfully"""
+  COMPLETED
+
+  """Execution failed with an error"""
+  FAILED
+
+  """Execution timed out"""
+  TIMEOUT
+
+  """Execution was cancelled"""
+  CANCELLED
+}
+
+"""State-specific agent configuration"""
+type StateAgentConfigGQL {
+  """Unique configuration identifier"""
+  id: String!
+
+  """ID of the state this configuration applies to"""
+  stateId: String!
+
+  """ID of the agent to execute"""
+  agentId: String!
+
+  """Override LLM configuration for this state"""
+  llmConfig: LlmConfigGQL
+
+  """Input data mapping configuration"""
+  inputMapping: JSON!
+
+  """Output data mapping configuration"""
+  outputMapping: JSON!
+
+  """Activity to automatically execute after agent completion"""
+  autoActivity: String
+
+  """Scheduling configuration for periodic execution"""
+  schedule: StateAgentScheduleGQL
+
+  """Retry configuration for failed executions"""
+  retryConfig: AgentRetryConfigGQL
+
+  """Whether this configuration is enabled"""
+  enabled: Boolean!
+
+  """Timestamp when configuration was created"""
+  createdAt: String!
+
+  """Timestamp when configuration was last updated"""
+  updatedAt: String!
+}
+
+"""Agent scheduling configuration"""
+type StateAgentScheduleGQL {
+  """Initial delay before first execution (seconds)"""
+  initialDelaySeconds: Int
+
+  """Interval between executions (seconds)"""
+  intervalSeconds: Int
+
+  """Maximum number of executions (null for unlimited)"""
+  maxExecutions: Int
+}
+
+"""Agent retry configuration"""
+type AgentRetryConfigGQL {
+  """Maximum number of retry attempts"""
+  maxAttempts: Int!
+
+  """Backoff delay between retries (seconds)"""
+  backoffSeconds: Int!
+
+  """Error types that should trigger retries"""
+  retryOnErrors: [String!]!
+}
+
+# ============================================================================
+# INPUT TYPES
+# ============================================================================
+
+"""Input for creating a new agent"""
+input AgentDefinitionInput {
+  """Human-readable agent name"""
+  name: String!
+
+  """Agent description"""
+  description: String!
+
+  """LLM provider configuration for this agent"""
+  llmProvider: AgentLLMProviderInput!
+
+  """LLM model configuration"""
+  llmConfig: LlmConfigInput!
+
+  """Agent prompt templates"""
+  prompts: AgentPromptsInput!
+
+  """Agent capabilities"""
+  capabilities: [String!]!
+
+  """Available tools for this agent"""
+  tools: [String!]!
+}
+
+"""Input for agent's LLM provider configuration"""
+input AgentLLMProviderInput {
+  """Type of LLM provider (openai, anthropic, etc.)"""
+  providerType: String!
+
+  """Model name/identifier"""
+  model: String!
+
+  """API key for the provider"""
+  apiKey: String!
+
+  """Base URL for the provider API"""
+  baseUrl: String
+}
+
+"""Input for agent prompt templates"""
+input AgentPromptsInput {
+  """System prompt for the agent"""
+  system: String!
+
+  """User message template"""
+  userTemplate: String!
+
+  """Additional context instructions"""
+  contextInstructions: String
+}
+
+"""Input for LLM model configuration"""
+input LlmConfigInput {
+  """Sampling temperature (0.0 to 2.0)"""
+  temperature: Float!
+
+  """Maximum tokens to generate"""
+  maxTokens: Int
+
+  """Top-p nucleus sampling parameter"""
+  topP: Float
+
+  """Frequency penalty (-2.0 to 2.0)"""
+  frequencyPenalty: Float
+
+  """Presence penalty (-2.0 to 2.0)"""
+  presencePenalty: Float
+
+  """Stop sequences"""
+  stopSequences: [String!]!
+}
+
+"""Input for creating state agent configuration"""
+input StateAgentConfigInput {
+  """ID of the state this configuration applies to"""
+  stateId: String!
+
+  """ID of the agent to execute"""
+  agentId: String!
+
+  """Override LLM configuration for this state"""
+  llmConfig: LlmConfigInput
+
+  """Input data mapping configuration"""
+  inputMapping: JSON!
+
+  """Output data mapping configuration"""
+  outputMapping: JSON!
+
+  """Activity to automatically execute after agent completion"""
+  autoActivity: String
+
+  """Scheduling configuration for periodic execution"""
+  schedule: StateAgentScheduleInput
+
+  """Retry configuration for failed executions"""
+  retryConfig: AgentRetryConfigInput
+
+  """Whether this configuration is enabled"""
+  enabled: Boolean!
+}
+
+"""Input for agent scheduling configuration"""
+input StateAgentScheduleInput {
+  """Initial delay before first execution (seconds)"""
+  initialDelaySeconds: Int
+
+  """Interval between executions (seconds)"""
+  intervalSeconds: Int
+
+  """Maximum number of executions (null for unlimited)"""
+  maxExecutions: Int
+}
+
+"""Input for agent retry configuration"""
+input AgentRetryConfigInput {
+  """Maximum number of retry attempts"""
+  maxAttempts: Int!
+
+  """Backoff delay between retries (seconds)"""
+  backoffSeconds: Int!
+
+  """Error types that should trigger retries"""
+  retryOnErrors: [String!]!
+}
+
+"""Input for triggering state agents"""
+input TriggerStateAgentsInput {
+  """ID of the resource to process"""
+  resourceId: String!
+}
+
+# ============================================================================
+# SCALARS
+# ============================================================================
+
+"""JSON scalar type for arbitrary data"""
+scalar JSON

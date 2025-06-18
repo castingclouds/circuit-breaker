@@ -1,0 +1,173 @@
+# Rules Engine Schema
+# Defines GraphQL operations for rule management, evaluation, and conditional logic
+
+# ============================================================================
+# QUERIES
+# ============================================================================
+
+extend type Query {
+  """Get a rule by ID"""
+  rule(id: String!): RuleGQL
+
+  """List all rules, optionally filtered by tags"""
+  rules(tags: [String!]): [RuleGQL!]!
+
+  """Get rules for a specific workflow"""
+  workflowRules(workflowId: String!): [RuleGQL!]!
+}
+
+# ============================================================================
+# MUTATIONS
+# ============================================================================
+
+extend type Mutation {
+  """Create a new rule"""
+  createRule(input: RuleInput!): RuleGQL!
+
+  """Update an existing rule"""
+  updateRule(id: String!, input: RuleInput!): RuleGQL!
+
+  """Delete a rule"""
+  deleteRule(id: String!): Boolean!
+
+  """Evaluate a rule against data"""
+  evaluateRule(input: RuleEvaluationInput!): RuleEvaluationResultGQL!
+}
+
+# ============================================================================
+# TYPES
+# ============================================================================
+
+"""Rule definition with conditions and actions"""
+type RuleGQL {
+  """Unique rule identifier"""
+  id: String!
+
+  """Human-readable rule name"""
+  name: String!
+
+  """Rule description"""
+  description: String!
+
+  """Rule condition logic"""
+  condition: RuleConditionGQL!
+
+  """Rule version number"""
+  version: Int!
+
+  """Timestamp when rule was created"""
+  createdAt: String!
+
+  """Timestamp when rule was last updated"""
+  updatedAt: String!
+
+  """User who created the rule"""
+  createdBy: String
+
+  """Tags for categorizing rules"""
+  tags: [String!]!
+}
+
+"""Rule condition with nested logic support"""
+type RuleConditionGQL {
+  """Type of condition (equals, contains, and, or, not, script, etc.)"""
+  conditionType: String!
+
+  """Field path for value-based conditions"""
+  field: String
+
+  """Expected value for comparison"""
+  value: JSON
+
+  """Substring for contains operations"""
+  substring: String
+
+  """Child rules for logical operations (AND, OR)"""
+  rules: [RuleGQL!]
+
+  """Single child rule for NOT operations"""
+  rule: RuleGQL
+
+  """Custom script for complex conditions"""
+  script: String
+}
+
+"""Rule evaluation result"""
+type RuleEvaluationResultGQL {
+  """ID of the evaluated rule"""
+  ruleId: String!
+
+  """Whether the rule passed evaluation"""
+  passed: Boolean!
+
+  """Human-readable reason for the result"""
+  reason: String!
+
+  """Additional evaluation details"""
+  details: JSON
+
+  """Results from sub-rule evaluations"""
+  subResults: [RuleEvaluationResultGQL!]!
+}
+
+# ============================================================================
+# INPUT TYPES
+# ============================================================================
+
+"""Input for creating or updating a rule"""
+input RuleInput {
+  """Human-readable rule name"""
+  name: String!
+
+  """Rule description"""
+  description: String!
+
+  """Rule condition logic"""
+  condition: RuleConditionInput!
+
+  """Tags for categorizing rules"""
+  tags: [String!]
+}
+
+"""Input for rule condition with nested logic support"""
+input RuleConditionInput {
+  """Type of condition (equals, contains, and, or, not, script, etc.)"""
+  conditionType: String!
+
+  """Field path for value-based conditions"""
+  field: String
+
+  """Expected value for comparison"""
+  value: JSON
+
+  """Substring for contains operations"""
+  substring: String
+
+  """Child rules for logical operations (AND, OR)"""
+  rules: [RuleConditionInput!]
+
+  """Single child rule for NOT operations"""
+  rule: RuleConditionInput
+
+  """Custom script for complex conditions"""
+  script: String
+}
+
+"""Input for evaluating a rule"""
+input RuleEvaluationInput {
+  """ID of the rule to evaluate"""
+  ruleId: String!
+
+  """Data to evaluate against the rule"""
+  data: JSON!
+
+  """Additional metadata for evaluation context"""
+  metadata: JSON
+}
+
+# ============================================================================
+# SCALARS
+# ============================================================================
+
+"""JSON scalar type for arbitrary data"""
+scalar JSON
