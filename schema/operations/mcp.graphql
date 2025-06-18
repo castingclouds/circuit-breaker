@@ -1,0 +1,944 @@
+# MCP (Model Context Protocol) GraphQL Operations
+# These are the actual operations that can be executed against the MCP schema
+# Import the schema: ../mcp.graphql
+
+# Get all MCP servers with optional filtering
+query GetMcpServers($type: McpServerType, $status: McpServerStatus, $pagination: PaginationInput) {
+    mcpServers(type: $type, status: $status, pagination: $pagination) {
+        edges {
+            node {
+                id
+                name
+                description
+                type
+                status
+                tenantId
+                config {
+                    endpoint
+                    timeoutSeconds
+                    maxConnections
+                    ssl {
+                        verify
+                        caCert
+                        clientCert
+                        clientKey
+                    }
+                    retry {
+                        maxAttempts
+                        initialDelayMs
+                        maxDelayMs
+                        backoffMultiplier
+                        jitterFactor
+                    }
+                    rateLimit {
+                        requestsPerSecond
+                        burstSize
+                        windowSeconds
+                    }
+                    headers
+                }
+                auth {
+                    ... on McpOAuthConfig {
+                        provider {
+                            id
+                            name
+                            type
+                        }
+                        clientId
+                        scopes
+                        redirectUri
+                        additionalParams
+                        refreshConfig {
+                            autoRefresh
+                            refreshThresholdSeconds
+                            maxRefreshAttempts
+                            refreshRetryDelaySeconds
+                        }
+                        metadata
+                    }
+                    ... on McpJwtConfig {
+                        issuer
+                        audience
+                        publicKey
+                        algorithm
+                        expirationSeconds
+                        customClaims
+                        metadata
+                    }
+                }
+                capabilities {
+                    tools {
+                        name
+                        description
+                        inputSchema
+                        category
+                        deprecated
+                        metadata
+                    }
+                    resources {
+                        uri
+                        name
+                        description
+                        type
+                        mimeType
+                        metadata
+                    }
+                    prompts {
+                        name
+                        description
+                        template
+                        parameters {
+                            name
+                            description
+                            type
+                            required
+                            defaultValue
+                            constraints
+                        }
+                        category
+                        metadata
+                    }
+                    features {
+                        streaming
+                        fileOperations
+                        notifications
+                        batchOperations
+                        maxRequestSize
+                        contentTypes
+                    }
+                    protocolVersion
+                    lastUpdated
+                }
+                health {
+                    status
+                    lastCheckAt
+                    responseTimeMs
+                    details {
+                        connection
+                        authentication
+                        capabilities
+                        resources
+                        tools
+                    }
+                    uptimeSeconds
+                    error
+                }
+                activeSessionsCount
+                metadata
+                tags
+                enabled
+                audit {
+                    createdBy
+                    createdAt
+                    updatedBy
+                    updatedAt
+                    version
+                }
+            }
+            cursor
+        }
+        pageInfo {
+            hasNextPage
+            hasPreviousPage
+            startCursor
+            endCursor
+            totalCount
+        }
+        totalCount
+    }
+}
+
+# Get a specific MCP server by ID
+query GetMcpServer($id: ID!) {
+    mcpServer(id: $id) {
+        id
+        name
+        description
+        type
+        status
+        tenantId
+        config {
+            endpoint
+            timeoutSeconds
+            maxConnections
+            ssl {
+                verify
+                caCert
+                clientCert
+                clientKey
+            }
+            retry {
+                maxAttempts
+                initialDelayMs
+                maxDelayMs
+                backoffMultiplier
+                jitterFactor
+            }
+            rateLimit {
+                requestsPerSecond
+                burstSize
+                windowSeconds
+            }
+            headers
+        }
+        auth {
+            ... on McpOAuthConfig {
+                provider {
+                    id
+                    name
+                    type
+                    authorizationEndpoint
+                    tokenEndpoint
+                    userInfoEndpoint
+                    revocationEndpoint
+                    supportedScopes
+                    config
+                    enabled
+                }
+                clientId
+                scopes
+                redirectUri
+                additionalParams
+                refreshConfig {
+                    autoRefresh
+                    refreshThresholdSeconds
+                    maxRefreshAttempts
+                    refreshRetryDelaySeconds
+                }
+                metadata
+            }
+            ... on McpJwtConfig {
+                issuer
+                audience
+                publicKey
+                algorithm
+                expirationSeconds
+                customClaims
+                metadata
+            }
+        }
+        capabilities {
+            serverId
+            tools {
+                name
+                description
+                inputSchema
+                category
+                deprecated
+                metadata
+            }
+            resources {
+                uri
+                name
+                description
+                type
+                mimeType
+                metadata
+            }
+            prompts {
+                name
+                description
+                template
+                parameters {
+                    name
+                    description
+                    type
+                    required
+                    defaultValue
+                    constraints
+                }
+                category
+                metadata
+            }
+            features {
+                streaming
+                fileOperations
+                notifications
+                batchOperations
+                maxRequestSize
+                contentTypes
+            }
+            protocolVersion
+            lastUpdated
+        }
+        health {
+            status
+            lastCheckAt
+            responseTimeMs
+            details {
+                connection
+                authentication
+                capabilities
+                resources
+                tools
+            }
+            uptimeSeconds
+            error
+        }
+        activeSessionsCount
+        metadata
+        tags
+        enabled
+        audit {
+            createdBy
+            createdAt
+            updatedBy
+            updatedAt
+            version
+        }
+    }
+}
+
+# Get MCP servers for a specific tenant
+query GetMcpServersByTenant($tenantId: String!, $pagination: PaginationInput) {
+    mcpServersByTenant(tenantId: $tenantId, pagination: $pagination) {
+        edges {
+            node {
+                id
+                name
+                description
+                type
+                status
+                tenantId
+                config {
+                    endpoint
+                    timeoutSeconds
+                    maxConnections
+                }
+                auth {
+                    ... on McpOAuthConfig {
+                        provider {
+                            id
+                            name
+                            type
+                        }
+                        scopes
+                    }
+                    ... on McpJwtConfig {
+                        issuer
+                        audience
+                        algorithm
+                    }
+                }
+                activeSessionsCount
+                enabled
+                audit {
+                    createdAt
+                    updatedAt
+                }
+            }
+            cursor
+        }
+        pageInfo {
+            hasNextPage
+            hasPreviousPage
+            startCursor
+            endCursor
+        }
+        totalCount
+    }
+}
+
+# Get OAuth providers available for MCP authentication
+query GetMcpOAuthProviders {
+    mcpOAuthProviders {
+        id
+        name
+        type
+        authorizationEndpoint
+        tokenEndpoint
+        userInfoEndpoint
+        revocationEndpoint
+        supportedScopes
+        config
+        enabled
+    }
+}
+
+# Get MCP server capabilities
+query GetMcpServerCapabilities($serverId: ID!) {
+    mcpServerCapabilities(serverId: $serverId) {
+        serverId
+        tools {
+            name
+            description
+            inputSchema
+            category
+            deprecated
+            metadata
+        }
+        resources {
+            uri
+            name
+            description
+            type
+            mimeType
+            metadata
+        }
+        prompts {
+            name
+            description
+            template
+            parameters {
+                name
+                description
+                type
+                required
+                defaultValue
+                constraints
+            }
+            category
+            metadata
+        }
+        features {
+            streaming
+            fileOperations
+            notifications
+            batchOperations
+            maxRequestSize
+            contentTypes
+        }
+        protocolVersion
+        lastUpdated
+    }
+}
+
+# Get MCP server health status
+query GetMcpServerHealth($serverId: ID!) {
+    mcpServerHealth(serverId: $serverId) {
+        status
+        lastCheckAt
+        responseTimeMs
+        details {
+            connection
+            authentication
+            capabilities
+            resources
+            tools
+        }
+        uptimeSeconds
+        error
+    }
+}
+
+# Get active MCP sessions for a user
+query GetMcpSessions($userId: String, $serverId: ID, $pagination: PaginationInput) {
+    mcpSessions(userId: $userId, serverId: $serverId, pagination: $pagination) {
+        edges {
+            node {
+                id
+                server {
+                    id
+                    name
+                    type
+                }
+                userId
+                status
+                authMethod
+                accessToken
+                tokenExpiresAt
+                refreshToken
+                metadata
+                createdAt
+                lastActivityAt
+                expiresAt
+                requestCount
+                userAgent
+                ipAddress
+            }
+            cursor
+        }
+        pageInfo {
+            hasNextPage
+            hasPreviousPage
+            startCursor
+            endCursor
+        }
+        totalCount
+    }
+}
+
+# Create a new MCP server instance
+mutation CreateMcpServer($input: CreateMcpServerInput!) {
+    createMcpServer(input: $input) {
+        id
+        name
+        description
+        type
+        status
+        tenantId
+        config {
+            endpoint
+            timeoutSeconds
+            maxConnections
+            ssl {
+                verify
+            }
+            retry {
+                maxAttempts
+                initialDelayMs
+                maxDelayMs
+                backoffMultiplier
+                jitterFactor
+            }
+            rateLimit {
+                requestsPerSecond
+                burstSize
+                windowSeconds
+            }
+            headers
+        }
+        auth {
+            ... on McpOAuthConfig {
+                provider {
+                    id
+                    name
+                    type
+                }
+                clientId
+                scopes
+                redirectUri
+                additionalParams
+                refreshConfig {
+                    autoRefresh
+                    refreshThresholdSeconds
+                    maxRefreshAttempts
+                    refreshRetryDelaySeconds
+                }
+                metadata
+            }
+            ... on McpJwtConfig {
+                issuer
+                audience
+                publicKey
+                algorithm
+                expirationSeconds
+                customClaims
+                metadata
+            }
+        }
+        metadata
+        tags
+        enabled
+        audit {
+            createdBy
+            createdAt
+            updatedBy
+            updatedAt
+            version
+        }
+    }
+}
+
+# Update an existing MCP server
+mutation UpdateMcpServer($id: ID!, $input: UpdateMcpServerInput!) {
+    updateMcpServer(id: $id, input: $input) {
+        id
+        name
+        description
+        type
+        status
+        tenantId
+        config {
+            endpoint
+            timeoutSeconds
+            maxConnections
+            ssl {
+                verify
+            }
+            retry {
+                maxAttempts
+                initialDelayMs
+                maxDelayMs
+                backoffMultiplier
+                jitterFactor
+            }
+            rateLimit {
+                requestsPerSecond
+                burstSize
+                windowSeconds
+            }
+            headers
+        }
+        auth {
+            ... on McpOAuthConfig {
+                provider {
+                    id
+                    name
+                    type
+                }
+                clientId
+                scopes
+                redirectUri
+                additionalParams
+                refreshConfig {
+                    autoRefresh
+                    refreshThresholdSeconds
+                    maxRefreshAttempts
+                    refreshRetryDelaySeconds
+                }
+                metadata
+            }
+            ... on McpJwtConfig {
+                issuer
+                audience
+                publicKey
+                algorithm
+                expirationSeconds
+                customClaims
+                metadata
+            }
+        }
+        metadata
+        tags
+        enabled
+        audit {
+            createdBy
+            createdAt
+            updatedBy
+            updatedAt
+            version
+        }
+    }
+}
+
+# Delete an MCP server
+mutation DeleteMcpServer($id: ID!) {
+    deleteMcpServer(id: $id) {
+        success
+        message
+        errorCode
+        data
+    }
+}
+
+# Configure OAuth for an MCP server
+mutation ConfigureMcpOAuth($input: ConfigureMcpOAuthInput!) {
+    configureMcpOAuth(input: $input) {
+        provider {
+            id
+            name
+            type
+            authorizationEndpoint
+            tokenEndpoint
+            userInfoEndpoint
+            revocationEndpoint
+            supportedScopes
+            config
+            enabled
+        }
+        clientId
+        scopes
+        redirectUri
+        additionalParams
+        refreshConfig {
+            autoRefresh
+            refreshThresholdSeconds
+            maxRefreshAttempts
+            refreshRetryDelaySeconds
+        }
+        metadata
+    }
+}
+
+# Configure JWT authentication for an MCP server
+mutation ConfigureMcpJwt($input: ConfigureMcpJwtInput!) {
+    configureMcpJwt(input: $input) {
+        issuer
+        audience
+        publicKey
+        algorithm
+        expirationSeconds
+        customClaims
+        metadata
+    }
+}
+
+# Initiate OAuth flow for MCP server
+mutation InitiateMcpOAuth($input: InitiateMcpOAuthInput!) {
+    initiateMcpOAuth(input: $input) {
+        authorizationUrl
+        state
+        codeVerifier
+        provider {
+            id
+            name
+            type
+            authorizationEndpoint
+            tokenEndpoint
+            supportedScopes
+            enabled
+        }
+        expiresAt
+    }
+}
+
+# Complete OAuth flow and create session
+mutation CompleteMcpOAuth($input: CompleteMcpOAuthInput!) {
+    completeMcpOAuth(input: $input) {
+        id
+        server {
+            id
+            name
+            type
+        }
+        userId
+        status
+        authMethod
+        accessToken
+        tokenExpiresAt
+        refreshToken
+        metadata
+        createdAt
+        lastActivityAt
+        expiresAt
+        requestCount
+        userAgent
+        ipAddress
+    }
+}
+
+# Authenticate with JWT for MCP server
+mutation AuthenticateMcpJwt($input: AuthenticateMcpJwtInput!) {
+    authenticateMcpJwt(input: $input) {
+        id
+        server {
+            id
+            name
+            type
+        }
+        userId
+        status
+        authMethod
+        accessToken
+        tokenExpiresAt
+        refreshToken
+        metadata
+        createdAt
+        lastActivityAt
+        expiresAt
+        requestCount
+        userAgent
+        ipAddress
+    }
+}
+
+# Refresh MCP session token
+mutation RefreshMcpSession($sessionId: ID!) {
+    refreshMcpSession(sessionId: $sessionId) {
+        id
+        server {
+            id
+            name
+            type
+        }
+        userId
+        status
+        authMethod
+        accessToken
+        tokenExpiresAt
+        refreshToken
+        metadata
+        createdAt
+        lastActivityAt
+        expiresAt
+        requestCount
+        userAgent
+        ipAddress
+    }
+}
+
+# Revoke MCP session
+mutation RevokeMcpSession($sessionId: ID!) {
+    revokeMcpSession(sessionId: $sessionId) {
+        success
+        message
+        errorCode
+        data
+    }
+}
+
+# Register MCP server tools and capabilities
+mutation RegisterMcpCapabilities($input: RegisterMcpCapabilitiesInput!) {
+    registerMcpCapabilities(input: $input) {
+        serverId
+        tools {
+            name
+            description
+            inputSchema
+            category
+            deprecated
+            metadata
+        }
+        resources {
+            uri
+            name
+            description
+            type
+            mimeType
+            metadata
+        }
+        prompts {
+            name
+            description
+            template
+            parameters {
+                name
+                description
+                type
+                required
+                defaultValue
+                constraints
+            }
+            category
+            metadata
+        }
+        features {
+            streaming
+            fileOperations
+            notifications
+            batchOperations
+            maxRequestSize
+            contentTypes
+        }
+        protocolVersion
+        lastUpdated
+    }
+}
+
+# Enable/disable MCP server
+mutation ToggleMcpServer($id: ID!, $enabled: Boolean!) {
+    toggleMcpServer(id: $id, enabled: $enabled) {
+        id
+        name
+        description
+        type
+        status
+        tenantId
+        enabled
+        audit {
+            createdBy
+            createdAt
+            updatedBy
+            updatedAt
+            version
+        }
+    }
+}
+
+# Test MCP server connection
+mutation TestMcpConnection($serverId: ID!) {
+    testMcpConnection(serverId: $serverId) {
+        success
+        responseTimeMs
+        error
+        details {
+            dnsResolution
+            tcpConnection
+            sslHandshake
+            httpStatus
+            authentication
+            capabilities
+        }
+        testedAt
+    }
+}
+
+# Subscribe to MCP server status changes
+subscription McpServerStatusUpdates($serverId: ID) {
+    mcpServerStatusUpdates(serverId: $serverId) {
+        serverId
+        oldStatus
+        newStatus
+        timestamp
+        data
+    }
+}
+
+# Subscribe to MCP session events
+subscription McpSessionEvents($userId: String, $serverId: ID) {
+    mcpSessionEvents(userId: $userId, serverId: $serverId) {
+        sessionId
+        type
+        session {
+            id
+            server {
+                id
+                name
+                type
+            }
+            userId
+            status
+            authMethod
+            tokenExpiresAt
+            createdAt
+            lastActivityAt
+            expiresAt
+            requestCount
+        }
+        timestamp
+        data
+    }
+}
+
+# Subscribe to MCP server capability updates
+subscription McpCapabilityUpdates($serverId: ID!) {
+    mcpCapabilityUpdates(serverId: $serverId) {
+        serverId
+        tools {
+            name
+            description
+            inputSchema
+            category
+            deprecated
+            metadata
+        }
+        resources {
+            uri
+            name
+            description
+            type
+            mimeType
+            metadata
+        }
+        prompts {
+            name
+            description
+            template
+            parameters {
+                name
+                description
+                type
+                required
+                defaultValue
+                constraints
+            }
+            category
+            metadata
+        }
+        features {
+            streaming
+            fileOperations
+            notifications
+            batchOperations
+            maxRequestSize
+            contentTypes
+        }
+        protocolVersion
+        lastUpdated
+    }
+}
+
+# Subscribe to MCP authentication events
+subscription McpAuthEvents($tenantId: String) {
+    mcpAuthEvents(tenantId: $tenantId) {
+        type
+        serverId
+        userId
+        authMethod
+        timestamp
+        success
+        error
+        data
+    }
+}

@@ -12,6 +12,7 @@ The Circuit Breaker GraphQL API provides comprehensive operations for:
 - **Rules Engine**: Create and evaluate conditional business rules
 - **Real-time Subscriptions**: Stream updates for workflows, agents, and system events
 - **NATS Integration**: Enhanced event streaming and distributed operations
+- **MCP Server Management**: Multi-tenant Model Context Protocol servers with OAuth and JWT authentication
 
 ## Schema Files
 
@@ -25,6 +26,7 @@ The Circuit Breaker GraphQL API provides comprehensive operations for:
 | [`analytics.graphql`](analytics.graphql) | Cost tracking, budget management, and analytics | 2 queries, 1 mutation, 1 subscription |
 | [`rules.graphql`](rules.graphql) | Rules engine operations and evaluation | 3 queries, 4 mutations |
 | [`nats.graphql`](nats.graphql) | NATS-enhanced operations and event streaming | 3 queries, 2 mutations |
+| [`mcp.graphql`](mcp.graphql) | Model Context Protocol server management with OAuth/JWT | 8 queries, 12 mutations, 4 subscriptions |
 | [`subscriptions.graphql`](subscriptions.graphql) | Real-time subscription operations | 8 subscriptions |
 | [`types.graphql`](types.graphql) | Shared types, scalars, and input objects | Common types, enums, interfaces |
 
@@ -92,6 +94,15 @@ type Query {
   
   # NATS operations
   natsResource(id: String!): NatsResourceGQL
+  
+  # MCP operations
+  mcpServers(type: McpServerType, status: McpServerStatus): McpServerConnection!
+  mcpServer(id: ID!): McpServer
+  mcpServersByTenant(tenantId: String!): McpServerConnection!
+  mcpOAuthProviders: [McpOAuthProvider!]!
+  mcpServerCapabilities(serverId: ID!): McpServerCapabilities
+  mcpServerHealth(serverId: ID!): McpServerHealth!
+  mcpSessions(userId: String, serverId: ID): McpSessionConnection!
 }
 
 type Mutation {
@@ -114,6 +125,21 @@ type Mutation {
   # Rules mutations
   createRule(input: RuleInput!): RuleGQL!
   evaluateRule(input: RuleEvaluationInput!): RuleEvaluationResultGQL!
+  
+  # MCP mutations
+  createMcpServer(input: CreateMcpServerInput!): McpServer!
+  updateMcpServer(id: ID!, input: UpdateMcpServerInput!): McpServer!
+  deleteMcpServer(id: ID!): ApiResponse!
+  configureMcpOAuth(input: ConfigureMcpOAuthInput!): McpOAuthConfig!
+  configureMcpJwt(input: ConfigureMcpJwtInput!): McpJwtConfig!
+  initiateMcpOAuth(input: InitiateMcpOAuthInput!): McpOAuthInitiation!
+  completeMcpOAuth(input: CompleteMcpOAuthInput!): McpSession!
+  authenticateMcpJwt(input: AuthenticateMcpJwtInput!): McpSession!
+  refreshMcpSession(sessionId: ID!): McpSession!
+  revokeMcpSession(sessionId: ID!): ApiResponse!
+  registerMcpCapabilities(input: RegisterMcpCapabilitiesInput!): McpServerCapabilities!
+  toggleMcpServer(id: ID!, enabled: Boolean!): McpServer!
+  testMcpConnection(serverId: ID!): McpConnectionTest!
 }
 
 type Subscription {
@@ -123,6 +149,10 @@ type Subscription {
   agentExecutionStream(executionId: String!): AgentExecutionEventGQL!
   llmStream(requestId: String!): LlmStreamEventGQL!
   costUpdates(userId: String): CostUpdateEventGQL!
+  mcpServerStatusUpdates(serverId: ID): McpServerStatusEvent!
+  mcpSessionEvents(userId: String, serverId: ID): McpSessionEvent!
+  mcpCapabilityUpdates(serverId: ID!): McpServerCapabilities!
+  mcpAuthEvents(tenantId: String): McpAuthEvent!
 }
 ```
 
@@ -146,6 +176,14 @@ type Subscription {
 #### Analytics Types
 - `BudgetStatusGQL`: Budget limits and usage tracking
 - `CostAnalyticsGQL`: Cost breakdown and analytics data
+
+#### MCP Types
+- `McpServer`: MCP server instance with configuration and health status
+- `McpSession`: Active MCP sessions with authentication and token management
+- `McpOAuthConfig`: OAuth configuration for GitLab, GitHub, and other providers
+- `McpJwtConfig`: JWT authentication configuration and validation
+- `McpServerCapabilities`: Available tools, resources, and prompts
+- `McpServerHealth`: Health monitoring and connection status
 
 ## Example Operations
 
@@ -226,6 +264,116 @@ subscription ResourceUpdates {
       toState
       activity
     }
+  }
+}
+```
+
+### Create MCP Server with OAuth
+
+```graphql
+mutation CreateMcpServer {
+  createMcpServer(input: {
+    name: "GitLab MCP Server"
+    description: "Multi-tenant MCP server with GitLab OAuth"
+    type: REMOTE
+    tenantId: "tenant-123"
+    config: {
+      endpoint: "https://mcp.example.com"
+      timeoutSeconds: 30
+      maxConnections: 100
+    }
+    auth: {
+      oauth: {
+        providerId: "gitlab"
+        clientId: "7b0f347f26b4fe62313cd8a627e38193f2b209365ed3398d44fe02e69972a1eb"
+        clientSecret: "gloas-c2004e0cc0a3f7465c569db45e23a24aca734ce2316af6f903060479857d1226"
+        scopes: ["api"]
+        redirectUri: "https://2bc3-76-182-171-196.ngrok-free.app/oauth/callback"
+      }
+    }
+    tags: ["gitlab", "oauth", "remote"]
+  }) {
+    id
+    name
+    type
+    status
+    auth {
+      ... on McpOAuthConfig {
+        provider {
+          name
+          type
+        }
+        scopes
+        redirectUri
+      }
+    }
+    health {
+      status
+      responseTimeMs
+    }
+  }
+}
+```
+
+### Initiate OAuth Flow
+
+```graphql
+mutation InitiateOAuthFlow {
+  initiateMcpOAuth(input: {
+    serverId: "mcp-server-123"
+    userId: "user-456"
+    redirectUri: "https://2bc3-76-182-171-196.ngrok-free.app/oauth/callback"
+  }) {
+    authorizationUrl
+    state
+    provider {
+      name
+      type
+    }
+    expiresAt
+  }
+}
+```
+
+### Complete OAuth and Create Session
+
+```graphql
+mutation CompleteOAuthFlow {
+  completeMcpOAuth(input: {
+    serverId: "mcp-server-123"
+    userId: "user-456"
+    code: "authorization-code-from-provider"
+    state: "csrf-state-parameter"
+  }) {
+    id
+    status
+    authMethod
+    tokenExpiresAt
+    server {
+      name
+      type
+    }
+    createdAt
+  }
+}
+```
+
+### Subscribe to MCP Events
+
+```graphql
+subscription McpSessionEvents {
+  mcpSessionEvents(userId: "user-456") {
+    type
+    session {
+      id
+      status
+      server {
+        name
+        type
+      }
+    }
+    timestamp
+    success
   }
 }
 ```
