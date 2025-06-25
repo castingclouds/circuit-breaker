@@ -225,6 +225,21 @@ impl Client {
         crate::llm::LLMClient::new(self.clone())
     }
 
+    /// Access analytics and budget management API
+    pub fn analytics(&self) -> crate::analytics::AnalyticsClient {
+        crate::analytics::AnalyticsClient::new(self.clone())
+    }
+
+    /// Access MCP (Model Context Protocol) API
+    pub fn mcp(&self) -> crate::mcp::MCPClient {
+        crate::mcp::MCPClient::new(self.clone())
+    }
+
+    /// Access NATS-enhanced operations API
+    pub fn nats(&self) -> crate::nats::NATSClient {
+        crate::nats::NATSClient::new(self.clone())
+    }
+
     /// Make a GraphQL request
     pub async fn graphql<T, V>(&self, query: &str, variables: V) -> Result<T>
     where
@@ -274,6 +289,18 @@ impl Client {
         graphql_response.data.ok_or_else(|| Error::Parse {
             message: "GraphQL response missing data field".to_string(),
         })
+    }
+
+    /// Make a GraphQL query with optional variables
+    pub async fn graphql_query<T, V>(&self, query: &str, variables: Option<V>) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+        V: Serialize,
+    {
+        match variables {
+            Some(vars) => self.graphql(query, vars).await,
+            None => self.graphql(query, serde_json::Value::Null).await,
+        }
     }
 
     /// Make a REST request

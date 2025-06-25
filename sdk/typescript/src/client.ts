@@ -23,6 +23,8 @@ import { FunctionClient } from "./functions.js";
 import { ResourceClient } from "./resources.js";
 import { RuleClient } from "./rules.js";
 import { LLMClient } from "./llm.js";
+import { AnalyticsClient } from "./analytics.js";
+import { MCPClient } from "./mcp.js";
 
 // ============================================================================
 // GraphQL Types
@@ -206,6 +208,20 @@ export class Client {
    */
   llm(): LLMClient {
     return new LLMClient(this);
+  }
+
+  /**
+   * Access analytics and budget management API
+   */
+  analytics(): AnalyticsClient {
+    return new AnalyticsClient(this);
+  }
+
+  /**
+   * Access MCP (Model Context Protocol) API
+   */
+  mcp(): MCPClient {
+    return new MCPClient(this);
   }
 
   // ============================================================================

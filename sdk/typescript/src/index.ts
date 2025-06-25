@@ -53,6 +53,33 @@ export {
   quickChat,
   COMMON_MODELS,
 } from "./llm.js";
+export {
+  AnalyticsClient,
+  BudgetStatusBuilder,
+  CostAnalyticsBuilder,
+  SetBudgetBuilder,
+  costAnalytics,
+  budgetStatus,
+  setBudget,
+  getUserBudgetStatus,
+  getProjectBudgetStatus,
+  getUserMonthlyCostAnalytics,
+  setUserMonthlyBudget,
+} from "./analytics.js";
+export {
+  MCPClient,
+  MCPServersBuilder,
+  CreateMCPServerBuilder,
+  UpdateMCPServerBuilder,
+  ConfigureOAuthBuilder,
+  ConfigureJWTBuilder,
+  MCPServerType,
+  MCPServerStatus,
+  createMCPServer,
+  listMCPServers,
+  getMCPServerHealth,
+  getCustomMCPServer,
+} from "./mcp.js";
 
 // ============================================================================
 // Types
@@ -106,6 +133,39 @@ export type {
   Choice,
   Usage,
 } from "./types.js";
+
+// ============================================================================
+// Analytics Types (from analytics.js)
+// ============================================================================
+
+export type {
+  BudgetStatus,
+  CostAnalytics,
+  BudgetInput,
+  CostAnalyticsInput,
+  CostUpdateEvent,
+} from "./analytics.js";
+
+// ============================================================================
+// MCP Types (from mcp.js)
+// ============================================================================
+
+export type {
+  MCPServer,
+  MCPServerConnection,
+  MCPOAuthProvider,
+  MCPServerCapabilities,
+  MCPServerHealth,
+  MCPOAuthInitiation,
+  MCPSession,
+  MCPOAuthConfig,
+  MCPJWTConfig,
+  CreateMCPServerInput,
+  UpdateMCPServerInput,
+  ConfigureOAuthInput,
+  ConfigureJWTInput,
+  PaginationInput,
+} from "./mcp.js";
 
 // ============================================================================
 // Rule Types (from rules.js)
@@ -254,6 +314,20 @@ export class CircuitBreakerSDK {
    */
   llm(): LLMClient {
     return this.client.llm();
+  }
+
+  /**
+   * Access analytics and budget management API
+   */
+  analytics(): AnalyticsClient {
+    return this.client.analytics();
+  }
+
+  /**
+   * Access MCP (Model Context Protocol) API
+   */
+  mcp(): MCPClient {
+    return this.client.mcp();
   }
 
   /**

@@ -11,6 +11,47 @@ use uuid::Uuid;
 // Core Types
 // ============================================================================
 
+/// Pagination input parameters
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaginationInput {
+    /// Number of items to return
+    pub first: Option<i32>,
+    /// Cursor to start after
+    pub after: Option<String>,
+    /// Number of items to return from the end
+    pub last: Option<i32>,
+    /// Cursor to start before
+    pub before: Option<String>,
+}
+
+/// Pagination information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageInfo {
+    /// Whether there are more items after this page
+    pub has_next_page: bool,
+    /// Whether there are items before this page
+    pub has_previous_page: bool,
+    /// Cursor for the first item in this page
+    pub start_cursor: Option<String>,
+    /// Cursor for the last item in this page
+    pub end_cursor: Option<String>,
+    /// Total number of items
+    pub total_count: Option<i32>,
+}
+
+/// Standard API response wrapper
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiResponse {
+    /// Whether the operation was successful
+    pub success: bool,
+    /// Human-readable message
+    pub message: String,
+    /// Error code if operation failed
+    pub error_code: Option<String>,
+    /// Additional response data
+    pub data: Option<serde_json::Value>,
+}
+
 /// Unique identifier for workflows
 pub type WorkflowId = Uuid;
 
