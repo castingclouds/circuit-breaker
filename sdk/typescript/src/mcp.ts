@@ -5,7 +5,8 @@
  * and managing sessions for the Circuit Breaker workflow automation server.
  */
 
-import { Client } from './client.js';
+import { Client } from "./client.js";
+import { QueryBuilder } from "./schema";
 
 // ============================================================================
 // Types
@@ -15,19 +16,19 @@ import { Client } from './client.js';
  * MCP Server type enumeration
  */
 export enum MCPServerType {
-  BUILT_IN = 'BUILT_IN',
-  CUSTOM = 'CUSTOM',
-  THIRD_PARTY = 'THIRD_PARTY',
+  BUILT_IN = "BUILT_IN",
+  CUSTOM = "CUSTOM",
+  THIRD_PARTY = "THIRD_PARTY",
 }
 
 /**
  * MCP Server status enumeration
  */
 export enum MCPServerStatus {
-  ACTIVE = 'ACTIVE',
-  INACTIVE = 'INACTIVE',
-  ERROR = 'ERROR',
-  CONNECTING = 'CONNECTING',
+  ACTIVE = "ACTIVE",
+  INACTIVE = "INACTIVE",
+  ERROR = "ERROR",
+  CONNECTING = "CONNECTING",
 }
 
 /**
@@ -301,23 +302,22 @@ export class MCPClient {
    * Get a specific MCP server by ID
    */
   async getServer(id: string): Promise<MCPServer | null> {
-    const query = `
-      query GetMCPServer($id: ID!) {
-        mcpServer(id: $id) {
-          id
-          name
-          description
-          type
-          status
-          config
-          capabilities
-          health
-          tenantId
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const query = QueryBuilder.queryWithParams(
+      "GetMCPServer",
+      "mcpServer(id: $id)",
+      [
+        "id",
+        "name",
+        "description",
+        "type",
+        "status",
+        "config",
+        "capabilities",
+        "createdAt",
+        "updatedAt",
+      ],
+      [["id", "ID!"]],
+    );
 
     const variables = { id };
 
@@ -345,17 +345,15 @@ export class MCPClient {
   /**
    * Delete an MCP server
    */
-  async deleteServer(id: string): Promise<{ success: boolean; message: string }> {
-    const query = `
-      mutation DeleteMCPServer($id: ID!) {
-        deleteMcpServer(id: $id) {
-          success
-          message
-          errorCode
-          data
-        }
-      }
-    `;
+  async deleteServer(
+    id: string,
+  ): Promise<{ success: boolean; message: string }> {
+    const query = QueryBuilder.mutationWithParams(
+      "DeleteMCPServer",
+      "deleteMcpServer(id: $id)",
+      ["success", "message", "errorCode", "data"],
+      [["id", "ID!"]],
+    );
 
     const variables = { id };
 
@@ -392,17 +390,11 @@ export class MCPClient {
    * Get available OAuth providers
    */
   async getOAuthProviders(): Promise<MCPOAuthProvider[]> {
-    const query = `
-      query GetMCPOAuthProviders {
-        mcpOAuthProviders {
-          id
-          name
-          type
-          config
-          isEnabled
-        }
-      }
-    `;
+    const query = QueryBuilder.query(
+      "GetMCPOAuthProviders",
+      "mcpOAuthProviders",
+      ["id", "name", "type", "config", "isEnabled"],
+    );
 
     const response = await this.client.graphql<{
       mcpOAuthProviders: MCPOAuthProvider[];
@@ -414,17 +406,15 @@ export class MCPClient {
   /**
    * Get server capabilities
    */
-  async getServerCapabilities(serverId: string): Promise<MCPServerCapabilities | null> {
-    const query = `
-      query GetMCPServerCapabilities($serverId: ID!) {
-        mcpServerCapabilities(serverId: $serverId) {
-          tools
-          resources
-          prompts
-          sampling
-        }
-      }
-    `;
+  async getServerCapabilities(
+    serverId: string,
+  ): Promise<MCPServerCapabilities | null> {
+    const query = QueryBuilder.queryWithParams(
+      "GetMCPServerCapabilities",
+      "mcpServerCapabilities(serverId: $serverId)",
+      ["tools", "resources", "prompts", "sampling"],
+      [["serverId", "ID!"]],
+    );
 
     const variables = { serverId };
 
@@ -439,17 +429,12 @@ export class MCPClient {
    * Get server health status
    */
   async getServerHealth(serverId: string): Promise<MCPServerHealth> {
-    const query = `
-      query GetMCPServerHealth($serverId: ID!) {
-        mcpServerHealth(serverId: $serverId) {
-          status
-          message
-          lastCheck
-          responseTime
-          details
-        }
-      }
-    `;
+    const query = QueryBuilder.queryWithParams(
+      "GetMCPServerHealth",
+      "mcpServerHealth(serverId: $serverId)",
+      ["status", "message", "lastCheck", "responseTime", "details"],
+      [["serverId", "ID!"]],
+    );
 
     const variables = { serverId };
 
@@ -463,17 +448,16 @@ export class MCPClient {
   /**
    * Initiate OAuth flow
    */
-  async initiateOAuth(serverId: string, userId: string): Promise<MCPOAuthInitiation> {
-    const query = `
-      mutation InitiateMCPOAuth($input: InitiateMcpOAuthInput!) {
-        initiateMcpOAuth(input: $input) {
-          authUrl
-          state
-          codeChallenge
-          expiresAt
-        }
-      }
-    `;
+  async initiateOAuth(
+    serverId: string,
+    userId: string,
+  ): Promise<MCPOAuthInitiation> {
+    const query = QueryBuilder.mutationWithParams(
+      "InitiateMCPOAuth",
+      "initiateMcpOAuth(input: $input)",
+      ["authUrl", "state", "codeChallenge", "expiresAt"],
+      [["input", "InitiateMcpOAuthInput!"]],
+    );
 
     const input = { serverId, userId };
     const variables = { input };
@@ -489,21 +473,22 @@ export class MCPClient {
    * Complete OAuth flow
    */
   async completeOAuth(state: string, code: string): Promise<MCPSession> {
-    const query = `
-      mutation CompleteMCPOAuth($input: CompleteMcpOAuthInput!) {
-        completeMcpOAuth(input: $input) {
-          id
-          serverId
-          userId
-          status
-          accessToken
-          refreshToken
-          expiresAt
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const query = QueryBuilder.mutationWithParams(
+      "CompleteMCPOAuth",
+      "completeMcpOAuth(input: $input)",
+      [
+        "id",
+        "serverId",
+        "userId",
+        "status",
+        "accessToken",
+        "refreshToken",
+        "expiresAt",
+        "createdAt",
+        "updatedAt",
+      ],
+      [["input", "CompleteMcpOAuthInput!"]],
+    );
 
     const input = { state, code };
     const variables = { input };
@@ -625,7 +610,11 @@ export class MCPServersBuilder {
 
     const variables = this._tenantId
       ? { tenantId: this._tenantId, pagination: this._pagination }
-      : { type: this._type, status: this._status, pagination: this._pagination };
+      : {
+          type: this._type,
+          status: this._status,
+          pagination: this._pagination,
+        };
 
     const response = await this.client.graphql<{
       mcpServers?: MCPServerConnection;
@@ -693,29 +682,28 @@ export class CreateMCPServerBuilder {
    */
   async execute(): Promise<MCPServer> {
     if (!this._name) {
-      throw new Error('name is required');
+      throw new Error("name is required");
     }
     if (!this._type) {
-      throw new Error('type is required');
+      throw new Error("type is required");
     }
 
-    const query = `
-      mutation CreateMCPServer($input: CreateMcpServerInput!) {
-        createMcpServer(input: $input) {
-          id
-          name
-          description
-          type
-          status
-          config
-          capabilities
-          health
-          tenantId
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const query = QueryBuilder.mutationWithParams(
+      "CreateMCPServer",
+      "createMcpServer(input: $input)",
+      [
+        "id",
+        "name",
+        "description",
+        "type",
+        "status",
+        "config",
+        "capabilities",
+        "createdAt",
+        "updatedAt",
+      ],
+      [["input", "CreateMcpServerInput!"]],
+    );
 
     const input: CreateMCPServerInput = {
       name: this._name,
@@ -744,7 +732,10 @@ export class UpdateMCPServerBuilder {
   private _status?: MCPServerStatus;
   private _config?: Record<string, any>;
 
-  constructor(private client: Client, private id: string) {}
+  constructor(
+    private client: Client,
+    private id: string,
+  ) {}
 
   /**
    * Set the server name
@@ -782,23 +773,25 @@ export class UpdateMCPServerBuilder {
    * Execute the update server mutation
    */
   async execute(): Promise<MCPServer> {
-    const query = `
-      mutation UpdateMCPServer($id: ID!, $input: UpdateMcpServerInput!) {
-        updateMcpServer(id: $id, input: $input) {
-          id
-          name
-          description
-          type
-          status
-          config
-          capabilities
-          health
-          tenantId
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const query = QueryBuilder.mutationWithParams(
+      "UpdateMCPServer",
+      "updateMcpServer(id: $id, input: $input)",
+      [
+        "id",
+        "name",
+        "description",
+        "type",
+        "status",
+        "config",
+        "capabilities",
+        "createdAt",
+        "updatedAt",
+      ],
+      [
+        ["id", "ID!"],
+        ["input", "UpdateMcpServerInput!"],
+      ],
+    );
 
     const input: UpdateMCPServerInput = {
       name: this._name,
@@ -883,33 +876,34 @@ export class ConfigureOAuthBuilder {
    */
   async execute(): Promise<MCPOAuthConfig> {
     if (!this._serverId) {
-      throw new Error('serverId is required');
+      throw new Error("serverId is required");
     }
     if (!this._provider) {
-      throw new Error('provider is required');
+      throw new Error("provider is required");
     }
     if (!this._clientId) {
-      throw new Error('clientId is required');
+      throw new Error("clientId is required");
     }
     if (!this._clientSecret) {
-      throw new Error('clientSecret is required');
+      throw new Error("clientSecret is required");
     }
 
-    const query = `
-      mutation ConfigureMCPOAuth($input: ConfigureMcpOAuthInput!) {
-        configureMcpOAuth(input: $input) {
-          id
-          serverId
-          provider
-          clientId
-          scopes
-          redirectUri
-          isEnabled
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const query = QueryBuilder.mutationWithParams(
+      "ConfigureMCPOAuth",
+      "configureMcpOAuth(input: $input)",
+      [
+        "id",
+        "serverId",
+        "provider",
+        "clientId",
+        "scopes",
+        "redirectUri",
+        "isEnabled",
+        "createdAt",
+        "updatedAt",
+      ],
+      [["input", "ConfigureMcpOAuthInput!"]],
+    );
 
     const input: ConfigureOAuthInput = {
       serverId: this._serverId,
@@ -978,30 +972,31 @@ export class ConfigureJWTBuilder {
    */
   async execute(): Promise<MCPJWTConfig> {
     if (!this._serverId) {
-      throw new Error('serverId is required');
+      throw new Error("serverId is required");
     }
     if (!this._secretKey) {
-      throw new Error('secretKey is required');
+      throw new Error("secretKey is required");
     }
 
-    const query = `
-      mutation ConfigureMCPJWT($input: ConfigureMcpJwtInput!) {
-        configureMcpJwt(input: $input) {
-          id
-          serverId
-          algorithm
-          expiration
-          isEnabled
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const query = QueryBuilder.mutationWithParams(
+      "ConfigureMCPJWT",
+      "configureMcpJwt(input: $input)",
+      [
+        "id",
+        "serverId",
+        "algorithm",
+        "expiration",
+        "isEnabled",
+        "createdAt",
+        "updatedAt",
+      ],
+      [["input", "ConfigureMcpJwtInput!"]],
+    );
 
     const input: ConfigureJWTInput = {
       serverId: this._serverId,
       secretKey: this._secretKey,
-      algorithm: this._algorithm || 'HS256',
+      algorithm: this._algorithm || "HS256",
       expiration: this._expiration || 3600, // Default 1 hour
     };
 

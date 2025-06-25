@@ -14,6 +14,7 @@ import {
   ValidationError,
   NotFoundError,
 } from "./types.js";
+import { QueryBuilder } from "./schema";
 
 // Re-export types that are needed by index.ts
 export type { ClientConfig } from "./types.js";
@@ -25,6 +26,8 @@ import { RuleClient } from "./rules.js";
 import { LLMClient } from "./llm.js";
 import { AnalyticsClient } from "./analytics.js";
 import { MCPClient } from "./mcp.js";
+import { SubscriptionClient } from "./subscriptions.js";
+import { NATSClient } from "./nats.js";
 
 // ============================================================================
 // GraphQL Types
@@ -104,16 +107,10 @@ export class Client {
    * Test connection to the server
    */
   async ping(): Promise<PingResponse> {
-    const query = `
-      query {
-        llmProviders {
-          name
-          healthStatus {
-            isHealthy
-          }
-        }
-      }
-    `;
+    const query = QueryBuilder.query("Ping", "llmProviders", [
+      "name",
+      "healthStatus { isHealthy }",
+    ]);
 
     const result = await this.graphqlRequest<{
       llmProviders: Array<{
@@ -138,16 +135,10 @@ export class Client {
    * Get server information
    */
   async info(): Promise<ServerInfo> {
-    const query = `
-      query {
-        llmProviders {
-          name
-          healthStatus {
-            isHealthy
-          }
-        }
-      }
-    `;
+    const query = QueryBuilder.query("Info", "llmProviders", [
+      "name",
+      "healthStatus { isHealthy }",
+    ]);
 
     const result = await this.graphqlRequest<{
       llmProviders: Array<{
@@ -222,6 +213,27 @@ export class Client {
    */
   mcp(): MCPClient {
     return new MCPClient(this);
+  }
+
+  /**
+   * Access real-time subscription API
+   */
+  subscriptions(): SubscriptionClient {
+    return new SubscriptionClient(this);
+  }
+
+  /**
+   * Access NATS-enhanced operations API
+   */
+  nats(): NATSClient {
+    return new NATSClient(this);
+  }
+
+  /**
+   * Get client configuration
+   */
+  getConfig(): Required<ClientConfig> {
+    return this.config;
   }
 
   // ============================================================================

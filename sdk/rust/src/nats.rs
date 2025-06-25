@@ -46,7 +46,6 @@
 //! ```
 
 use crate::client::Client;
-use crate::types::*;
 use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

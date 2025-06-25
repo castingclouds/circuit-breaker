@@ -45,6 +45,8 @@ pub mod mcp;
 pub mod nats;
 pub mod resources;
 pub mod rules;
+pub mod schema;
+pub mod subscriptions;
 pub mod types;
 pub mod workflows;
 
@@ -61,6 +63,7 @@ pub use mcp::{MCPClient, MCPServer, MCPServerStatus, MCPServerType};
 pub use nats::{HistoryEvent, NATSClient, NATSResource};
 pub use resources::{Resource, ResourceBuilder};
 pub use rules::{Rule, RuleBuilder, RuleEvaluator};
+pub use subscriptions::{SubscriptionClient, SubscriptionId, SubscriptionManager};
 pub use workflows::{Workflow, WorkflowBuilder, WorkflowExecution};
 
 // Re-export convenience builders
@@ -70,6 +73,7 @@ pub use llm::create_chat;
 pub use mcp::{create_mcp_server, list_mcp_servers};
 pub use nats::{create_workflow_instance, execute_activity_with_nats};
 pub use resources::create_resource;
+pub use subscriptions::{subscribe_resource_updates, subscribe_workflow_events};
 pub use workflows::create_workflow;
 
 /// SDK version

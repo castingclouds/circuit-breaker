@@ -49,12 +49,25 @@ pub trait MCPStorage: Send + Sync {
 }
 
 /// In-memory implementation of MCPStorage for development/testing
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct InMemoryMCPStorage {
     instances: RwLock<HashMap<String, MCPServerInstance>>,
     oauth_configs: RwLock<HashMap<String, RemoteOAuthConfig>>,
     apps: RwLock<HashMap<String, MCPApp>>,
     installations: RwLock<HashMap<String, MCPInstallation>>,
+    oauth_tokens: RwLock<HashMap<String, StoredOAuthToken>>,
+}
+
+impl Default for InMemoryMCPStorage {
+    fn default() -> Self {
+        Self {
+            instances: RwLock::new(HashMap::new()),
+            oauth_configs: RwLock::new(HashMap::new()),
+            apps: RwLock::new(HashMap::new()),
+            installations: RwLock::new(HashMap::new()),
+            oauth_tokens: RwLock::new(HashMap::new()),
+        }
+    }
 }
 
 #[async_trait]
@@ -153,28 +166,38 @@ impl MCPStorage for InMemoryMCPStorage {
     }
 
     async fn store_oauth_token(&self, token_key: &str, token: &StoredOAuthToken) -> Result<()> {
-        // For in-memory storage, we don't actually store OAuth tokens
-        // This is handled by the OAuthManager directly
-        debug!("OAuth token storage not implemented for in-memory storage: {}", token_key);
+        let mut tokens = self.oauth_tokens.write().await;
+        tokens.insert(token_key.to_string(), token.clone());
+        debug!("Stored OAuth token for key: {}", token_key);
         Ok(())
     }
 
     async fn get_oauth_token(&self, token_key: &str) -> Result<Option<StoredOAuthToken>> {
-        // For in-memory storage, OAuth tokens are handled by OAuthManager
-        debug!("OAuth token retrieval not implemented for in-memory storage: {}", token_key);
-        Ok(None)
+        let tokens = self.oauth_tokens.read().await;
+        let token = tokens.get(token_key).cloned();
+        debug!(
+            "Retrieved OAuth token for key: {} - found: {}",
+            token_key,
+            token.is_some()
+        );
+        Ok(token)
     }
 
     async fn list_oauth_tokens(&self) -> Result<Vec<(String, StoredOAuthToken)>> {
-        // For in-memory storage, OAuth tokens are handled by OAuthManager
-        debug!("OAuth token listing not implemented for in-memory storage");
-        Ok(Vec::new())
+        let tokens = self.oauth_tokens.read().await;
+        let token_list = tokens.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        debug!("Listed {} OAuth tokens", tokens.len());
+        Ok(token_list)
     }
 
     async fn delete_oauth_token(&self, token_key: &str) -> Result<bool> {
-        // For in-memory storage, OAuth tokens are handled by OAuthManager
-        debug!("OAuth token deletion not implemented for in-memory storage: {}", token_key);
-        Ok(false)
+        let mut tokens = self.oauth_tokens.write().await;
+        let removed = tokens.remove(token_key).is_some();
+        debug!(
+            "Deleted OAuth token for key: {} - success: {}",
+            token_key, removed
+        );
+        Ok(removed)
     }
 }
 
@@ -683,7 +706,9 @@ impl MCPStorage for NATSMCPStorage {
         let store = self.get_oauth_tokens_store().await?;
         let mut tokens = Vec::new();
 
-        let mut keys = store.keys().await
+        let mut keys = store
+            .keys()
+            .await
             .map_err(|e| anyhow!("Failed to list OAuth token keys from NATS KV: {}", e))?;
 
         while let Some(key) = keys.next().await {

@@ -46,10 +46,10 @@
 //! ```
 
 use crate::client::Client;
-use crate::types::*;
+use crate::schema::QueryBuilder;
+use crate::types::{ApiResponse, PageInfo, PaginationInput};
 use crate::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// MCP client for Model Context Protocol operations
 pub struct MCPClient {
@@ -69,23 +69,22 @@ impl MCPClient {
 
     /// Get a specific MCP server by ID
     pub async fn get_server(&self, id: &str) -> Result<Option<MCPServer>> {
-        let query = r#"
-            query GetMCPServer($id: ID!) {
-                mcpServer(id: $id) {
-                    id
-                    name
-                    description
-                    type
-                    status
-                    config
-                    capabilities
-                    health
-                    tenantId
-                    createdAt
-                    updatedAt
-                }
-            }
-        "#;
+        let query = QueryBuilder::query_with_params(
+            "GetMCPServer",
+            "mcpServer(id: $id)",
+            &[
+                "id",
+                "name",
+                "description",
+                "type",
+                "status",
+                "config",
+                "capabilities",
+                "createdAt",
+                "updatedAt",
+            ],
+            &[("id", "ID!")],
+        );
 
         #[derive(Serialize)]
         struct Variables {
@@ -99,7 +98,7 @@ impl MCPClient {
         }
 
         let variables = Variables { id: id.to_string() };
-        let response: Response = self.client.graphql_query(query, Some(variables)).await?;
+        let response: Response = self.client.graphql_query(&query, Some(variables)).await?;
 
         Ok(response.mcp_server.map(|s| s.into()))
     }
@@ -116,16 +115,12 @@ impl MCPClient {
 
     /// Delete an MCP server
     pub async fn delete_server(&self, id: &str) -> Result<ApiResponse> {
-        let query = r#"
-            mutation DeleteMCPServer($id: ID!) {
-                deleteMcpServer(id: $id) {
-                    success
-                    message
-                    errorCode
-                    data
-                }
-            }
-        "#;
+        let query = QueryBuilder::mutation_with_params(
+            "DeleteMCPServer",
+            "deleteMcpServer(id: $id)",
+            &["success", "message", "errorCode", "data"],
+            &[("id", "ID!")],
+        );
 
         #[derive(Serialize)]
         struct Variables {
@@ -139,7 +134,7 @@ impl MCPClient {
         }
 
         let variables = Variables { id: id.to_string() };
-        let response: Response = self.client.graphql_query(query, Some(variables)).await?;
+        let response: Response = self.client.graphql_query(&query, Some(variables)).await?;
 
         Ok(response.delete_mcp_server)
     }
@@ -156,17 +151,11 @@ impl MCPClient {
 
     /// Get available OAuth providers
     pub async fn get_oauth_providers(&self) -> Result<Vec<MCPOAuthProvider>> {
-        let query = r#"
-            query GetMCPOAuthProviders {
-                mcpOAuthProviders {
-                    id
-                    name
-                    type
-                    config
-                    isEnabled
-                }
-            }
-        "#;
+        let query = QueryBuilder::query(
+            "GetMCPOAuthProviders",
+            "mcpOAuthProviders",
+            &["id", "name", "type", "config", "isEnabled"],
+        );
 
         #[derive(Deserialize)]
         struct Response {
@@ -174,7 +163,7 @@ impl MCPClient {
             mcp_oauth_providers: Vec<MCPOAuthProviderGQL>,
         }
 
-        let response: Response = self.client.graphql_query(query, None::<()>).await?;
+        let response: Response = self.client.graphql_query(&query, None::<()>).await?;
 
         Ok(response
             .mcp_oauth_providers
@@ -214,7 +203,7 @@ impl MCPClient {
         let variables = Variables {
             server_id: server_id.to_string(),
         };
-        let response: Response = self.client.graphql_query(query, Some(variables)).await?;
+        let response: Response = self.client.graphql_query(&query, Some(variables)).await?;
 
         Ok(response.mcp_server_capabilities.map(|c| c.into()))
     }
@@ -248,7 +237,7 @@ impl MCPClient {
         let variables = Variables {
             server_id: server_id.to_string(),
         };
-        let response: Response = self.client.graphql_query(query, Some(variables)).await?;
+        let response: Response = self.client.graphql_query(&query, Some(variables)).await?;
 
         Ok(response.mcp_server_health.into())
     }
@@ -296,7 +285,7 @@ impl MCPClient {
             },
         };
 
-        let response: Response = self.client.graphql_query(query, Some(variables)).await?;
+        let response: Response = self.client.graphql_query(&query, Some(variables)).await?;
 
         Ok(response.initiate_mcp_oauth.into())
     }
@@ -343,7 +332,7 @@ impl MCPClient {
             },
         };
 
-        let response: Response = self.client.graphql_query(query, Some(variables)).await?;
+        let response: Response = self.client.graphql_query(&query, Some(variables)).await?;
 
         Ok(response.complete_mcp_oauth.into())
     }
@@ -740,7 +729,7 @@ impl MCPServersBuilder {
                 mcp_servers_by_tenant: MCPServerConnectionGQL,
             }
 
-            let response: Response = self.client.graphql_query(query, Some(variables)).await?;
+            let response: Response = self.client.graphql_query(&query, Some(variables)).await?;
             Ok(response.mcp_servers_by_tenant.into())
         } else {
             #[derive(Deserialize)]
@@ -749,7 +738,7 @@ impl MCPServersBuilder {
                 mcp_servers: MCPServerConnectionGQL,
             }
 
-            let response: Response = self.client.graphql_query(query, Some(variables)).await?;
+            let response: Response = self.client.graphql_query(&query, Some(variables)).await?;
             Ok(response.mcp_servers.into())
         }
     }
@@ -882,7 +871,7 @@ impl CreateMCPServerBuilder {
             create_mcp_server: MCPServerGQL,
         }
 
-        let response: Response = self.client.graphql_query(query, Some(variables)).await?;
+        let response: Response = self.client.graphql_query(&query, Some(variables)).await?;
 
         Ok(response.create_mcp_server.into())
     }
@@ -983,7 +972,7 @@ impl UpdateMCPServerBuilder {
             update_mcp_server: MCPServerGQL,
         }
 
-        let response: Response = self.client.graphql_query(query, Some(variables)).await?;
+        let response: Response = self.client.graphql_query(&query, Some(variables)).await?;
 
         Ok(response.update_mcp_server.into())
     }
@@ -1111,7 +1100,7 @@ impl ConfigureOAuthBuilder {
             configure_mcp_oauth: MCPOAuthConfigGQL,
         }
 
-        let response: Response = self.client.graphql_query(query, Some(variables)).await?;
+        let response: Response = self.client.graphql_query(&query, Some(variables)).await?;
 
         Ok(response.configure_mcp_oauth.into())
     }
@@ -1260,7 +1249,7 @@ impl ConfigureJWTBuilder {
             configure_mcp_jwt: MCPJWTConfigGQL,
         }
 
-        let response: Response = self.client.graphql_query(query, Some(variables)).await?;
+        let response: Response = self.client.graphql_query(&query, Some(variables)).await?;
 
         Ok(response.configure_mcp_jwt.into())
     }

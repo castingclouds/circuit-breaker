@@ -1,7 +1,7 @@
 // Function execution engine - Docker-based event-driven functions
 
 //! # Function Engine
-//! 
+//!
 //! This module provides the execution engine for Docker-based functions that are
 //! triggered by workflow events. It handles:
 //! - Event processing and function matching
@@ -10,20 +10,18 @@
 //! - Results storage and monitoring
 //! - Function chaining with input/output mapping
 
+use async_trait::async_trait;
+use chrono::Duration;
 use std::collections::HashMap;
 use std::process::Stdio;
-use tokio::process::Command;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
-use chrono::Duration;
-use async_trait::async_trait;
-use tracing::{info, debug, warn, error};
 
 use crate::models::{
-    FunctionDefinition, FunctionId, FunctionExecution, TriggerEvent, 
-    ContainerConfig, ChainExecution,
-    InputMapping, ChainCondition, RetryConfig,
-    BackoffStrategy
+    BackoffStrategy, ChainCondition, ChainExecution, ContainerConfig, FunctionDefinition,
+    FunctionExecution, FunctionId, InputMapping, RetryConfig, TriggerEvent,
 };
 use crate::{CircuitBreakerError, Result};
 
@@ -32,37 +30,37 @@ use crate::{CircuitBreakerError, Result};
 pub trait FunctionStorage: Send + Sync {
     /// Store a function definition
     async fn create_function(&self, function: FunctionDefinition) -> Result<FunctionDefinition>;
-    
+
     /// Get a function by ID
     async fn get_function(&self, id: &FunctionId) -> Result<Option<FunctionDefinition>>;
-    
+
     /// Update a function definition
     async fn update_function(&self, function: FunctionDefinition) -> Result<FunctionDefinition>;
-    
+
     /// Delete a function
     async fn delete_function(&self, id: &FunctionId) -> Result<bool>;
-    
+
     /// List all functions
     async fn list_functions(&self) -> Result<Vec<FunctionDefinition>>;
-    
+
     /// Store function execution record
     async fn create_execution(&self, execution: FunctionExecution) -> Result<FunctionExecution>;
-    
+
     /// Update function execution record
     async fn update_execution(&self, execution: FunctionExecution) -> Result<FunctionExecution>;
-    
+
     /// Get execution by ID
     async fn get_execution(&self, id: &Uuid) -> Result<Option<FunctionExecution>>;
-    
+
     /// List executions for a function
     async fn list_executions(&self, function_id: &FunctionId) -> Result<Vec<FunctionExecution>>;
-    
+
     /// Store chain execution record
     async fn create_chain(&self, chain: ChainExecution) -> Result<ChainExecution>;
-    
+
     /// Update chain execution record
     async fn update_chain(&self, chain: ChainExecution) -> Result<ChainExecution>;
-    
+
     /// Get chain by ID
     async fn get_chain(&self, id: &Uuid) -> Result<Option<ChainExecution>>;
 }
@@ -89,11 +87,11 @@ impl FunctionEngine {
             docker_available: Self::check_docker_available(),
         }
     }
-    
+
     /// Check if Docker is available on the system
     fn check_docker_available() -> bool {
         use std::process::Command;
-        
+
         match Command::new("docker").arg("--version").output() {
             Ok(output) => output.status.success(),
             Err(_) => false,
@@ -104,14 +102,14 @@ impl FunctionEngine {
     pub async fn process_event(&self, event: TriggerEvent) -> Result<Vec<Uuid>> {
         let functions = self.storage.list_functions().await?;
         let mut execution_ids = Vec::new();
-        
+
         for function in functions {
             if function.matches_event(&event) {
                 let execution_id = self.execute_function(&function, &event).await?;
                 execution_ids.push(execution_id);
             }
         }
-        
+
         Ok(execution_ids)
     }
 
@@ -123,19 +121,22 @@ impl FunctionEngine {
     ) -> Result<Uuid> {
         // Create execution record
         let mut execution = FunctionExecution::new(function.id.clone(), event.clone());
-        
+
         // Process input data from event using trigger mapping
         let input_data = self.map_event_to_input(event, function).await?;
         execution.input_data = input_data;
-        
+
         // Store initial execution record
         let execution = self.storage.create_execution(execution).await?;
         let execution_id = execution.id;
-        
+
         // Execute the function (now actually running Docker)
         info!("🐳 Executing function {} with Docker...", execution_id);
-        
-        match self.execute_function_impl(function.clone(), execution_id).await {
+
+        match self
+            .execute_function_impl(function.clone(), execution_id)
+            .await
+        {
             Ok(_) => {
                 info!("✅ Function {} completed successfully", execution_id);
             }
@@ -148,7 +149,7 @@ impl FunctionEngine {
                 }
             }
         }
-        
+
         Ok(execution_id)
     }
 
@@ -168,7 +169,10 @@ impl FunctionEngine {
         function: FunctionDefinition,
         execution_id: Uuid,
     ) -> Result<()> {
-        let mut execution = self.storage.get_execution(&execution_id).await?
+        let mut execution = self
+            .storage
+            .get_execution(&execution_id)
+            .await?
             .ok_or_else(|| CircuitBreakerError::GraphQL("Execution not found".to_string()))?;
 
         if !self.docker_available {
@@ -186,23 +190,26 @@ impl FunctionEngine {
 
         // Generate container name
         let container_name = format!("circuit-breaker-{}", execution_id);
-        
+
         execution.start(Some(container_name.clone()));
         self.storage.update_execution(execution.clone()).await?;
 
         // Run the container
-        match self.run_container(&function.container, &container_name, &execution).await {
+        match self
+            .run_container(&function.container, &container_name, &execution)
+            .await
+        {
             Ok(result) => {
                 // Parse output data
                 let output_data = self.parse_container_output(&result.stdout)?;
-                
+
                 // Validate output against schema
                 if let Err(validation_error) = function.validate_output(&output_data) {
                     execution.fail(format!("Output validation failed: {}", validation_error));
                 } else {
                     execution.complete(result.exit_code, Some(result.stdout), Some(result.stderr));
                     execution.output_data = Some(output_data.clone());
-                    
+
                     // Process function chains if execution succeeded
                     if execution.succeeded() {
                         // TODO: Re-enable function chaining after fixing lifetime issues
@@ -218,27 +225,31 @@ impl FunctionEngine {
                         let delay = self.calculate_retry_delay(retry_config, execution.retry_count);
                         execution.schedule_retry(delay);
                         self.storage.update_execution(execution.clone()).await?;
-                        
+
                         // Schedule retry execution
                         // self.schedule_retry_execution(function, execution_id, delay).await?;
                         info!("Would schedule retry for execution {}", execution_id);
                         return Ok(());
                     }
                 }
-                
+
                 execution.fail(format!("Container execution failed: {}", e));
             }
         }
 
         // Clean up container
         let _ = self.cleanup_container(&container_name).await;
-        
+
         self.storage.update_execution(execution).await?;
         Ok(())
     }
 
     /// Map event data to function input based on trigger mapping
-    async fn map_event_to_input(&self, event: &TriggerEvent, function: &FunctionDefinition) -> Result<serde_json::Value> {
+    async fn map_event_to_input(
+        &self,
+        event: &TriggerEvent,
+        function: &FunctionDefinition,
+    ) -> Result<serde_json::Value> {
         // Find the matching trigger
         for trigger in &function.triggers {
             // Check if this trigger matches the event
@@ -256,25 +267,31 @@ impl FunctionEngine {
                         return Ok(serde_json::Value::Object(result));
                     }
                     InputMapping::Template(template) => {
-                        // TODO: Implement template processing
-                        return Ok(template.clone());
+                        // Implement basic template processing with variable substitution
+                        let processed = self.process_template(template, &event).await?;
+                        return Ok(processed);
                     }
                     InputMapping::MergedData => {
                         // Merge event data with token metadata
-                        let mut result = event.data.as_object().unwrap_or(&serde_json::Map::new()).clone();
+                        let mut result = event
+                            .data
+                            .as_object()
+                            .unwrap_or(&serde_json::Map::new())
+                            .clone();
                         for (key, value) in &event.metadata {
                             result.insert(format!("metadata_{}", key), value.clone());
                         }
                         return Ok(serde_json::Value::Object(result));
                     }
-                    InputMapping::Script(_script) => {
-                        // TODO: Implement script-based transformation
-                        return Ok(event.data.clone());
+                    InputMapping::Script(script) => {
+                        // Implement basic script-based transformation
+                        let processed = self.process_script(script, &event).await?;
+                        return Ok(processed);
                     }
                 }
             }
         }
-        
+
         // Default fallback
         Ok(event.data.clone())
     }
@@ -288,7 +305,7 @@ impl FunctionEngine {
                 return Ok(json_value);
             }
         }
-        
+
         // If no valid JSON found, return the raw output as a string
         Ok(serde_json::json!({
             "output": stdout,
@@ -305,30 +322,33 @@ impl FunctionEngine {
     ) -> Result<()> {
         // Clone the chains to avoid lifetime issues
         let chains = function.chains.clone();
-        
+
         for chain in chains {
             // Check chain condition
             let should_trigger = match &chain.condition {
                 ChainCondition::Always => true,
                 ChainCondition::OnSuccess => execution.succeeded(),
                 ChainCondition::OnFailure => execution.failed(),
-                ChainCondition::ConditionalRule(_rule) => {
-                    // TODO: Evaluate rule against output data
-                    // For now, default to true
-                    true
+                ChainCondition::ConditionalRule(rule) => {
+                    // Basic rule evaluation - check if output data matches rule conditions
+                    self.evaluate_rule_condition(&rule.description, &output_data)
+                        .await
                 }
-                ChainCondition::Script(_script) => {
-                    // TODO: Implement script-based condition evaluation
-                    true
+                ChainCondition::Script(script) => {
+                    // Basic script-based condition evaluation
+                    self.evaluate_script_condition(script, &output_data).await
                 }
             };
-            
+
             if should_trigger {
                 // Get target function
-                if let Some(target_function) = self.storage.get_function(&chain.target_function).await? {
+                if let Some(target_function) =
+                    self.storage.get_function(&chain.target_function).await?
+                {
                     // Map output to input for chained function
-                    let chained_input = self.map_chain_input(&chain.input_mapping, output_data, execution)?;
-                    
+                    let chained_input =
+                        self.map_chain_input(&chain.input_mapping, output_data, execution)?;
+
                     // Create chained execution
                     let chained_execution = FunctionExecution::new_chained(
                         target_function.id.clone(),
@@ -336,26 +356,33 @@ impl FunctionEngine {
                         execution.chain_position + 1,
                         chained_input,
                     );
-                    
-                    let chained_execution = self.storage.create_execution(chained_execution).await?;
-                    
+
+                    let chained_execution =
+                        self.storage.create_execution(chained_execution).await?;
+
                     // Execute chained function in background
                     let engine = self.clone_for_background();
                     let execution_id = chained_execution.id;
-                    
+
                     tokio::spawn(async move {
                         if let Some(delay) = chain.delay {
-                            tokio::time::sleep(delay.to_std().unwrap_or(std::time::Duration::from_secs(0))).await;
+                            tokio::time::sleep(
+                                delay.to_std().unwrap_or(std::time::Duration::from_secs(0)),
+                            )
+                            .await;
                         }
-                        
-                        if let Err(e) = engine.execute_function_impl(target_function, execution_id).await {
+
+                        if let Err(e) = engine
+                            .execute_function_impl(target_function, execution_id)
+                            .await
+                        {
                             error!("Chained function execution failed: {}", e);
                         }
                     });
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -389,7 +416,8 @@ impl FunctionEngine {
         match &retry_config.backoff_strategy {
             BackoffStrategy::Fixed => retry_config.retry_delay,
             BackoffStrategy::Exponential { multiplier } => {
-                let delay_seconds = retry_config.retry_delay.num_seconds() as f64 * multiplier.powi(attempt as i32);
+                let delay_seconds =
+                    retry_config.retry_delay.num_seconds() as f64 * multiplier.powi(attempt as i32);
                 Duration::seconds(delay_seconds as i64)
             }
             BackoffStrategy::Linear { increment } => {
@@ -406,15 +434,15 @@ impl FunctionEngine {
         delay: Duration,
     ) -> Result<()> {
         let engine = self.clone_for_background();
-        
+
         tokio::spawn(async move {
             tokio::time::sleep(delay.to_std().unwrap_or(std::time::Duration::from_secs(30))).await;
-            
+
             if let Err(e) = engine.execute_function_impl(function, execution_id).await {
                 error!("Retry execution failed: {}", e);
             }
         });
-        
+
         Ok(())
     }
 
@@ -427,7 +455,8 @@ impl FunctionEngine {
     ) -> Result<ContainerResult> {
         let mut docker_cmd = vec![
             "run".to_string(),
-            "--name".to_string(), container_name.to_string(),
+            "--name".to_string(),
+            container_name.to_string(),
             "--rm".to_string(), // Remove container when done
         ];
 
@@ -498,7 +527,8 @@ impl FunctionEngine {
         for setup_cmd in &config.setup_commands {
             let mut setup_docker_cmd = vec![
                 "run".to_string(),
-                "--name".to_string(), format!("{}-setup-{}", container_name, Uuid::new_v4()),
+                "--name".to_string(),
+                format!("{}-setup-{}", container_name, Uuid::new_v4()),
                 "--rm".to_string(),
             ];
 
@@ -511,7 +541,10 @@ impl FunctionEngine {
             setup_docker_cmd.push(config.image.clone());
             setup_docker_cmd.extend(setup_cmd.clone());
 
-            debug!("🔧 Running setup command: docker {}", setup_docker_cmd.join(" "));
+            debug!(
+                "🔧 Running setup command: docker {}",
+                setup_docker_cmd.join(" ")
+            );
             let _setup_result = self.execute_docker_command(setup_docker_cmd).await?;
         }
 
@@ -527,7 +560,8 @@ impl FunctionEngine {
         cmd.stderr(Stdio::piped());
 
         info!("📦 Starting Docker container...");
-        let mut child = cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .map_err(|e| CircuitBreakerError::GraphQL(format!("Failed to start docker: {}", e)))?;
 
         // Capture stdout and stderr
@@ -571,13 +605,17 @@ impl FunctionEngine {
             }
         }
 
-        let exit_status = child.wait().await
-            .map_err(|e| CircuitBreakerError::GraphQL(format!("Failed to wait for docker: {}", e)))?;
+        let exit_status = child.wait().await.map_err(|e| {
+            CircuitBreakerError::GraphQL(format!("Failed to wait for docker: {}", e))
+        })?;
 
         let exit_code = exit_status.code().unwrap_or(-1);
-        
+
         if exit_code == 0 {
-            info!("✅ Docker container completed successfully (exit code: {})", exit_code);
+            info!(
+                "✅ Docker container completed successfully (exit code: {})",
+                exit_code
+            );
         } else {
             error!("❌ Docker container failed (exit code: {})", exit_code);
         }
@@ -591,7 +629,11 @@ impl FunctionEngine {
 
     /// Clean up a Docker container
     async fn cleanup_container(&self, container_name: &str) -> Result<()> {
-        let args = vec!["rm".to_string(), "-f".to_string(), container_name.to_string()];
+        let args = vec![
+            "rm".to_string(),
+            "-f".to_string(),
+            container_name.to_string(),
+        ];
         let _ = self.execute_docker_command(args).await;
         Ok(())
     }
@@ -601,13 +643,140 @@ impl FunctionEngine {
         self.storage.get_function(id).await
     }
 
+    /// Process template with variable substitution
+    async fn process_template(
+        &self,
+        template: &serde_json::Value,
+        event: &TriggerEvent,
+    ) -> Result<serde_json::Value> {
+        // Convert template to string for processing
+        let template_str = match template {
+            serde_json::Value::String(s) => s.clone(),
+            _ => serde_json::to_string(template)?,
+        };
+
+        // Simple variable substitution - replace ${event.field} with actual values
+        let mut result = template_str;
+
+        // Replace common event variables
+        result = result.replace("${event.type}", &format!("{:?}", event.event_type));
+        result = result.replace("${event.workflow_id}", &event.workflow_id.to_string());
+        result = result.replace("${event.timestamp}", &event.timestamp.to_rfc3339());
+
+        // Replace data fields if the pattern matches ${event.data.field}
+        if let Some(data_obj) = event.data.as_object() {
+            for (key, value) in data_obj {
+                let pattern = format!("${{event.data.{}}}", key);
+                let replacement = match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    _ => serde_json::to_string(value).unwrap_or_default(),
+                };
+                result = result.replace(&pattern, &replacement);
+            }
+        }
+
+        // Try to parse back as JSON, fallback to string
+        match serde_json::from_str::<serde_json::Value>(&result) {
+            Ok(json) => Ok(json),
+            Err(_) => Ok(serde_json::Value::String(result)),
+        }
+    }
+
+    /// Process script with basic JavaScript-like evaluation
+    async fn process_script(
+        &self,
+        script: &str,
+        event: &TriggerEvent,
+    ) -> Result<serde_json::Value> {
+        // For now, implement basic script processing
+        // In a real implementation, you'd use a JavaScript engine like V8 or QuickJS
+
+        // Simple pattern matching for common script operations
+        if script.contains("event.data") && script.contains("JSON.stringify") {
+            // Return the event data as JSON string
+            return Ok(serde_json::Value::String(serde_json::to_string(
+                &event.data,
+            )?));
+        }
+
+        if script.contains("event.type") {
+            // Return event type
+            return Ok(serde_json::Value::String(format!("{:?}", event.event_type)));
+        }
+
+        if script.contains("Object.keys(event.data)") {
+            // Return keys of event data
+            if let Some(obj) = event.data.as_object() {
+                let keys: Vec<serde_json::Value> = obj
+                    .keys()
+                    .map(|k| serde_json::Value::String(k.clone()))
+                    .collect();
+                return Ok(serde_json::Value::Array(keys));
+            }
+        }
+
+        // Default: return event data
+        warn!("Script processing not fully implemented for: {}", script);
+        Ok(event.data.clone())
+    }
+
+    /// Evaluate rule condition against output data
+    async fn evaluate_rule_condition(&self, rule: &str, output_data: &serde_json::Value) -> bool {
+        // Basic rule evaluation - check for simple conditions
+        if rule.contains("success") && rule.contains("true") {
+            return true;
+        }
+
+        if rule.contains("output.status") && rule.contains("==") {
+            if let Some(status) = output_data.get("status").and_then(|v| v.as_str()) {
+                if rule.contains("\"success\"") || rule.contains("'success'") {
+                    return status == "success";
+                }
+                if rule.contains("\"error\"") || rule.contains("'error'") {
+                    return status == "error";
+                }
+            }
+        }
+
+        // Default to true for now
+        true
+    }
+
+    /// Evaluate script condition against output data
+    async fn evaluate_script_condition(
+        &self,
+        script: &str,
+        output_data: &serde_json::Value,
+    ) -> bool {
+        // Basic script condition evaluation
+        if script.contains("output.success") && script.contains("=== true") {
+            return output_data
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+        }
+
+        if script.contains("output.status") && script.contains("=== \"success\"") {
+            return output_data.get("status").and_then(|v| v.as_str()) == Some("success");
+        }
+
+        // Default to true for now
+        true
+    }
+
     /// Create a new function
-    pub async fn create_function(&self, function: FunctionDefinition) -> Result<FunctionDefinition> {
+    pub async fn create_function(
+        &self,
+        function: FunctionDefinition,
+    ) -> Result<FunctionDefinition> {
         self.storage.create_function(function).await
     }
 
     /// Update a function
-    pub async fn update_function(&self, function: FunctionDefinition) -> Result<FunctionDefinition> {
+    pub async fn update_function(
+        &self,
+        function: FunctionDefinition,
+    ) -> Result<FunctionDefinition> {
         self.storage.update_function(function).await
     }
 
@@ -627,7 +796,10 @@ impl FunctionEngine {
     }
 
     /// List executions for a function
-    pub async fn list_executions(&self, function_id: &FunctionId) -> Result<Vec<FunctionExecution>> {
+    pub async fn list_executions(
+        &self,
+        function_id: &FunctionId,
+    ) -> Result<Vec<FunctionExecution>> {
         self.storage.list_executions(function_id).await
     }
 }
@@ -721,4 +893,4 @@ impl FunctionStorage for InMemoryFunctionStorage {
         let chains = self.chains.read().await;
         Ok(chains.get(id).cloned())
     }
-} 
+}

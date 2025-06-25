@@ -10,6 +10,7 @@ import {
   PaginationOptions,
 } from "./types.js";
 import type { Client } from "./client.js";
+import { QueryBuilder } from "./schema";
 
 export class ResourceClient {
   constructor(private client: Client) {}
@@ -18,18 +19,12 @@ export class ResourceClient {
    * Create a new resource
    */
   async create(input: ResourceCreateInput): Promise<Resource> {
-    const mutation = `
-      mutation CreateResource($input: ResourceCreateInput!) {
-        createResource(input: $input) {
-          id
-          workflowId
-          state
-          data
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const mutation = QueryBuilder.mutationWithParams(
+      "CreateResource",
+      "createResource(input: $input)",
+      ["id", "workflowId", "state", "data", "createdAt", "updatedAt"],
+      [["input", "ResourceCreateInput!"]],
+    );
 
     const variables = {
       input: {
@@ -51,26 +46,21 @@ export class ResourceClient {
    * Get a resource by ID
    */
   async get(id: string): Promise<Resource> {
-    const query = `
-      query GetResource($id: String!) {
-        resource(id: $id) {
-          id
-          workflowId
-          state
-          data
-          metadata
-          createdAt
-          updatedAt
-          history {
-            timestamp
-            activity
-            fromState
-            toState
-            data
-          }
-        }
-      }
-    `;
+    const query = QueryBuilder.queryWithParams(
+      "GetResource",
+      "resource(id: $id)",
+      [
+        "id",
+        "workflowId",
+        "state",
+        "data",
+        "metadata",
+        "createdAt",
+        "updatedAt",
+        "history { timestamp activity fromState toState data }",
+      ],
+      [["id", "String!"]],
+    );
 
     const result = await this.client.query<{ resource: Resource }>(query, {
       id,
@@ -82,18 +72,14 @@ export class ResourceClient {
    * List all resources
    */
   async list(_options?: PaginationOptions): Promise<Resource[]> {
-    const query = `
-      query GetResources {
-        resources {
-          id
-          workflowId
-          state
-          data
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const query = QueryBuilder.query("GetResources", "resources", [
+      "id",
+      "workflowId",
+      "state",
+      "data",
+      "createdAt",
+      "updatedAt",
+    ]);
 
     const result = await this.client.query<{ resources: Resource[] }>(query);
     return result.resources;
@@ -103,18 +89,15 @@ export class ResourceClient {
    * Update a resource
    */
   async update(id: string, updates: ResourceUpdateInput): Promise<Resource> {
-    const mutation = `
-      mutation UpdateResource($id: ID!, $input: ResourceCreateInput!) {
-        updateResource(id: $id, input: $input) {
-          id
-          workflowId
-          state
-          data
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const mutation = QueryBuilder.mutationWithParams(
+      "UpdateResource",
+      "updateResource(id: $id, input: $input)",
+      ["id", "workflowId", "state", "data", "createdAt", "updatedAt"],
+      [
+        ["id", "ID!"],
+        ["input", "ResourceCreateInput!"],
+      ],
+    );
 
     const variables = {
       id,
@@ -135,13 +118,12 @@ export class ResourceClient {
    * Delete a resource
    */
   async delete(id: string): Promise<boolean> {
-    const mutation = `
-      mutation DeleteResource($id: ID!) {
-        deleteResource(id: $id) {
-          success
-        }
-      }
-    `;
+    const mutation = QueryBuilder.mutationWithParams(
+      "DeleteResource",
+      "deleteResource(id: $id)",
+      ["success"],
+      [["id", "ID!"]],
+    );
 
     const result = await this.client.mutation<{
       deleteResource: { success: boolean };
@@ -157,18 +139,16 @@ export class ResourceClient {
     newState: string,
     event: string,
   ): Promise<Resource> {
-    const mutation = `
-      mutation TransitionResource($id: ID!, $state: String!, $event: String!) {
-        transitionResource(id: $id, state: $state, event: $event) {
-          id
-          workflowId
-          state
-          data
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const mutation = QueryBuilder.mutationWithParams(
+      "TransitionResource",
+      "transitionResource(id: $id, state: $state, event: $event)",
+      ["id", "workflowId", "state", "data", "createdAt", "updatedAt"],
+      [
+        ["id", "ID!"],
+        ["state", "String!"],
+        ["event", "String!"],
+      ],
+    );
 
     const variables = {
       id,
@@ -190,26 +170,21 @@ export class ResourceClient {
     activityId: string,
     options: { strict?: boolean; data?: any } = {},
   ): Promise<Resource> {
-    const mutation = `
-      mutation ExecuteActivity($input: ActivityExecuteInput!) {
-        executeActivity(input: $input) {
-          id
-          workflowId
-          state
-          data
-          metadata
-          createdAt
-          updatedAt
-          history {
-            timestamp
-            activity
-            fromState
-            toState
-            data
-          }
-        }
-      }
-    `;
+    const mutation = QueryBuilder.mutationWithParams(
+      "ExecuteActivity",
+      "executeActivity(input: $input)",
+      [
+        "id",
+        "workflowId",
+        "state",
+        "data",
+        "metadata",
+        "createdAt",
+        "updatedAt",
+        "history { timestamp activity fromState toState data }",
+      ],
+      [["input", "ActivityExecuteInput!"]],
+    );
 
     const variables = {
       input: {
@@ -232,19 +207,12 @@ export class ResourceClient {
     id: string,
     _options: { limit?: number } = {},
   ): Promise<{ data: Array<any> }> {
-    const query = `
-      query GetResource($id: String!) {
-        resource(id: $id) {
-          history {
-            timestamp
-            activity
-            fromState
-            toState
-            data
-          }
-        }
-      }
-    `;
+    const query = QueryBuilder.queryWithParams(
+      "GetResourceHistory",
+      "resource(id: $id)",
+      ["history { timestamp activity fromState toState data }"],
+      [["id", "String!"]],
+    );
 
     const result = await this.client.query<{
       resource: {

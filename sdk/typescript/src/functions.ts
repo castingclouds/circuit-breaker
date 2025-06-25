@@ -6,11 +6,11 @@
 import {
   Function,
   FunctionCreateInput,
-  FunctionExecution,
   ExecutionStatus,
   PaginationOptions,
-} from "./types.js";
-import type { Client } from "./client.js";
+} from "./types";
+import type { Client } from "./client";
+import { QueryBuilder } from "./schema";
 
 export class FunctionClient {
   constructor(private _client: Client) {}
@@ -42,18 +42,12 @@ export class FunctionClient {
    */
   async list(options?: PaginationOptions): Promise<Function[]> {
     // Return available activities as a proxy for functions
-    const query = `
-      query GetAvailableActivities($resourceId: ID!) {
-        availableActivities(resourceId: $resourceId) {
-          id
-          name
-          fromStates
-          toState
-          conditions
-          description
-        }
-      }
-    `;
+    const query = QueryBuilder.queryWithParams(
+      "GetAvailableActivities",
+      "availableActivities(resourceId: $resourceId)",
+      ["id", "name", "fromStates", "toState", "conditions", "description"],
+      [["resourceId", "ID!"]],
+    );
 
     // This would need a resource ID, so we return empty for now
     console.warn(

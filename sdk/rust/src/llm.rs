@@ -2,7 +2,7 @@
 //!
 //! This module provides client interfaces for interacting with Large Language Models.
 
-use crate::{types::*, Client, Result};
+use crate::{schema::QueryBuilder, types::*, Client, Result};
 use serde::{Deserialize, Serialize};
 
 /// Common LLM models used across providers
@@ -32,27 +32,17 @@ impl LLMClient {
 
     /// Make a chat completion request
     pub async fn chat_completion(&self, request: LLMRequest) -> Result<LLMResponse> {
-        let mutation = r#"
-            mutation LlmChatCompletion($input: LlmchatCompletionInput!) {
-                llmChatCompletion(input: $input) {
-                    id
-                    model
-                    choices {
-                        index
-                        message {
-                            role
-                            content
-                        }
-                        finishReason
-                    }
-                    usage {
-                        promptTokens
-                        completionTokens
-                        totalTokens
-                    }
-                }
-            }
-        "#;
+        let mutation = QueryBuilder::mutation_with_params(
+            "LlmChatCompletion",
+            "llmChatCompletion(input: $input)",
+            &[
+                "id",
+                "model",
+                "choices { index message { role content } finishReason }",
+                "usage { promptTokens completionTokens totalTokens }",
+            ],
+            &[("input", "LlmchatCompletionInput!")],
+        );
 
         #[derive(Serialize)]
         struct Variables {
@@ -78,7 +68,7 @@ impl LLMClient {
         let response: Response = self
             .client
             .graphql(
-                mutation,
+                &mutation,
                 Variables {
                     input: LlmchatCompletionInput {
                         model: request.model,
@@ -96,15 +86,11 @@ impl LLMClient {
 
     /// Get available models
     pub async fn list_models(&self) -> Result<Vec<String>> {
-        let query = r#"
-            query ListModels {
-                llmModels {
-                    name
-                    provider
-                    available
-                }
-            }
-        "#;
+        let query = QueryBuilder::query(
+            "ListModels",
+            "llmModels",
+            &["name", "provider", "available"],
+        );
 
         #[derive(Deserialize)]
         struct Response {
@@ -119,7 +105,7 @@ impl LLMClient {
             available: bool,
         }
 
-        let response: Response = self.client.graphql(query, ()).await?;
+        let response: Response = self.client.graphql(&query, ()).await?;
 
         Ok(response
             .llm_models

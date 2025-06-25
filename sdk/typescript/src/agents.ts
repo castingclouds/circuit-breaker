@@ -10,8 +10,9 @@ import {
   ChatMessage,
   PaginationOptions,
   // PaginatedResult,
-} from "./types.js";
-import type { Client } from "./client.js";
+} from "./types";
+import { Client } from "./client";
+import { QueryBuilder } from "./schema";
 
 export class AgentClient {
   constructor(private client: Client) {}
@@ -20,37 +21,23 @@ export class AgentClient {
    * Create a new agent
    */
   async create(input: AgentCreateInput): Promise<Agent> {
-    const mutation = `
-      mutation CreateAgent($input: AgentDefinitionInput!) {
-        createAgent(input: $input) {
-          id
-          name
-          description
-          llmProvider {
-            providerType
-            model
-            baseUrl
-          }
-          llmConfig {
-            temperature
-            maxTokens
-            topP
-            frequencyPenalty
-            presencePenalty
-            stopSequences
-          }
-          prompts {
-            system
-            userTemplate
-            contextInstructions
-          }
-          capabilities
-          tools
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const mutation = QueryBuilder.mutationWithParams(
+      "CreateAgent",
+      "createAgent(input: $input)",
+      [
+        "id",
+        "name",
+        "description",
+        "llmProvider { providerType model baseUrl }",
+        "llmConfig { temperature maxTokens topP frequencyPenalty presencePenalty stopSequences }",
+        "prompts { system userTemplate contextInstructions }",
+        "capabilities",
+        "tools",
+        "createdAt",
+        "updatedAt",
+      ],
+      [["input", "AgentDefinitionInput!"]],
+    );
 
     const variables = {
       input: {
@@ -91,37 +78,23 @@ export class AgentClient {
    * Get an agent by ID
    */
   async get(id: string): Promise<Agent> {
-    const query = `
-      query GetAgent($id: ID!) {
-        agent(id: $id) {
-          id
-          name
-          description
-          llmProvider {
-            providerType
-            model
-            baseUrl
-          }
-          llmConfig {
-            temperature
-            maxTokens
-            topP
-            frequencyPenalty
-            presencePenalty
-            stopSequences
-          }
-          prompts {
-            system
-            userTemplate
-            contextInstructions
-          }
-          capabilities
-          tools
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const query = QueryBuilder.queryWithParams(
+      "GetAgent",
+      "agent(id: $id)",
+      [
+        "id",
+        "name",
+        "description",
+        "llmProvider { providerType model baseUrl }",
+        "llmConfig { temperature maxTokens topP frequencyPenalty presencePenalty stopSequences }",
+        "prompts { system userTemplate contextInstructions }",
+        "capabilities",
+        "tools",
+        "createdAt",
+        "updatedAt",
+      ],
+      [["id", "ID!"]],
+    );
 
     const result = await this.client.query<{ agent: Agent }>(query, { id });
     return result.agent;
@@ -131,83 +104,47 @@ export class AgentClient {
    * List all agents
    */
   async list(_options?: PaginationOptions): Promise<Agent[]> {
-    const query = `
-      query GetAgents {
-        agents {
-          id
-          name
-          description
-          llmProvider {
-            name
-            healthStatus {
-              isHealthy
-              lastCheck
-              errorRate
-              averageLatencyMs
-              consecutiveFailures
-              lastError
-            }
-          }
-          llmConfig {
-            model
-            temperature
-            maxTokens
-          }
-          prompts {
-            system
-            user
-          }
-          capabilities
-          tools {
-            name
-            description
-            parameters
-          }
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const query = QueryBuilder.query("ListAgents", "agents", [
+      "id",
+      "name",
+      "description",
+      "llmProvider { providerType model baseUrl }",
+      "llmConfig { temperature maxTokens topP frequencyPenalty presencePenalty stopSequences }",
+      "prompts { system userTemplate contextInstructions }",
+      "capabilities",
+      "tools",
+      "createdAt",
+      "updatedAt",
+    ]);
 
     const result = await this.client.query<{ agents: Agent[] }>(query);
     return result.agents;
   }
 
   /**
-   * Update an agent
+   * Update an existing agent
    */
   async update(id: string, updates: Partial<AgentCreateInput>): Promise<Agent> {
-    const mutation = `
-      mutation UpdateAgent($id: ID!, $input: AgentDefinitionInput!) {
-        updateAgent(id: $id, input: $input) {
-          id
-          name
-          description
-          llmProvider {
-            providerType
-            model
-            baseUrl
-          }
-          llmConfig {
-            temperature
-            maxTokens
-            topP
-            frequencyPenalty
-            presencePenalty
-            stopSequences
-          }
-          prompts {
-            system
-            userTemplate
-            contextInstructions
-          }
-          capabilities
-          tools
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const mutation = QueryBuilder.mutationWithParams(
+      "UpdateAgent",
+      "updateAgent(id: $id, input: $input)",
+      [
+        "id",
+        "name",
+        "description",
+        "llmProvider { providerType model baseUrl }",
+        "llmConfig { temperature maxTokens topP frequencyPenalty presencePenalty stopSequences }",
+        "prompts { system userTemplate contextInstructions }",
+        "capabilities",
+        "tools",
+        "createdAt",
+        "updatedAt",
+      ],
+      [
+        ["id", "ID!"],
+        ["input", "AgentDefinitionInput!"],
+      ],
+    );
 
     const variables = {
       id,
@@ -247,13 +184,12 @@ export class AgentClient {
    * Delete an agent
    */
   async delete(id: string): Promise<boolean> {
-    const mutation = `
-      mutation DeleteAgent($id: ID!) {
-        deleteAgent(id: $id) {
-          success
-        }
-      }
-    `;
+    const mutation = QueryBuilder.mutationWithParams(
+      "DeleteAgent",
+      "deleteAgent(id: $id)",
+      ["success"],
+      [["id", "ID!"]],
+    );
 
     const result = await this.client.mutation<{
       deleteAgent: { success: boolean };
@@ -268,27 +204,17 @@ export class AgentClient {
     // First get the agent to retrieve its configuration
     const agent = await this.get(id);
 
-    const mutation = `
-      mutation LlmChatCompletion($input: LlmchatCompletionInput!) {
-        llmChatCompletion(input: $input) {
-          id
-          model
-          choices {
-            index
-            message {
-              role
-              content
-            }
-            finishReason
-          }
-          usage {
-            promptTokens
-            completionTokens
-            totalTokens
-          }
-        }
-      }
-    `;
+    const mutation = QueryBuilder.mutationWithParams(
+      "LlmChatCompletion",
+      "llmChatCompletion(input: $input)",
+      [
+        "id",
+        "model",
+        "choices { index message { role content } finishReason }",
+        "usage { promptTokens completionTokens totalTokens }",
+      ],
+      [["input", "LlmchatCompletionInput!"]],
+    );
 
     // Create messages including the agent's system prompt
     const agentMessages = [
@@ -323,18 +249,15 @@ export class AgentClient {
    * Execute an agent with input
    */
   async execute(id: string, input: Record<string, any>): Promise<any> {
-    const mutation = `
-      mutation ExecuteAgent($agentId: ID!, $input: JSON!) {
-        executeAgent(agentId: $agentId, input: $input) {
-          id
-          status
-          output
-          error
-          created_at
-          completed_at
-        }
-      }
-    `;
+    const mutation = QueryBuilder.mutationWithParams(
+      "ExecuteAgent",
+      "executeAgent(agentId: $agentId, input: $input)",
+      ["id", "status", "output", "error", "created_at", "completed_at"],
+      [
+        ["agentId", "ID!"],
+        ["input", "JSON!"],
+      ],
+    );
 
     const variables = {
       agentId: id,

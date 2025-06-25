@@ -12,6 +12,7 @@ import {
   PaginatedResult,
 } from "./types.js";
 import type { Client } from "./client.js";
+import { QueryBuilder } from "./schema";
 
 export class WorkflowClient {
   constructor(private client: Client) {}
@@ -20,26 +21,20 @@ export class WorkflowClient {
    * Create a new workflow
    */
   async create(input: WorkflowCreateInput): Promise<Workflow> {
-    const mutation = `
-      mutation CreateWorkflow($input: WorkflowDefinitionInput!) {
-        createWorkflow(input: $input) {
-          id
-          name
-          states
-          initialState
-          activities {
-            id
-            name
-            fromStates
-            toState
-            conditions
-            description
-          }
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const mutation = QueryBuilder.mutationWithParams(
+      "CreateWorkflow",
+      "createWorkflow(input: $input)",
+      [
+        "id",
+        "name",
+        "states",
+        "initialState",
+        "activities { id name type config }",
+        "createdAt",
+        "updatedAt",
+      ],
+      [["input", "WorkflowDefinitionInput!"]],
+    );
 
     const variables = {
       input: {
@@ -69,26 +64,20 @@ export class WorkflowClient {
    * Get a workflow by ID
    */
   async get(id: string): Promise<Workflow> {
-    const query = `
-      query GetWorkflow($id: ID!) {
-        workflow(id: $id) {
-          id
-          name
-          states
-          initialState
-          activities {
-            id
-            name
-            fromStates
-            toState
-            conditions
-            description
-          }
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const query = QueryBuilder.queryWithParams(
+      "GetWorkflow",
+      "workflow(id: $id)",
+      [
+        "id",
+        "name",
+        "states",
+        "initialState",
+        "activities { id name type config }",
+        "createdAt",
+        "updatedAt",
+      ],
+      [["id", "ID!"]],
+    );
 
     const result = await this.client.query<{ workflow: Workflow }>(query, {
       id,
@@ -100,26 +89,15 @@ export class WorkflowClient {
    * List all workflows
    */
   async list(_options?: PaginationOptions): Promise<Workflow[]> {
-    const query = `
-      query GetWorkflows {
-        workflows {
-          id
-          name
-          states
-          initialState
-          activities {
-            id
-            name
-            fromStates
-            toState
-            conditions
-            description
-          }
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const query = QueryBuilder.query("GetWorkflows", "workflows", [
+      "id",
+      "name",
+      "states",
+      "initialState",
+      "activities { id name type config }",
+      "createdAt",
+      "updatedAt",
+    ]);
 
     const result = await this.client.query<{ workflows: Workflow[] }>(query);
     return result.workflows;
@@ -132,26 +110,23 @@ export class WorkflowClient {
     id: string,
     updates: Partial<WorkflowCreateInput>,
   ): Promise<Workflow> {
-    const mutation = `
-      mutation UpdateWorkflow($id: ID!, $input: WorkflowDefinitionInput!) {
-        updateWorkflow(id: $id, input: $input) {
-          id
-          name
-          states
-          initialState
-          activities {
-            id
-            name
-            fromStates
-            toState
-            conditions
-            description
-          }
-          createdAt
-          updatedAt
-        }
-      }
-    `;
+    const mutation = QueryBuilder.mutationWithParams(
+      "UpdateWorkflow",
+      "updateWorkflow(id: $id, input: $input)",
+      [
+        "id",
+        "name",
+        "states",
+        "initialState",
+        "activities { id name type config }",
+        "createdAt",
+        "updatedAt",
+      ],
+      [
+        ["id", "ID!"],
+        ["input", "WorkflowDefinitionInput!"],
+      ],
+    );
 
     const variables = {
       id,
@@ -183,13 +158,12 @@ export class WorkflowClient {
    * Delete a workflow
    */
   async delete(id: string): Promise<boolean> {
-    const mutation = `
-      mutation DeleteWorkflow($id: ID!) {
-        deleteWorkflow(id: $id) {
-          success
-        }
-      }
-    `;
+    const mutation = QueryBuilder.mutationWithParams(
+      "DeleteWorkflow",
+      "deleteWorkflow(id: $id)",
+      ["success"],
+      [["id", "ID!"]],
+    );
 
     const result = await this.client.mutation<{
       deleteWorkflow: { success: boolean };
@@ -201,26 +175,21 @@ export class WorkflowClient {
    * Execute a workflow by creating a workflow instance
    */
   async execute(id: string, input: Record<string, any>): Promise<any> {
-    const mutation = `
-      mutation CreateWorkflowInstance($input: CreateWorkflowInstanceInput!) {
-        createWorkflowInstance(input: $input) {
-          id
-          workflowId
-          state
-          data
-          metadata
-          createdAt
-          updatedAt
-          history {
-            timestamp
-            activity
-            fromState
-            toState
-            data
-          }
-        }
-      }
-    `;
+    const mutation = QueryBuilder.mutationWithParams(
+      "CreateWorkflowInstance",
+      "createWorkflowInstance(input: $input)",
+      [
+        "id",
+        "workflowId",
+        "state",
+        "data",
+        "metadata",
+        "createdAt",
+        "updatedAt",
+        "history { timestamp activity fromState toState data }",
+      ],
+      [["input", "CreateWorkflowInstanceInput!"]],
+    );
 
     const variables = {
       input: {
@@ -241,26 +210,21 @@ export class WorkflowClient {
    * Get resource (workflow instance) status
    */
   async getExecution(resourceId: string): Promise<any> {
-    const query = `
-      query GetResource($id: String!) {
-        resource(id: $id) {
-          id
-          workflowId
-          state
-          data
-          metadata
-          createdAt
-          updatedAt
-          history {
-            timestamp
-            activity
-            fromState
-            toState
-            data
-          }
-        }
-      }
-    `;
+    const query = QueryBuilder.queryWithParams(
+      "GetResource",
+      "resource(id: $id)",
+      [
+        "id",
+        "workflowId",
+        "state",
+        "data",
+        "metadata",
+        "createdAt",
+        "updatedAt",
+        "history { timestamp activity fromState toState data }",
+      ],
+      [["id", "String!"]],
+    );
 
     const result = await this.client.query<{
       resource: any;
@@ -272,21 +236,22 @@ export class WorkflowClient {
    * List workflow executions
    */
   async listExecutions(workflowId?: string): Promise<WorkflowExecution[]> {
-    const query = `
-      query GetWorkflowExecutions($workflowId: ID) {
-        workflowExecutions(workflowId: $workflowId) {
-          id
-          workflow_id
-          status
-          current_state
-          input
-          output
-          error
-          created_at
-          updated_at
-        }
-      }
-    `;
+    const query = QueryBuilder.queryWithParams(
+      "GetWorkflowExecutions",
+      "workflowExecutions(workflowId: $workflowId)",
+      [
+        "id",
+        "workflow_id",
+        "status",
+        "current_state",
+        "input",
+        "output",
+        "error",
+        "started_at",
+        "completed_at",
+      ],
+      [["workflowId", "ID"]],
+    );
 
     const result = await this.client.query<{
       workflowExecutions: WorkflowExecution[];
@@ -298,13 +263,12 @@ export class WorkflowClient {
    * Cancel a workflow execution
    */
   async cancelExecution(executionId: string): Promise<boolean> {
-    const mutation = `
-      mutation CancelWorkflowExecution($id: ID!) {
-        cancelExecution(id: $id) {
-          success
-        }
-      }
-    `;
+    const mutation = QueryBuilder.mutationWithParams(
+      "CancelWorkflowExecution",
+      "cancelExecution(id: $id)",
+      ["success"],
+      [["id", "ID!"]],
+    );
 
     const result = await this.client.mutation<{
       cancelExecution: { success: boolean };

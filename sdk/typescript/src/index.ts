@@ -11,7 +11,7 @@
 
 export { Client, ClientBuilder } from "./client.js";
 export type { ClientBuilderConfig } from "./client.js";
-export type { ClientConfig, PingResponse, ServerInfo } from "./types.js";
+export type { ClientConfig } from "./types.js";
 
 // ============================================================================
 // API Clients
@@ -80,6 +80,34 @@ export {
   getMCPServerHealth,
   getCustomMCPServer,
 } from "./mcp.js";
+export {
+  SubscriptionClient,
+  SubscriptionManager,
+  SubscriptionId,
+  SubscriptionError,
+  SubscriptionMetrics,
+  WebSocketConnection,
+  ResourceUpdateSubscriptionBuilder,
+  WorkflowEventSubscriptionBuilder,
+  AgentExecutionSubscriptionBuilder,
+  LLMStreamSubscriptionBuilder,
+  CostUpdateSubscriptionBuilder,
+  MCPServerStatusSubscriptionBuilder,
+  MCPSessionEventSubscriptionBuilder,
+  subscribeResourceUpdates,
+  subscribeWorkflowEvents,
+  subscribeLLMStream,
+  subscribeCostUpdates,
+} from "./subscriptions.js";
+export {
+  NATSClient,
+  CreateWorkflowInstanceBuilder,
+  ExecuteActivityWithNATSBuilder,
+  createWorkflowInstance,
+  executeActivityWithNats,
+  getNatsResource,
+  getResourcesInState,
+} from "./nats.js";
 
 // ============================================================================
 // Types
@@ -135,18 +163,6 @@ export type {
 } from "./types.js";
 
 // ============================================================================
-// Analytics Types (from analytics.js)
-// ============================================================================
-
-export type {
-  BudgetStatus,
-  CostAnalytics,
-  BudgetInput,
-  CostAnalyticsInput,
-  CostUpdateEvent,
-} from "./analytics.js";
-
-// ============================================================================
 // MCP Types (from mcp.js)
 // ============================================================================
 
@@ -166,6 +182,35 @@ export type {
   ConfigureJWTInput,
   PaginationInput,
 } from "./mcp.js";
+
+// ============================================================================
+// Subscription Types (from subscriptions.js)
+// ============================================================================
+
+export type {
+  GraphQLSubscription,
+  GraphQLWSMessage,
+  SubscriptionHandler,
+  SubscriptionConfig,
+  ResourceUpdateEvent,
+  WorkflowEvent,
+  AgentExecutionEvent,
+  LLMStreamChunk,
+  CostUpdateEvent,
+  MCPServerStatusUpdate,
+  MCPSessionEvent,
+} from "./subscriptions.js";
+
+// ============================================================================
+// NATS Types (from nats.js)
+// ============================================================================
+
+export type {
+  NATSResource,
+  HistoryEvent,
+  CreateWorkflowInstanceInput,
+  ExecuteActivityWithNATSInput,
+} from "./nats.js";
 
 // ============================================================================
 // Rule Types (from rules.js)
@@ -221,6 +266,23 @@ export const DEFAULT_TIMEOUT = 30000;
 // Main SDK Class (Convenience)
 // ============================================================================
 
+// ============================================================================
+// Import required classes for SDK class
+// ============================================================================
+
+import { Client } from "./client.js";
+import type { ClientConfig, PingResponse, ServerInfo } from "./types.js";
+import type { WorkflowClient } from "./workflows.js";
+import type { AgentClient } from "./agents.js";
+import type { FunctionClient } from "./functions.js";
+import type { ResourceClient } from "./resources.js";
+import type { RuleClient } from "./rules.js";
+import type { LLMClient } from "./llm.js";
+import type { AnalyticsClient } from "./analytics.js";
+import type { MCPClient } from "./mcp.js";
+import type { SubscriptionClient } from "./subscriptions.js";
+import type { NATSClient } from "./nats.js";
+
 /**
  * Main SDK class that provides access to all API clients
  */
@@ -253,7 +315,8 @@ export class CircuitBreakerSDK {
       }
 
       Object.entries(config.headers).forEach(([key, value]) => {
-        builder = builder.header(key, value);
+        const headers = { [key]: value };
+        builder = builder.headers(headers);
       });
 
       this.client = builder.build();
@@ -331,6 +394,20 @@ export class CircuitBreakerSDK {
   }
 
   /**
+   * Access real-time subscription API
+   */
+  subscriptions(): SubscriptionClient {
+    return this.client.subscriptions();
+  }
+
+  /**
+   * Access NATS-enhanced operations API
+   */
+  nats(): NATSClient {
+    return this.client.nats();
+  }
+
+  /**
    * Get the underlying client
    */
   getClient(): Client {
@@ -356,10 +433,11 @@ export function createSimpleSDK(
   baseUrl: string,
   apiKey?: string,
 ): CircuitBreakerSDK {
-  return new CircuitBreakerSDK({
+  const config: ClientConfig = {
     baseUrl,
-    apiKey,
-  });
+    ...(apiKey && { apiKey }),
+  };
+  return new CircuitBreakerSDK(config);
 }
 
 // ============================================================================

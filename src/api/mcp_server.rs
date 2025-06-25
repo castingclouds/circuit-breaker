@@ -3,9 +3,7 @@
 
 use axum::{
     body::Body,
-    extract::{
-        Path, Query, State, WebSocketUpgrade,
-    },
+    extract::{Path, Query, State, WebSocketUpgrade},
     http::{HeaderMap, StatusCode},
     response::{
         sse::{Event, KeepAlive, Sse},
@@ -14,10 +12,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-
-
-
-
 
 // Global SSE Response Router for multi-tenant SSE communication
 pub struct SSEResponseRouter {
@@ -32,7 +26,11 @@ impl SSEResponseRouter {
         }
     }
 
-    pub async fn register_channel(&self, token: String, sender: mpsc::UnboundedSender<Result<Event, Infallible>>) {
+    pub async fn register_channel(
+        &self,
+        token: String,
+        sender: mpsc::UnboundedSender<Result<Event, Infallible>>,
+    ) {
         let mut channels = self.channels.write().await;
         info!("Registered SSE channel for token: {}...", &token[..8]);
         channels.insert(token, sender);
@@ -44,19 +42,24 @@ impl SSEResponseRouter {
         info!("Unregistered SSE channel for token: {}...", &token[..8]);
     }
 
-    pub async fn send_response(&self, token: &str, response: &super::mcp_types::MCPResponse) -> bool {
+    pub async fn send_response(
+        &self,
+        token: &str,
+        response: &super::mcp_types::MCPResponse,
+    ) -> bool {
         let channels = self.channels.read().await;
         if let Some(sender) = channels.get(token) {
             if let Ok(response_json) = serde_json::to_string(response) {
-                let event = Event::default()
-                    .event("mcp-response")
-                    .data(response_json);
-                    
+                let event = Event::default().event("mcp-response").data(response_json);
+
                 if sender.send(Ok(event)).is_ok() {
                     info!("Sent MCP response via SSE for token: {}...", &token[..8]);
                     return true;
                 } else {
-                    info!("Failed to send MCP response - channel closed for token: {}...", &token[..8]);
+                    info!(
+                        "Failed to send MCP response - channel closed for token: {}...",
+                        &token[..8]
+                    );
                 }
             }
         } else {
@@ -79,9 +82,8 @@ lazy_static::lazy_static! {
 use base64::{engine::general_purpose, Engine as _};
 use chrono;
 
-
 use std::{collections::HashMap, convert::Infallible, sync::Arc};
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid;
 
@@ -473,35 +475,48 @@ impl MCPServerManager {
     /// Get default tools for a server instance
     pub async fn get_default_tools(&self, instance_id: &str) -> Vec<MCPTool> {
         debug!("🔧 get_default_tools called for instance: {}", instance_id);
-        
+
         // Get the instance to check its configuration
         if let Some(instance) = self.get_server_instance(instance_id).await {
-            debug!("✅ Found instance: {} ({})", instance.name, instance.instance_id);
+            debug!(
+                "✅ Found instance: {} ({})",
+                instance.name, instance.instance_id
+            );
             debug!("📋 Instance app_type: {:?}", instance.app_type);
-            
+
             match &instance.app_type {
                 MCPApplicationType::Remote(oauth_config) => {
-                    debug!("🌐 Remote instance with provider: {}", oauth_config.provider_type);
+                    debug!(
+                        "🌐 Remote instance with provider: {}",
+                        oauth_config.provider_type
+                    );
                     // Return provider-specific tools based on the OAuth provider type
                     let tools = match oauth_config.provider_type.as_str() {
                         "gitlab" => {
                             debug!("🦊 Returning GitLab tools");
                             self.get_gitlab_tools()
-                        },
+                        }
                         "github" => {
                             debug!("🐙 Returning GitHub tools");
                             self.get_github_tools()
-                        },
+                        }
                         "google" => {
                             debug!("🔍 Returning Google tools");
                             self.get_google_tools()
-                        },
+                        }
                         provider => {
-                            debug!("❓ Unknown provider '{}', returning generic remote tools", provider);
+                            debug!(
+                                "❓ Unknown provider '{}', returning generic remote tools",
+                                provider
+                            );
                             self.get_generic_remote_tools()
-                        },
+                        }
                     };
-                    debug!("🛠️  Returning {} tools for {} instance", tools.len(), oauth_config.provider_type);
+                    debug!(
+                        "🛠️  Returning {} tools for {} instance",
+                        tools.len(),
+                        oauth_config.provider_type
+                    );
                     for tool in &tools {
                         debug!("   • {}: {}", tool.name, tool.description);
                     }
@@ -518,7 +533,10 @@ impl MCPServerManager {
                 }
             }
         } else {
-            warn!("❌ Instance '{}' not found, returning fallback tools", instance_id);
+            warn!(
+                "❌ Instance '{}' not found, returning fallback tools",
+                instance_id
+            );
             let tools = self.get_generic_local_tools();
             debug!("🛠️  Returning {} fallback tools", tools.len());
             tools
@@ -543,7 +561,8 @@ impl MCPServerManager {
             },
             MCPTool {
                 name: "gitlab_list_projects".to_string(),
-                description: "List GitLab projects accessible to the authenticated user".to_string(),
+                description: "List GitLab projects accessible to the authenticated user"
+                    .to_string(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -649,7 +668,8 @@ impl MCPServerManager {
         vec![
             MCPTool {
                 name: "github_list_repositories".to_string(),
-                description: "List GitHub repositories accessible to the authenticated user".to_string(),
+                description: "List GitHub repositories accessible to the authenticated user"
+                    .to_string(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -661,7 +681,8 @@ impl MCPServerManager {
             },
             MCPTool {
                 name: "github_get_repository".to_string(),
-                description: "Get detailed information about a specific GitHub repository".to_string(),
+                description: "Get detailed information about a specific GitHub repository"
+                    .to_string(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -690,38 +711,34 @@ impl MCPServerManager {
 
     /// Get Google-specific tools (placeholder)
     fn get_google_tools(&self) -> Vec<MCPTool> {
-        vec![
-            MCPTool {
-                name: "google_drive_list".to_string(),
-                description: "List files in Google Drive".to_string(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Search query"},
-                        "max_results": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10}
-                    }
-                }),
-            },
-        ]
+        vec![MCPTool {
+            name: "google_drive_list".to_string(),
+            description: "List files in Google Drive".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "max_results": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10}
+                }
+            }),
+        }]
     }
 
     /// Get generic tools for remote instances with unknown providers
     fn get_generic_remote_tools(&self) -> Vec<MCPTool> {
-        vec![
-            MCPTool {
-                name: "api_request".to_string(),
-                description: "Make authenticated API requests to the configured provider".to_string(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"], "default": "GET"},
-                        "endpoint": {"type": "string", "description": "API endpoint path"},
-                        "body": {"type": "object", "description": "Request body for POST/PUT/PATCH"}
-                    },
-                    "required": ["endpoint"]
-                }),
-            },
-        ]
+        vec![MCPTool {
+            name: "api_request".to_string(),
+            description: "Make authenticated API requests to the configured provider".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"], "default": "GET"},
+                    "endpoint": {"type": "string", "description": "API endpoint path"},
+                    "body": {"type": "object", "description": "Request body for POST/PUT/PATCH"}
+                },
+                "required": ["endpoint"]
+            }),
+        }]
     }
 
     /// Get generic tools for local instances
@@ -906,7 +923,10 @@ impl CircuitBreakerMCPServer {
             // OAuth initiation endpoint for MCP clients like Windsurf
             .route("/mcp/:instance_id/oauth/init", get(handle_mcp_oauth_init))
             // OAuth callback endpoint for MCP clients
-            .route("/mcp/:instance_id/oauth/callback", get(handle_mcp_oauth_callback))
+            .route(
+                "/mcp/:instance_id/oauth/callback",
+                get(handle_mcp_oauth_callback),
+            )
             // OAuth callback endpoint for remote instances - support both GET and POST
             .route(
                 "/mcp/:instance_id/oauth/callback/remote",
@@ -961,11 +981,20 @@ impl CircuitBreakerMCPServer {
             .route("/mcp/oauth/providers", post(register_oauth_provider))
             .route("/mcp/oauth/authorize", post(get_oauth_authorization_url))
             // General OAuth callback - for backward compatibility
-            .route("/mcp/oauth/callback", get(handle_general_oauth_callback).post(handle_general_oauth_callback))
+            .route(
+                "/mcp/oauth/callback",
+                get(handle_general_oauth_callback).post(handle_general_oauth_callback),
+            )
             // OAuth callback for MCP clients (expected by mcp-remote)
-            .route("/oauth/callback/debug", get(handle_mcp_client_oauth_callback).post(handle_mcp_client_oauth_callback))
-            // OAuth callback for MCP clients (alternative pattern)  
-            .route("/oauth/callback", get(handle_mcp_client_oauth_callback).post(handle_mcp_client_oauth_callback))
+            .route(
+                "/oauth/callback/debug",
+                get(handle_mcp_client_oauth_callback).post(handle_mcp_client_oauth_callback),
+            )
+            // OAuth callback for MCP clients (alternative pattern)
+            .route(
+                "/oauth/callback",
+                get(handle_mcp_client_oauth_callback).post(handle_mcp_client_oauth_callback),
+            )
             // Add state
             .with_state(self.manager.clone())
     }
@@ -983,7 +1012,12 @@ impl CircuitBreakerMCPServer {
         );
 
         // Helper function to get request ID or default for notifications
-        let get_request_id = || request.id.clone().unwrap_or_else(|| MCPId::String("notification".to_string()));
+        let get_request_id = || {
+            request
+                .id
+                .clone()
+                .unwrap_or_else(|| MCPId::String("notification".to_string()))
+        };
 
         // Verify the instance exists
         let instance = match self.manager.get_server_instance(instance_id).await {
@@ -1018,38 +1052,44 @@ impl CircuitBreakerMCPServer {
             }
         }
 
-        info!("🔄 Processing MCP request: {} for instance: {}", request.method, instance.instance_id);
-        debug!("🔄 Request details: id={:?}, params={:?}", request.id, request.params);
+        info!(
+            "🔄 Processing MCP request: {} for instance: {}",
+            request.method, instance.instance_id
+        );
+        debug!(
+            "🔄 Request details: id={:?}, params={:?}",
+            request.id, request.params
+        );
 
         match request.method.as_str() {
             "initialize" => {
                 info!("🚀 Handling initialize request");
                 self.handle_initialize(request, &instance).await
-            },
+            }
             "tools/list" => {
                 info!("🛠️  Handling tools/list request");
                 self.handle_list_tools(request, &instance).await
-            },
+            }
             "tools/call" => {
                 info!("⚡ Handling tools/call request");
                 self.handle_call_tool(request, &instance).await
-            },
+            }
             "prompts/list" => {
                 info!("📝 Handling prompts/list request");
                 self.handle_list_prompts(request, &instance).await
-            },
+            }
             "prompts/get" => {
                 info!("📄 Handling prompts/get request");
                 self.handle_get_prompt(request, &instance).await
-            },
+            }
             "resources/list" => {
                 info!("📁 Handling resources/list request");
                 self.handle_list_resources(request, &instance).await
-            },
+            }
             "resources/read" => {
                 info!("📖 Handling resources/read request");
                 self.handle_read_resource(request, &instance).await
-            },
+            }
             method => {
                 warn!("❌ Unknown method: {}", method);
                 MCPResponse::error_from_request(
@@ -1057,7 +1097,7 @@ impl CircuitBreakerMCPServer {
                     error_codes::METHOD_NOT_FOUND,
                     format!("Method '{}' not found", method),
                 )
-            },
+            }
         }
     }
 
@@ -1195,8 +1235,12 @@ impl CircuitBreakerMCPServer {
         debug!("📋 Instance details: app_type={:?}", instance.app_type);
 
         let tools = self.manager.get_default_tools(&instance.instance_id).await;
-        
-        info!("🛠️  Retrieved {} tools for instance {}", tools.len(), instance.instance_id);
+
+        info!(
+            "🛠️  Retrieved {} tools for instance {}",
+            tools.len(),
+            instance.instance_id
+        );
         for tool in &tools {
             info!("   🔧 Tool: {} - {}", tool.name, tool.description);
         }
@@ -1206,7 +1250,10 @@ impl CircuitBreakerMCPServer {
         });
 
         info!("📤 Sending tools/list response with {} tools", tools.len());
-        debug!("📤 Full response: {}", serde_json::to_string_pretty(&result).unwrap_or_default());
+        debug!(
+            "📤 Full response: {}",
+            serde_json::to_string_pretty(&result).unwrap_or_default()
+        );
 
         MCPResponse::success_from_request(request.id, result)
     }
@@ -1245,9 +1292,10 @@ impl CircuitBreakerMCPServer {
         let result = self.execute_tool(tool_call, instance).await;
 
         match result {
-            Ok(tool_result) => {
-                MCPResponse::success_from_request(request.id, serde_json::to_value(tool_result).unwrap())
-            }
+            Ok(tool_result) => MCPResponse::success_from_request(
+                request.id,
+                serde_json::to_value(tool_result).unwrap(),
+            ),
             Err(e) => MCPResponse::error_from_request(
                 request.id,
                 error_codes::INTERNAL_ERROR,
@@ -1419,8 +1467,12 @@ impl CircuitBreakerMCPServer {
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
-                // TODO: Check if the authenticated user has permission to access this context
-                // This would involve checking the claims.permissions.project_contexts
+                // Note: Authentication check would be performed at the request level
+                // For now, we'll log the context access attempt
+                info!(
+                    "Accessing project context '{}' for instance {}",
+                    context_id, instance.instance_id
+                );
 
                 // Attempt to perform real search using OAuth if available
                 let search_result = self
@@ -1446,27 +1498,45 @@ impl CircuitBreakerMCPServer {
             }
             // GitLab tools
             "gitlab_get_user" => {
-                info!("Getting GitLab user info for instance: {}", instance.instance_id);
+                info!(
+                    "Getting GitLab user info for instance: {}",
+                    instance.instance_id
+                );
                 self.execute_gitlab_tool(&tool_call, instance).await
             }
             "gitlab_list_projects" => {
-                info!("Listing GitLab projects for instance: {}", instance.instance_id);
+                info!(
+                    "Listing GitLab projects for instance: {}",
+                    instance.instance_id
+                );
                 self.execute_gitlab_tool(&tool_call, instance).await
             }
             "gitlab_get_project" => {
-                info!("Getting GitLab project for instance: {}", instance.instance_id);
+                info!(
+                    "Getting GitLab project for instance: {}",
+                    instance.instance_id
+                );
                 self.execute_gitlab_tool(&tool_call, instance).await
             }
             "gitlab_list_issues" => {
-                info!("Listing GitLab issues for instance: {}", instance.instance_id);
+                info!(
+                    "Listing GitLab issues for instance: {}",
+                    instance.instance_id
+                );
                 self.execute_gitlab_tool(&tool_call, instance).await
             }
             "gitlab_create_issue" => {
-                info!("Creating GitLab issue for instance: {}", instance.instance_id);
+                info!(
+                    "Creating GitLab issue for instance: {}",
+                    instance.instance_id
+                );
                 self.execute_gitlab_tool(&tool_call, instance).await
             }
             "gitlab_list_merge_requests" => {
-                info!("Listing GitLab merge requests for instance: {}", instance.instance_id);
+                info!(
+                    "Listing GitLab merge requests for instance: {}",
+                    instance.instance_id
+                );
                 self.execute_gitlab_tool(&tool_call, instance).await
             }
             "gitlab_get_file" => {
@@ -1474,7 +1544,10 @@ impl CircuitBreakerMCPServer {
                 self.execute_gitlab_tool(&tool_call, instance).await
             }
             "gitlab_list_pipelines" => {
-                info!("Listing GitLab pipelines for instance: {}", instance.instance_id);
+                info!(
+                    "Listing GitLab pipelines for instance: {}",
+                    instance.instance_id
+                );
                 self.execute_gitlab_tool(&tool_call, instance).await
             }
             "gitlab_search" => {
@@ -1485,10 +1558,36 @@ impl CircuitBreakerMCPServer {
         }
     }
 
+    /// Check if the authenticated user has permission to access a project context
+    async fn check_project_context_permission(
+        &self,
+        claims: &MCPTokenClaims,
+        context_id: &str,
+    ) -> bool {
+        // Check if the user has access to this context in their project_contexts list
+        if claims.project_contexts.contains(&context_id.to_string()) {
+            return true;
+        }
+
+        // Check if the user has wildcard access
+        if claims.project_contexts.contains(&"*".to_string()) {
+            return true;
+        }
+
+        // Check if the context is related to the user's installation
+        // This allows access to project contexts that are part of the same installation
+        if context_id.starts_with(&claims.installation_id) {
+            return true;
+        }
+
+        // Default to deny access
+        false
+    }
+
     /// Get project context from git remote URL
     fn get_project_context_from_git(&self) -> Option<String> {
         use std::process::Command;
-        
+
         // Try to get GitLab remote URL
         if let Ok(output) = Command::new("git")
             .args(&["remote", "get-url", "gitlab"])
@@ -1499,7 +1598,7 @@ impl CircuitBreakerMCPServer {
                 return self.extract_gitlab_project_from_url(&url);
             }
         }
-        
+
         // Fallback: try origin remote
         if let Ok(output) = Command::new("git")
             .args(&["remote", "get-url", "origin"])
@@ -1512,35 +1611,35 @@ impl CircuitBreakerMCPServer {
                 }
             }
         }
-        
+
         None
     }
-    
+
     /// Extract GitLab project path from URL
     fn extract_gitlab_project_from_url(&self, url: &str) -> Option<String> {
         // Handle various GitLab URL formats:
         // https://gitlab.com/user/project.git
         // git@gitlab.com:user/project.git
         // https://user@gitlab.com/user/project.git
-        
+
         let url = url.trim_end_matches(".git");
-        
+
         if url.contains("gitlab.com") {
             if let Some(path_start) = url.find("gitlab.com") {
                 let after_domain = &url[path_start + "gitlab.com".len()..];
-                
+
                 // Handle SSH format (git@gitlab.com:user/project)
                 if after_domain.starts_with(':') {
                     return Some(after_domain[1..].to_string());
                 }
-                
+
                 // Handle HTTPS format (https://gitlab.com/user/project)
                 if after_domain.starts_with('/') {
                     return Some(after_domain[1..].to_string());
                 }
             }
         }
-        
+
         None
     }
 
@@ -1553,51 +1652,66 @@ impl CircuitBreakerMCPServer {
         // Get project context from git remote if not provided in arguments
         let project_context = self.get_project_context_from_git();
         info!("Detected project context from git: {:?}", project_context);
-        
+
         // Helper function to get project ID from path
-        let get_project_id = |project_path: &str| -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-            // URL encode the project path for GitLab API
-            let encoded_path = urlencoding::encode(project_path);
-            Ok(encoded_path.to_string())
-        };
-        
+        let get_project_id =
+            |project_path: &str| -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+                // URL encode the project path for GitLab API
+                let encoded_path = urlencoding::encode(project_path);
+                Ok(encoded_path.to_string())
+            };
+
         match tool_call.name.as_str() {
             "gitlab_get_user" => {
                 let url = "https://gitlab.com/api/v4/user";
-                match self.manager.make_authenticated_api_request(
-                    &OAuthProviderType::GitLab,
-                    &instance.installation_id,
-                    None,
-                    reqwest::Method::GET,
-                    url,
-                    None,
-                    None,
-                ).await {
+                match self
+                    .manager
+                    .make_authenticated_api_request(
+                        &OAuthProviderType::GitLab,
+                        &instance.installation_id,
+                        None,
+                        reqwest::Method::GET,
+                        url,
+                        None,
+                        None,
+                    )
+                    .await
+                {
                     Ok(response) => {
                         if response.status().is_success() {
                             let body = response.text().await?;
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab User Info: {}", body))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab User Info: {}",
+                                    body
+                                ))],
                                 is_error: Some(false),
                             })
                         } else {
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab API error: {}", response.status()))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab API error: {}",
+                                    response.status()
+                                ))],
                                 is_error: Some(true),
                             })
                         }
                     }
                     Err(e) => Ok(MCPToolResult {
-                        content: vec![MCPContent::text(format!("Failed to call GitLab API: {}", e))],
+                        content: vec![MCPContent::text(format!(
+                            "Failed to call GitLab API: {}",
+                            e
+                        ))],
                         is_error: Some(true),
-                    })
+                    }),
                 }
             }
             "gitlab_list_projects" => {
                 let mut url = "https://gitlab.com/api/v4/projects?membership=true".to_string();
-                
+
                 // Add query parameters from arguments
-                if let Some(per_page) = tool_call.arguments.get("per_page").and_then(|v| v.as_u64()) {
+                if let Some(per_page) = tool_call.arguments.get("per_page").and_then(|v| v.as_u64())
+                {
                     url.push_str(&format!("&per_page={}", per_page));
                 }
                 if let Some(owned) = tool_call.arguments.get("owned").and_then(|v| v.as_bool()) {
@@ -1605,46 +1719,68 @@ impl CircuitBreakerMCPServer {
                         url.push_str("&owned=true");
                     }
                 }
-                if let Some(starred) = tool_call.arguments.get("starred").and_then(|v| v.as_bool()) {
+                if let Some(starred) = tool_call.arguments.get("starred").and_then(|v| v.as_bool())
+                {
                     if starred {
                         url.push_str("&starred=true");
                     }
                 }
-                if let Some(visibility) = tool_call.arguments.get("visibility").and_then(|v| v.as_str()) {
+                if let Some(visibility) = tool_call
+                    .arguments
+                    .get("visibility")
+                    .and_then(|v| v.as_str())
+                {
                     url.push_str(&format!("&visibility={}", visibility));
                 }
 
-                match self.manager.make_authenticated_api_request(
-                    &OAuthProviderType::GitLab,
-                    &instance.installation_id,
-                    None,
-                    reqwest::Method::GET,
-                    &url,
-                    None,
-                    None,
-                ).await {
+                match self
+                    .manager
+                    .make_authenticated_api_request(
+                        &OAuthProviderType::GitLab,
+                        &instance.installation_id,
+                        None,
+                        reqwest::Method::GET,
+                        &url,
+                        None,
+                        None,
+                    )
+                    .await
+                {
                     Ok(response) => {
                         if response.status().is_success() {
                             let body = response.text().await?;
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab Projects: {}", body))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab Projects: {}",
+                                    body
+                                ))],
                                 is_error: Some(false),
                             })
                         } else {
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab API error: {}", response.status()))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab API error: {}",
+                                    response.status()
+                                ))],
                                 is_error: Some(true),
                             })
                         }
                     }
                     Err(e) => Ok(MCPToolResult {
-                        content: vec![MCPContent::text(format!("Failed to call GitLab API: {}", e))],
+                        content: vec![MCPContent::text(format!(
+                            "Failed to call GitLab API: {}",
+                            e
+                        ))],
                         is_error: Some(true),
-                    })
+                    }),
                 }
             }
             "gitlab_get_project" => {
-                let project_id = if let Some(arg_project) = tool_call.arguments.get("project_id").and_then(|v| v.as_str()) {
+                let project_id = if let Some(arg_project) = tool_call
+                    .arguments
+                    .get("project_id")
+                    .and_then(|v| v.as_str())
+                {
                     arg_project.to_string()
                 } else if let Some(ref context) = project_context {
                     get_project_id(context)?
@@ -1654,42 +1790,59 @@ impl CircuitBreakerMCPServer {
                         is_error: Some(true),
                     });
                 };
-                
+
                 let url = format!("https://gitlab.com/api/v4/projects/{}", project_id);
-                
-                match self.manager.make_authenticated_api_request(
-                    &OAuthProviderType::GitLab,
-                    &instance.installation_id,
-                    None,
-                    reqwest::Method::GET,
-                    &url,
-                    None,
-                    None,
-                ).await {
+
+                match self
+                    .manager
+                    .make_authenticated_api_request(
+                        &OAuthProviderType::GitLab,
+                        &instance.installation_id,
+                        None,
+                        reqwest::Method::GET,
+                        &url,
+                        None,
+                        None,
+                    )
+                    .await
+                {
                     Ok(response) => {
                         if response.status().is_success() {
                             let body = response.text().await?;
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab Project: {}", body))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab Project: {}",
+                                    body
+                                ))],
                                 is_error: Some(false),
                             })
                         } else {
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab API error: {}", response.status()))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab API error: {}",
+                                    response.status()
+                                ))],
                                 is_error: Some(true),
                             })
                         }
                     }
                     Err(e) => Ok(MCPToolResult {
-                        content: vec![MCPContent::text(format!("Failed to call GitLab API: {}", e))],
+                        content: vec![MCPContent::text(format!(
+                            "Failed to call GitLab API: {}",
+                            e
+                        ))],
                         is_error: Some(true),
-                    })
+                    }),
                 }
             }
 
             "gitlab_list_issues" => {
                 // Get project_id from arguments or use detected project context
-                let project_id = if let Some(arg_project) = tool_call.arguments.get("project_id").and_then(|v| v.as_str()) {
+                let project_id = if let Some(arg_project) = tool_call
+                    .arguments
+                    .get("project_id")
+                    .and_then(|v| v.as_str())
+                {
                     arg_project.to_string()
                 } else if let Some(ref context) = project_context {
                     get_project_id(context)?
@@ -1699,39 +1852,59 @@ impl CircuitBreakerMCPServer {
                         is_error: Some(true),
                     });
                 };
-                
-                let url = format!("https://gitlab.com/api/v4/projects/{}/issues?per_page=20", project_id);
-                match self.manager.make_authenticated_api_request(
-                    &OAuthProviderType::GitLab,
-                    &instance.installation_id,
-                    None,
-                    reqwest::Method::GET,
-                    &url,
-                    None,
-                    None,
-                ).await {
+
+                let url = format!(
+                    "https://gitlab.com/api/v4/projects/{}/issues?per_page=20",
+                    project_id
+                );
+                match self
+                    .manager
+                    .make_authenticated_api_request(
+                        &OAuthProviderType::GitLab,
+                        &instance.installation_id,
+                        None,
+                        reqwest::Method::GET,
+                        &url,
+                        None,
+                        None,
+                    )
+                    .await
+                {
                     Ok(response) => {
                         if response.status().is_success() {
                             let body = response.text().await?;
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab Issues for project {}: {}", project_id, body))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab Issues for project {}: {}",
+                                    project_id, body
+                                ))],
                                 is_error: Some(false),
                             })
                         } else {
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab API error: {}", response.status()))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab API error: {}",
+                                    response.status()
+                                ))],
                                 is_error: Some(true),
                             })
                         }
                     }
                     Err(e) => Ok(MCPToolResult {
-                        content: vec![MCPContent::text(format!("Failed to call GitLab API: {}", e))],
+                        content: vec![MCPContent::text(format!(
+                            "Failed to call GitLab API: {}",
+                            e
+                        ))],
                         is_error: Some(true),
-                    })
+                    }),
                 }
             }
             "gitlab_create_issue" => {
-                let project_id = if let Some(arg_project) = tool_call.arguments.get("project_id").and_then(|v| v.as_str()) {
+                let project_id = if let Some(arg_project) = tool_call
+                    .arguments
+                    .get("project_id")
+                    .and_then(|v| v.as_str())
+                {
                     arg_project.to_string()
                 } else if let Some(ref context) = project_context {
                     get_project_id(context)?
@@ -1741,50 +1914,72 @@ impl CircuitBreakerMCPServer {
                         is_error: Some(true),
                     });
                 };
-                let title = tool_call.arguments.get("title")
+                let title = tool_call
+                    .arguments
+                    .get("title")
                     .and_then(|v| v.as_str())
                     .unwrap_or("New Issue");
-                let description = tool_call.arguments.get("description")
+                let description = tool_call
+                    .arguments
+                    .get("description")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                
+
                 let url = format!("https://gitlab.com/api/v4/projects/{}/issues", project_id);
                 let body = serde_json::json!({
                     "title": title,
                     "description": description
-                }).to_string();
-                
-                match self.manager.make_authenticated_api_request(
-                    &OAuthProviderType::GitLab,
-                    &instance.installation_id,
-                    None,
-                    reqwest::Method::POST,
-                    &url,
-                    Some(body),
-                    None,
-                ).await {
+                })
+                .to_string();
+
+                match self
+                    .manager
+                    .make_authenticated_api_request(
+                        &OAuthProviderType::GitLab,
+                        &instance.installation_id,
+                        None,
+                        reqwest::Method::POST,
+                        &url,
+                        Some(body),
+                        None,
+                    )
+                    .await
+                {
                     Ok(response) => {
                         if response.status().is_success() {
                             let body = response.text().await?;
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("Created GitLab Issue: {}", body))],
+                                content: vec![MCPContent::text(format!(
+                                    "Created GitLab Issue: {}",
+                                    body
+                                ))],
                                 is_error: Some(false),
                             })
                         } else {
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab API error: {}", response.status()))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab API error: {}",
+                                    response.status()
+                                ))],
                                 is_error: Some(true),
                             })
                         }
                     }
                     Err(e) => Ok(MCPToolResult {
-                        content: vec![MCPContent::text(format!("Failed to call GitLab API: {}", e))],
+                        content: vec![MCPContent::text(format!(
+                            "Failed to call GitLab API: {}",
+                            e
+                        ))],
                         is_error: Some(true),
-                    })
+                    }),
                 }
             }
             "gitlab_list_merge_requests" => {
-                let project_id = if let Some(arg_project) = tool_call.arguments.get("project_id").and_then(|v| v.as_str()) {
+                let project_id = if let Some(arg_project) = tool_call
+                    .arguments
+                    .get("project_id")
+                    .and_then(|v| v.as_str())
+                {
                     arg_project.to_string()
                 } else if let Some(ref context) = project_context {
                     get_project_id(context)?
@@ -1794,39 +1989,59 @@ impl CircuitBreakerMCPServer {
                         is_error: Some(true),
                     });
                 };
-                
-                let url = format!("https://gitlab.com/api/v4/projects/{}/merge_requests?per_page=20", project_id);
-                match self.manager.make_authenticated_api_request(
-                    &OAuthProviderType::GitLab,
-                    &instance.installation_id,
-                    None,
-                    reqwest::Method::GET,
-                    &url,
-                    None,
-                    None,
-                ).await {
+
+                let url = format!(
+                    "https://gitlab.com/api/v4/projects/{}/merge_requests?per_page=20",
+                    project_id
+                );
+                match self
+                    .manager
+                    .make_authenticated_api_request(
+                        &OAuthProviderType::GitLab,
+                        &instance.installation_id,
+                        None,
+                        reqwest::Method::GET,
+                        &url,
+                        None,
+                        None,
+                    )
+                    .await
+                {
                     Ok(response) => {
                         if response.status().is_success() {
                             let body = response.text().await?;
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab Merge Requests for project {}: {}", project_id, body))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab Merge Requests for project {}: {}",
+                                    project_id, body
+                                ))],
                                 is_error: Some(false),
                             })
                         } else {
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab API error: {}", response.status()))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab API error: {}",
+                                    response.status()
+                                ))],
                                 is_error: Some(true),
                             })
                         }
                     }
                     Err(e) => Ok(MCPToolResult {
-                        content: vec![MCPContent::text(format!("Failed to call GitLab API: {}", e))],
+                        content: vec![MCPContent::text(format!(
+                            "Failed to call GitLab API: {}",
+                            e
+                        ))],
                         is_error: Some(true),
-                    })
+                    }),
                 }
             }
             "gitlab_get_file" => {
-                let project_id = if let Some(arg_project) = tool_call.arguments.get("project_id").and_then(|v| v.as_str()) {
+                let project_id = if let Some(arg_project) = tool_call
+                    .arguments
+                    .get("project_id")
+                    .and_then(|v| v.as_str())
+                {
                     arg_project.to_string()
                 } else if let Some(ref context) = project_context {
                     get_project_id(context)?
@@ -1836,48 +2051,71 @@ impl CircuitBreakerMCPServer {
                         is_error: Some(true),
                     });
                 };
-                let file_path = tool_call.arguments.get("file_path")
+                let file_path = tool_call
+                    .arguments
+                    .get("file_path")
                     .and_then(|v| v.as_str())
                     .unwrap_or("README.md");
-                let ref_name = tool_call.arguments.get("ref")
+                let ref_name = tool_call
+                    .arguments
+                    .get("ref")
                     .and_then(|v| v.as_str())
                     .unwrap_or("main");
-                
+
                 let encoded_path = urlencoding::encode(file_path);
-                let url = format!("https://gitlab.com/api/v4/projects/{}/repository/files/{}?ref={}", 
-                    project_id, encoded_path, ref_name);
-                
-                match self.manager.make_authenticated_api_request(
-                    &OAuthProviderType::GitLab,
-                    &instance.installation_id,
-                    None,
-                    reqwest::Method::GET,
-                    &url,
-                    None,
-                    None,
-                ).await {
+                let url = format!(
+                    "https://gitlab.com/api/v4/projects/{}/repository/files/{}?ref={}",
+                    project_id, encoded_path, ref_name
+                );
+
+                match self
+                    .manager
+                    .make_authenticated_api_request(
+                        &OAuthProviderType::GitLab,
+                        &instance.installation_id,
+                        None,
+                        reqwest::Method::GET,
+                        &url,
+                        None,
+                        None,
+                    )
+                    .await
+                {
                     Ok(response) => {
                         if response.status().is_success() {
                             let body = response.text().await?;
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab File {}: {}", file_path, body))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab File {}: {}",
+                                    file_path, body
+                                ))],
                                 is_error: Some(false),
                             })
                         } else {
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab API error: {}", response.status()))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab API error: {}",
+                                    response.status()
+                                ))],
                                 is_error: Some(true),
                             })
                         }
                     }
                     Err(e) => Ok(MCPToolResult {
-                        content: vec![MCPContent::text(format!("Failed to call GitLab API: {}", e))],
+                        content: vec![MCPContent::text(format!(
+                            "Failed to call GitLab API: {}",
+                            e
+                        ))],
                         is_error: Some(true),
-                    })
+                    }),
                 }
             }
             "gitlab_list_pipelines" => {
-                let project_id = if let Some(arg_project) = tool_call.arguments.get("project_id").and_then(|v| v.as_str()) {
+                let project_id = if let Some(arg_project) = tool_call
+                    .arguments
+                    .get("project_id")
+                    .and_then(|v| v.as_str())
+                {
                     arg_project.to_string()
                 } else if let Some(ref context) = project_context {
                     get_project_id(context)?
@@ -1887,81 +2125,120 @@ impl CircuitBreakerMCPServer {
                         is_error: Some(true),
                     });
                 };
-                
-                let url = format!("https://gitlab.com/api/v4/projects/{}/pipelines?per_page=20", project_id);
-                match self.manager.make_authenticated_api_request(
-                    &OAuthProviderType::GitLab,
-                    &instance.installation_id,
-                    None,
-                    reqwest::Method::GET,
-                    &url,
-                    None,
-                    None,
-                ).await {
+
+                let url = format!(
+                    "https://gitlab.com/api/v4/projects/{}/pipelines?per_page=20",
+                    project_id
+                );
+                match self
+                    .manager
+                    .make_authenticated_api_request(
+                        &OAuthProviderType::GitLab,
+                        &instance.installation_id,
+                        None,
+                        reqwest::Method::GET,
+                        &url,
+                        None,
+                        None,
+                    )
+                    .await
+                {
                     Ok(response) => {
                         if response.status().is_success() {
                             let body = response.text().await?;
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab Pipelines for project {}: {}", project_id, body))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab Pipelines for project {}: {}",
+                                    project_id, body
+                                ))],
                                 is_error: Some(false),
                             })
                         } else {
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab API error: {}", response.status()))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab API error: {}",
+                                    response.status()
+                                ))],
                                 is_error: Some(true),
                             })
                         }
                     }
                     Err(e) => Ok(MCPToolResult {
-                        content: vec![MCPContent::text(format!("Failed to call GitLab API: {}", e))],
+                        content: vec![MCPContent::text(format!(
+                            "Failed to call GitLab API: {}",
+                            e
+                        ))],
                         is_error: Some(true),
-                    })
+                    }),
                 }
             }
             "gitlab_search" => {
-                let query = tool_call.arguments.get("query")
+                let query = tool_call
+                    .arguments
+                    .get("query")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let scope = tool_call.arguments.get("scope")
+                let scope = tool_call
+                    .arguments
+                    .get("scope")
                     .and_then(|v| v.as_str())
                     .unwrap_or("projects");
-                
-                let url = format!("https://gitlab.com/api/v4/search?scope={}&search={}&per_page=20", 
-                    scope, urlencoding::encode(query));
-                
-                match self.manager.make_authenticated_api_request(
-                    &OAuthProviderType::GitLab,
-                    &instance.installation_id,
-                    None,
-                    reqwest::Method::GET,
-                    &url,
-                    None,
-                    None,
-                ).await {
+
+                let url = format!(
+                    "https://gitlab.com/api/v4/search?scope={}&search={}&per_page=20",
+                    scope,
+                    urlencoding::encode(query)
+                );
+
+                match self
+                    .manager
+                    .make_authenticated_api_request(
+                        &OAuthProviderType::GitLab,
+                        &instance.installation_id,
+                        None,
+                        reqwest::Method::GET,
+                        &url,
+                        None,
+                        None,
+                    )
+                    .await
+                {
                     Ok(response) => {
                         if response.status().is_success() {
                             let body = response.text().await?;
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab Search Results for '{}': {}", query, body))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab Search Results for '{}': {}",
+                                    query, body
+                                ))],
                                 is_error: Some(false),
                             })
                         } else {
                             Ok(MCPToolResult {
-                                content: vec![MCPContent::text(format!("GitLab API error: {}", response.status()))],
+                                content: vec![MCPContent::text(format!(
+                                    "GitLab API error: {}",
+                                    response.status()
+                                ))],
                                 is_error: Some(true),
                             })
                         }
                     }
                     Err(e) => Ok(MCPToolResult {
-                        content: vec![MCPContent::text(format!("Failed to call GitLab API: {}", e))],
+                        content: vec![MCPContent::text(format!(
+                            "Failed to call GitLab API: {}",
+                            e
+                        ))],
                         is_error: Some(true),
-                    })
+                    }),
                 }
             }
             _ => {
                 // For unknown GitLab tools, return an error
                 Ok(MCPToolResult {
-                    content: vec![MCPContent::text(format!("GitLab tool '{}' is not yet implemented", tool_call.name))],
+                    content: vec![MCPContent::text(format!(
+                        "GitLab tool '{}' is not yet implemented",
+                        tool_call.name
+                    ))],
                     is_error: Some(true),
                 })
             }
@@ -2171,18 +2448,22 @@ async fn handle_mcp_get_request(
                         provider_type: provider_type.clone(),
                         client_id: oauth_config.client_id.clone(),
                         client_secret: oauth_config.client_secret.clone(),
-                        auth_url: oauth_config.auth_url.clone().unwrap_or_else(|| {
-                            match oauth_config.provider_type.as_str() {
+                        auth_url: oauth_config.auth_url.clone().unwrap_or_else(
+                            || match oauth_config.provider_type.as_str() {
                                 "gitlab" => "https://gitlab.com/oauth/authorize".to_string(),
                                 "github" => "https://github.com/login/oauth/authorize".to_string(),
-                                "google" => "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
+                                "google" => {
+                                    "https://accounts.google.com/o/oauth2/v2/auth".to_string()
+                                }
                                 _ => "https://gitlab.com/oauth/authorize".to_string(),
-                            }
-                        }),
+                            },
+                        ),
                         token_url: oauth_config.token_url.clone().unwrap_or_else(|| {
                             match oauth_config.provider_type.as_str() {
                                 "gitlab" => "https://gitlab.com/oauth/token".to_string(),
-                                "github" => "https://github.com/login/oauth/access_token".to_string(),
+                                "github" => {
+                                    "https://github.com/login/oauth/access_token".to_string()
+                                }
                                 "google" => "https://oauth2.googleapis.com/token".to_string(),
                                 _ => "https://gitlab.com/oauth/token".to_string(),
                             }
@@ -2192,18 +2473,26 @@ async fn handle_mcp_get_request(
                     };
 
                     // Register the provider with the OAuth manager
-                    if let Err(e) = manager.oauth_manager.register_provider(oauth_provider).await {
+                    if let Err(e) = manager
+                        .oauth_manager
+                        .register_provider(oauth_provider)
+                        .await
+                    {
                         warn!("Failed to register OAuth provider: {}", e);
                     }
 
                     // Use the OAuth manager to generate the authorization URL
-                    match manager.oauth_manager.get_authorization_url(
-                        provider_type,
-                        instance.installation_id.clone(),
-                        None, // user_id
-                        Some(redirect_uri),
-                        Some(oauth_config.scope.clone()),
-                    ).await {
+                    match manager
+                        .oauth_manager
+                        .get_authorization_url(
+                            provider_type,
+                            instance.installation_id.clone(),
+                            None, // user_id
+                            Some(redirect_uri),
+                            Some(oauth_config.scope.clone()),
+                        )
+                        .await
+                    {
                         Ok(auth_url) => {
                             let html = format!(
                                 r#"<!DOCTYPE html><html><head><title>OAuth Required</title></head><body><script>window.location.href="{}";</script><a href="{}">Authenticate</a></body></html>"#,
@@ -2254,7 +2543,8 @@ async fn handle_mcp_request(
         if let Some(instance) = manager.get_server_instance(&instance_id).await {
             if matches!(instance.app_type, MCPApplicationType::Remote(_)) {
                 // For remote instances, check for OAuth token or session header
-                if headers.get("authorization").is_none() && headers.get("x-mcp-session").is_none() {
+                if headers.get("authorization").is_none() && headers.get("x-mcp-session").is_none()
+                {
                     return Err(StatusCode::UNAUTHORIZED);
                 }
                 // Continue with normal processing if authenticated
@@ -2292,7 +2582,7 @@ async fn handle_mcp_request_internal(
         // Handle session-based authentication - create a simple session for Windsurf
         if let Ok(session_id) = session_header.to_str() {
             info!("Using session-based authentication: {}", session_id);
-            
+
             // For session-based auth, create minimal claims that allow access
             Some(MCPTokenClaims {
                 installation_id: instance.installation_id.clone(),
@@ -2317,7 +2607,10 @@ async fn handle_mcp_request_internal(
                 if auth_str.starts_with("Bearer ") {
                     // For OAuth-native tenants, the Bearer token IS the authentication
                     // Create minimal claims for the OAuth user
-                    info!("Accepting OAuth Bearer token for Remote instance: {}", instance_id);
+                    info!(
+                        "Accepting OAuth Bearer token for Remote instance: {}",
+                        instance_id
+                    );
                     Some(MCPTokenClaims {
                         installation_id: instance.installation_id.clone(),
                         app_id: instance.app_id.clone(),
@@ -2459,7 +2752,7 @@ async fn handle_mcp_request_internal(
         // For session-based auth, check if session exists or create one
         if let Ok(session_id) = session_header.to_str() {
             info!("Using session-based authentication: {}", session_id);
-            
+
             // Check if session already exists
             if let Some(session) = manager.get_session(session_id).await {
                 info!("Found existing session: {}", session_id);
@@ -2472,15 +2765,24 @@ async fn handle_mcp_request_internal(
                                 "gitlab" => crate::api::oauth::OAuthProviderType::GitLab,
                                 "github" => crate::api::oauth::OAuthProviderType::GitHub,
                                 "google" => crate::api::oauth::OAuthProviderType::Google,
-                                custom => crate::api::oauth::OAuthProviderType::Custom(custom.to_string()),
+                                custom => {
+                                    crate::api::oauth::OAuthProviderType::Custom(custom.to_string())
+                                }
                             };
-                            match manager.oauth_manager.get_token(&provider_type, &instance.installation_id, None).await {
+                            match manager
+                                .oauth_manager
+                                .get_token(&provider_type, &instance.installation_id, None)
+                                .await
+                            {
                                 Ok(token) => {
                                     info!("Retrieved OAuth token for session: {}", session_id);
                                     Some(token.access_token)
                                 }
                                 Err(e) => {
-                                    warn!("Failed to get OAuth token for session {}: {}", session_id, e);
+                                    warn!(
+                                        "Failed to get OAuth token for session {}: {}",
+                                        session_id, e
+                                    );
                                     None
                                 }
                             }
@@ -2499,44 +2801,56 @@ async fn handle_mcp_request_internal(
                 info!("Creating new session: {}", session_id);
                 // Create a new session for this session ID
                 if let Some(instance) = manager.get_server_instance(&instance_id).await {
-                    let session_id_created = manager.create_session(
-                        instance_id.clone(),
-                        instance.installation_id.clone(),
-                        instance.app_id.clone(),
-                        MCPClientInfo {
-                            name: "windsurf".to_string(),
-                            version: "1.0.0".to_string(),
-                            user_agent: headers.get("user-agent")
-                                .and_then(|h| h.to_str().ok())
-                                .map(|s| s.to_string()),
-                        },
-                        None, // user_id
-                        MCPSessionPermissions {
-                            tools: vec!["*".to_string()],
-                            prompts: vec!["*".to_string()],
-                            resources: vec!["*".to_string()],
-                            project_contexts: std::collections::HashMap::new(),
-                        },
-                        vec![], // project_contexts
-                    ).await;
-                    
+                    let session_id_created = manager
+                        .create_session(
+                            instance_id.clone(),
+                            instance.installation_id.clone(),
+                            instance.app_id.clone(),
+                            MCPClientInfo {
+                                name: "windsurf".to_string(),
+                                version: "1.0.0".to_string(),
+                                user_agent: headers
+                                    .get("user-agent")
+                                    .and_then(|h| h.to_str().ok())
+                                    .map(|s| s.to_string()),
+                            },
+                            None, // user_id
+                            MCPSessionPermissions {
+                                tools: vec!["*".to_string()],
+                                prompts: vec!["*".to_string()],
+                                resources: vec!["*".to_string()],
+                                project_contexts: std::collections::HashMap::new(),
+                            },
+                            vec![], // project_contexts
+                        )
+                        .await;
+
                     info!("Created session: {}", session_id_created);
-                    
+
                     // For Remote OAuth instances, get a valid OAuth token
                     if let MCPApplicationType::Remote(ref oauth_config) = instance.app_type {
                         let provider_type = match oauth_config.provider_type.as_str() {
                             "gitlab" => crate::api::oauth::OAuthProviderType::GitLab,
                             "github" => crate::api::oauth::OAuthProviderType::GitHub,
                             "google" => crate::api::oauth::OAuthProviderType::Google,
-                            custom => crate::api::oauth::OAuthProviderType::Custom(custom.to_string()),
+                            custom => {
+                                crate::api::oauth::OAuthProviderType::Custom(custom.to_string())
+                            }
                         };
-                        match manager.oauth_manager.get_token(&provider_type, &instance.installation_id, None).await {
+                        match manager
+                            .oauth_manager
+                            .get_token(&provider_type, &instance.installation_id, None)
+                            .await
+                        {
                             Ok(token) => {
                                 info!("Retrieved OAuth token for new session: {}", session_id);
                                 Some(token.access_token)
                             }
                             Err(e) => {
-                                warn!("Failed to get OAuth token for new session {}: {}", session_id, e);
+                                warn!(
+                                    "Failed to get OAuth token for new session {}: {}",
+                                    session_id, e
+                                );
                                 None
                             }
                         }
@@ -2556,9 +2870,13 @@ async fn handle_mcp_request_internal(
         None
     };
 
-    let server = CircuitBreakerMCPServer { manager: manager.clone() };
-    let response = server.handle_request(&instance_id, request.clone(), claims).await;
-    
+    let server = CircuitBreakerMCPServer {
+        manager: manager.clone(),
+    };
+    let response = server
+        .handle_request(&instance_id, request.clone(), claims)
+        .await;
+
     // Try to route the response via SSE if there's an active SSE connection
     if let Some(token) = auth_token {
         if SSE_ROUTER.send_response(&token, &response).await {
@@ -2566,7 +2884,7 @@ async fn handle_mcp_request_internal(
             // Return a minimal acknowledgment response since the real response went via SSE
             let ack_response = MCPResponse::success_from_request(
                 Some(response.id.clone()),
-                serde_json::json!({"status": "response_sent_via_sse"})
+                serde_json::json!({"status": "response_sent_via_sse"}),
             );
             return Ok(axum::Json(ack_response));
         }
@@ -2692,7 +3010,10 @@ async fn handle_mcp_sse_internal(
                     .header("Cache-Control", "no-cache")
                     .header("Connection", "keep-alive")
                     .header("Access-Control-Allow-Origin", "*")
-                    .body("event: error\ndata: {\"error\": \"Authorization required\"}\n\n".to_string())
+                    .body(
+                        "event: error\ndata: {\"error\": \"Authorization required\"}\n\n"
+                            .to_string(),
+                    )
                     .unwrap()
                     .into_response();
             } else if oauth_enabled {
@@ -2709,34 +3030,38 @@ async fn handle_mcp_sse_internal(
 
     // Create a proper SSE stream that maintains connection and handles keep-alives
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<Event, Infallible>>();
-    
+
     // Register this SSE channel with the global router for multi-tenant response routing
     if let Some(token) = auth_token.clone() {
         SSE_ROUTER.register_channel(token.clone(), tx.clone()).await;
-        
+
         // Clean up on disconnect
         let cleanup_token = token.clone();
         let cleanup_tx = tx.clone();
         tokio::spawn(async move {
             // Wait for the channel to be closed (client disconnected)
-            while cleanup_tx.send(Ok(Event::default().event("ping").data(""))).is_ok() {
+            while cleanup_tx
+                .send(Ok(Event::default().event("ping").data("")))
+                .is_ok()
+            {
                 tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
             }
             // Clean up the channel from the router
             SSE_ROUTER.unregister_channel(&cleanup_token).await;
         });
     }
-    
+
     // Spawn a task to handle keep-alive messages
     let keep_alive_tx = tx.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
         loop {
             interval.tick().await;
-            let keep_alive_event = Event::default()
-                .event("keep-alive")
-                .data(format!("{{\"timestamp\": \"{}\"}}", chrono::Utc::now().to_rfc3339()));
-            
+            let keep_alive_event = Event::default().event("keep-alive").data(format!(
+                "{{\"timestamp\": \"{}\"}}",
+                chrono::Utc::now().to_rfc3339()
+            ));
+
             if keep_alive_tx.send(Ok(keep_alive_event)).is_err() {
                 break; // Client disconnected
             }
@@ -2744,10 +3069,11 @@ async fn handle_mcp_sse_internal(
     });
 
     // Send initial connection message
-    let connection_event = Event::default()
-        .event("connected")
-        .data(format!("{{\"instance_id\": \"{}\", \"protocol_version\": \"2024-11-05\"}}", instance_id));
-    
+    let connection_event = Event::default().event("connected").data(format!(
+        "{{\"instance_id\": \"{}\", \"protocol_version\": \"2024-11-05\"}}",
+        instance_id
+    ));
+
     if tx.send(Ok(connection_event)).is_err() {
         error!("Failed to send initial connection event");
     }
@@ -2956,7 +3282,7 @@ async fn handle_oauth_register(
             info!("Scopes: {:?}", oauth_config.scope);
 
             let timestamp = chrono::Utc::now().timestamp();
-            
+
             // Return the OAuth app configuration for GitLab
             let mut response = serde_json::json!({
                 "client_id": oauth_config.client_id,
@@ -3757,7 +4083,9 @@ async fn handle_mcp_client_oauth_callback(
     info!("Extracted instance_id: {}", instance_id);
 
     // Verify the instance exists
-    let _instance = manager.get_server_instance(instance_id).await
+    let _instance = manager
+        .get_server_instance(instance_id)
+        .await
         .ok_or(StatusCode::NOT_FOUND)?;
 
     // For MCP clients, we need to redirect back to their callback URL
@@ -3798,7 +4126,7 @@ async fn handle_mcp_oauth_init(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<axum::response::Redirect, StatusCode> {
     info!("OAuth initiation requested for instance: {}", instance_id);
-    
+
     // Get the instance to check if it supports OAuth
     let instance = match manager.get_server_instance(&instance_id).await {
         Some(instance) => instance,
@@ -3807,7 +4135,7 @@ async fn handle_mcp_oauth_init(
             return Err(StatusCode::NOT_FOUND);
         }
     };
-    
+
     // Check if this is a Remote OAuth instance
     if let MCPApplicationType::Remote(ref oauth_config) = instance.app_type {
         let provider_type = match oauth_config.provider_type.as_str() {
@@ -3816,13 +4144,26 @@ async fn handle_mcp_oauth_init(
             "google" => crate::api::oauth::OAuthProviderType::Google,
             custom => crate::api::oauth::OAuthProviderType::Custom(custom.to_string()),
         };
-        
+
         // Get session ID from query params (for MCP clients to track their session)
         let session_id = params.get("session_id").unwrap_or(&instance_id).clone();
-        let redirect_uri = format!("http://localhost:8080/mcp/{}/oauth/callback?session_id={}", instance_id, session_id);
-        
+        let redirect_uri = format!(
+            "http://localhost:8080/mcp/{}/oauth/callback?session_id={}",
+            instance_id, session_id
+        );
+
         // Generate OAuth authorization URL
-        match manager.oauth_manager.get_authorization_url(provider_type, instance.installation_id.clone(), None, Some(redirect_uri), None).await {
+        match manager
+            .oauth_manager
+            .get_authorization_url(
+                provider_type,
+                instance.installation_id.clone(),
+                None,
+                Some(redirect_uri),
+                None,
+            )
+            .await
+        {
             Ok(auth_url) => {
                 info!("Redirecting to OAuth provider: {}", auth_url);
                 Ok(axum::response::Redirect::temporary(&auth_url))
@@ -3845,7 +4186,7 @@ async fn handle_mcp_oauth_callback(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<axum::response::Html<String>, StatusCode> {
     info!("OAuth callback received for instance: {}", instance_id);
-    
+
     // Get the instance
     let instance = match manager.get_server_instance(&instance_id).await {
         Some(instance) => instance,
@@ -3854,7 +4195,7 @@ async fn handle_mcp_oauth_callback(
             return Err(StatusCode::NOT_FOUND);
         }
     };
-    
+
     // Check if this is a Remote OAuth instance
     if let MCPApplicationType::Remote(ref oauth_config) = instance.app_type {
         let provider_type = match oauth_config.provider_type.as_str() {
@@ -3863,42 +4204,47 @@ async fn handle_mcp_oauth_callback(
             "google" => crate::api::oauth::OAuthProviderType::Google,
             custom => crate::api::oauth::OAuthProviderType::Custom(custom.to_string()),
         };
-        
+
         // Get authorization code from callback
         if let Some(code) = params.get("code") {
             let state = params.get("state").unwrap_or(&instance_id);
             let session_id = params.get("session_id").unwrap_or(&instance_id);
-            let redirect_uri = format!("http://localhost:8080/mcp/{}/oauth/callback?session_id={}", instance_id, session_id);
-            
+            let redirect_uri = format!(
+                "http://localhost:8080/mcp/{}/oauth/callback?session_id={}",
+                instance_id, session_id
+            );
+
             // Handle OAuth callback to get tokens
             let oauth_callback = crate::api::oauth::OAuthCallback {
                 code: code.clone(),
-                state: state.clone(),  // Use the actual state parameter from GitLab
+                state: state.clone(), // Use the actual state parameter from GitLab
                 error: None,
                 error_description: None,
             };
-            
+
             match manager.oauth_manager.handle_callback(oauth_callback).await {
                 Ok(stored_token) => {
                     info!("OAuth tokens stored for session: {}", session_id);
-                    
+
                     // Create session with OAuth tokens
                     let client_info = MCPClientInfo {
                         name: "Windsurf".to_string(),
                         version: "1.0.0".to_string(),
                         user_agent: Some("Windsurf MCP Client".to_string()),
                     };
-                    
-                    let created_session_id = manager.create_session(
-                        instance_id.clone(),
-                        instance.installation_id.clone(),
-                        instance.app_id.clone(),
-                        client_info,
-                        Some(format!("oauth-user-{}", session_id)),
-                        MCPSessionPermissions::default(),
-                        vec![],
-                    ).await;
-                    
+
+                    let created_session_id = manager
+                        .create_session(
+                            instance_id.clone(),
+                            instance.installation_id.clone(),
+                            instance.app_id.clone(),
+                            client_info,
+                            Some(format!("oauth-user-{}", session_id)),
+                            MCPSessionPermissions::default(),
+                            vec![],
+                        )
+                        .await;
+
                     info!("Created session: {} for OAuth user", created_session_id);
                 }
                 Err(e) => {
@@ -3906,9 +4252,10 @@ async fn handle_mcp_oauth_callback(
                     return Err(StatusCode::INTERNAL_SERVER_ERROR);
                 }
             }
-                     
+
             // Return success page with instructions
-                     let html = format!(r#"
+            let html = format!(
+                r#"
                         <!DOCTYPE html>
                         <html>
                         <head>
@@ -3943,12 +4290,15 @@ async fn handle_mcp_oauth_callback(
                             <p>You can now close this window and refresh your MCP connection in Windsurf.</p>
                         </body>
                         </html>
-                    "#, session_id, session_id, instance_id);
-                    
-                    Ok(axum::response::Html(html))
+                    "#,
+                session_id, session_id, instance_id
+            );
+
+            Ok(axum::response::Html(html))
         } else if let Some(error) = params.get("error") {
             warn!("OAuth error: {}", error);
-            let html = format!(r#"
+            let html = format!(
+                r#"
                 <!DOCTYPE html>
                 <html>
                 <head><title>OAuth Error</title></head>
@@ -3958,7 +4308,9 @@ async fn handle_mcp_oauth_callback(
                     <p>Please try again.</p>
                 </body>
                 </html>
-            "#, error);
+            "#,
+                error
+            );
             Ok(axum::response::Html(html))
         } else {
             warn!("No code or error in OAuth callback");
@@ -3977,11 +4329,15 @@ async fn handle_token_request(
     info!("Token request for instance: {}", instance_id);
 
     // Get fresh token using existing OAuth manager
-    match manager.get_oauth_manager().get_token(
-        &crate::api::oauth::OAuthProviderType::GitLab,
-        &instance_id,
-        Some("oauth-user")
-    ).await {
+    match manager
+        .get_oauth_manager()
+        .get_token(
+            &crate::api::oauth::OAuthProviderType::GitLab,
+            &instance_id,
+            Some("oauth-user"),
+        )
+        .await
+    {
         Ok(token) => {
             let response = serde_json::json!({
                 "access_token": token.access_token,

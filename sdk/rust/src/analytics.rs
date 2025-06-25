@@ -48,7 +48,7 @@
 //! ```
 
 use crate::client::Client;
-use crate::types::*;
+use crate::schema::QueryBuilder;
 use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -81,11 +81,22 @@ impl AnalyticsClient {
 
     /// Subscribe to real-time cost updates
     pub async fn subscribe_cost_updates(&self, user_id: Option<&str>) -> Result<CostUpdateStream> {
-        // This would need WebSocket/SSE implementation
-        // For now, return an error indicating subscriptions aren't implemented
-        Err(crate::Error::Configuration {
-            message: "Real-time subscriptions not yet implemented".to_string(),
-        })
+        let subscription_client = self.client.subscriptions();
+        let mut builder = subscription_client.cost_updates();
+
+        if let Some(uid) = user_id {
+            builder = builder.user_id(uid);
+        }
+
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+
+        let subscription_id = builder
+            .subscribe(move |update: crate::subscriptions::CostUpdateEvent| {
+                let _ = sender.send(update);
+            })
+            .await?;
+
+        Ok(CostUpdateStream::new(receiver, subscription_id))
     }
 }
 
@@ -189,20 +200,21 @@ impl BudgetStatusBuilder {
 
     /// Execute the budget status query
     pub async fn get(self) -> Result<BudgetStatus> {
-        let query = r#"
-            query BudgetStatus($userId: String, $projectId: String) {
-                budgetStatus(userId: $userId, projectId: $projectId) {
-                    budgetId
-                    limit
-                    used
-                    percentageUsed
-                    isExhausted
-                    isWarning
-                    remaining
-                    message
-                }
-            }
-        "#;
+        let query = QueryBuilder::query_with_params(
+            "BudgetStatus",
+            "budgetStatus(userId: $userId, projectId: $projectId)",
+            &[
+                "budgetId",
+                "limit",
+                "used",
+                "percentageUsed",
+                "isExhausted",
+                "isWarning",
+                "remaining",
+                "message",
+            ],
+            &[("userId", "String"), ("projectId", "String")],
+        );
 
         #[derive(Serialize)]
         struct Variables {
@@ -239,7 +251,7 @@ impl BudgetStatusBuilder {
             message: String,
         }
 
-        let response: Response = self.client.graphql_query(query, Some(variables)).await?;
+        let response: Response = self.client.graphql_query(&query, Some(variables)).await?;
 
         Ok(BudgetStatus {
             budget_id: response.budget_status.budget_id,
@@ -307,20 +319,21 @@ impl CostAnalyticsBuilder {
 
     /// Execute the cost analytics query
     pub async fn get(self) -> Result<CostAnalytics> {
-        let query = r#"
-            query CostAnalytics($input: CostAnalyticsInput!) {
-                costAnalytics(input: $input) {
-                    totalCost
-                    totalTokens
-                    averageCostPerToken
-                    providerBreakdown
-                    modelBreakdown
-                    dailyCosts
-                    periodStart
-                    periodEnd
-                }
-            }
-        "#;
+        let query = QueryBuilder::query_with_params(
+            "CostAnalytics",
+            "costAnalytics(input: $input)",
+            &[
+                "totalCost",
+                "totalTokens",
+                "averageCostPerToken",
+                "providerBreakdown",
+                "modelBreakdown",
+                "dailyCosts",
+                "periodStart",
+                "periodEnd",
+            ],
+            &[("input", "CostAnalyticsInput!")],
+        );
 
         let input = CostAnalyticsInput {
             user_id: self.user_id,
@@ -366,7 +379,7 @@ impl CostAnalyticsBuilder {
             period_end: String,
         }
 
-        let response: Response = self.client.graphql_query(query, Some(variables)).await?;
+        let response: Response = self.client.graphql_query(&query, Some(variables)).await?;
 
         // Convert JSON values to HashMaps
         let provider_breakdown =
@@ -457,20 +470,21 @@ impl SetBudgetBuilder {
 
     /// Execute the set budget mutation
     pub async fn execute(self) -> Result<BudgetStatus> {
-        let query = r#"
-            mutation SetBudget($input: BudgetInput!) {
-                setBudget(input: $input) {
-                    budgetId
-                    limit
-                    used
-                    percentageUsed
-                    isExhausted
-                    isWarning
-                    remaining
-                    message
-                }
-            }
-        "#;
+        let query = QueryBuilder::mutation_with_params(
+            "SetBudget",
+            "setBudget(input: $input)",
+            &[
+                "budgetId",
+                "limit",
+                "used",
+                "percentageUsed",
+                "isExhausted",
+                "isWarning",
+                "remaining",
+                "message",
+            ],
+            &[("input", "BudgetInput!")],
+        );
 
         let input = BudgetInput {
             user_id: self.user_id,
@@ -517,7 +531,7 @@ impl SetBudgetBuilder {
             message: String,
         }
 
-        let response: Response = self.client.graphql_query(query, Some(variables)).await?;
+        let response: Response = self.client.graphql_query(&query, Some(variables)).await?;
 
         Ok(BudgetStatus {
             budget_id: response.set_budget.budget_id,
@@ -534,7 +548,30 @@ impl SetBudgetBuilder {
 
 /// Stream of cost updates (placeholder for future subscription implementation)
 pub struct CostUpdateStream {
-    // This would contain WebSocket/SSE stream implementation
+    receiver: tokio::sync::mpsc::UnboundedReceiver<crate::subscriptions::CostUpdateEvent>,
+    subscription_id: crate::subscriptions::SubscriptionId,
+}
+
+impl CostUpdateStream {
+    fn new(
+        receiver: tokio::sync::mpsc::UnboundedReceiver<crate::subscriptions::CostUpdateEvent>,
+        subscription_id: crate::subscriptions::SubscriptionId,
+    ) -> Self {
+        Self {
+            receiver,
+            subscription_id,
+        }
+    }
+
+    /// Get the next cost update event
+    pub async fn next(&mut self) -> Option<crate::subscriptions::CostUpdateEvent> {
+        self.receiver.recv().await
+    }
+
+    /// Get the subscription ID
+    pub fn subscription_id(&self) -> &crate::subscriptions::SubscriptionId {
+        &self.subscription_id
+    }
 }
 
 /// Convenience function to create a cost analytics query

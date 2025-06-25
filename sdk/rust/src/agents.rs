@@ -2,7 +2,7 @@
 //!
 //! This module provides client interfaces for creating and managing AI agents.
 
-use crate::{types::*, Client, Result};
+use crate::{schema::QueryBuilder, types::*, Client, Result};
 use serde::{Deserialize, Serialize};
 
 /// Client for agent operations
@@ -24,19 +24,23 @@ impl AgentClient {
 
     /// Get an agent by ID
     pub async fn get(&self, id: String) -> Result<Agent> {
-        let query = r#"
-            query GetAgent($id: ID!) {
-                agent(id: $id) {
-                    id
-                    name
-                    description
-                    type
-                    config
-                    createdAt
-                    updatedAt
-                }
-            }
-        "#;
+        let query = QueryBuilder::query_with_params(
+            "GetAgent",
+            "agent(id: $id)",
+            &[
+                "id",
+                "name",
+                "description",
+                "llmProvider { providerType model baseUrl }",
+                "llmConfig { temperature maxTokens topP frequencyPenalty presencePenalty stopSequences }",
+                "prompts { system userTemplate contextInstructions }",
+                "capabilities",
+                "tools",
+                "createdAt",
+                "updatedAt"
+            ],
+            &[("id", "ID!")],
+        );
 
         #[derive(Serialize)]
         struct Variables {
@@ -48,7 +52,7 @@ impl AgentClient {
             agent: AgentData,
         }
 
-        let response: Response = self.client.graphql(query, Variables { id }).await?;
+        let response: Response = self.client.graphql(&query, Variables { id }).await?;
 
         Ok(Agent {
             client: self.client.clone(),
@@ -57,26 +61,31 @@ impl AgentClient {
     }
 
     /// List agents
+    /// List all agents
     pub async fn list(&self) -> Result<Vec<Agent>> {
-        let query = r#"
-            query ListAgents {
-                agents {
-                    id
-                    name
-                    description
-                    type
-                    createdAt
-                    updatedAt
-                }
-            }
-        "#;
+        let query = QueryBuilder::query(
+            "ListAgents",
+            "agents",
+            &[
+                "id",
+                "name",
+                "description",
+                "llmProvider { providerType model baseUrl }",
+                "llmConfig { temperature maxTokens topP frequencyPenalty presencePenalty stopSequences }",
+                "prompts { system userTemplate contextInstructions }",
+                "capabilities",
+                "tools",
+                "createdAt",
+                "updatedAt"
+            ],
+        );
 
         #[derive(Deserialize)]
         struct Response {
             agents: Vec<AgentData>,
         }
 
-        let response: Response = self.client.graphql(query, ()).await?;
+        let response: Response = self.client.graphql(&query, ()).await?;
 
         Ok(response
             .agents
@@ -312,37 +321,23 @@ impl AgentBuilder {
             config.insert("memory".to_string(), serde_json::to_value(&memory).unwrap());
         }
 
-        let mutation = r#"
-            mutation CreateAgent($input: AgentDefinitionInput!) {
-                createAgent(input: $input) {
-                    id
-                    name
-                    description
-                    llmProvider {
-                        providerType
-                        model
-                        baseUrl
-                    }
-                    llmConfig {
-                        temperature
-                        maxTokens
-                        topP
-                        frequencyPenalty
-                        presencePenalty
-                        stopSequences
-                    }
-                    prompts {
-                        system
-                        userTemplate
-                        contextInstructions
-                    }
-                    capabilities
-                    tools
-                    createdAt
-                    updatedAt
-                }
-            }
-        "#;
+        let mutation = QueryBuilder::mutation_with_params(
+            "CreateAgent",
+            "createAgent(input: $input)",
+            &[
+                "id",
+                "name",
+                "description",
+                "llmProvider { providerType model baseUrl }",
+                "llmConfig { temperature maxTokens topP frequencyPenalty presencePenalty stopSequences }",
+                "prompts { system userTemplate contextInstructions }",
+                "capabilities",
+                "tools",
+                "createdAt",
+                "updatedAt"
+            ],
+            &[("input", "AgentDefinitionInput!")],
+        );
 
         #[derive(Serialize)]
         struct Variables {
@@ -406,7 +401,7 @@ impl AgentBuilder {
         let response: Response = self
             .client
             .graphql(
-                mutation,
+                &mutation,
                 Variables {
                     input: AgentDefinitionInput {
                         name,
@@ -494,27 +489,17 @@ impl Agent {
         let message = message.into();
 
         // Use the agent's LLM configuration to send the message via llmChatCompletion
-        let mutation = r#"
-            mutation LlmChatCompletion($input: LlmchatCompletionInput!) {
-                llmChatCompletion(input: $input) {
-                    id
-                    model
-                    choices {
-                        index
-                        message {
-                            role
-                            content
-                        }
-                        finishReason
-                    }
-                    usage {
-                        promptTokens
-                        completionTokens
-                        totalTokens
-                    }
-                }
-            }
-        "#;
+        let mutation = QueryBuilder::mutation_with_params(
+            "LlmChatCompletion",
+            "llmChatCompletion(input: $input)",
+            &[
+                "id",
+                "model",
+                "choices { index message { role content } finishReason }",
+                "usage { promptTokens completionTokens totalTokens }",
+            ],
+            &[("input", "LlmchatCompletionInput!")],
+        );
 
         #[derive(Serialize)]
         struct Variables {
@@ -553,7 +538,7 @@ impl Agent {
         let response: Response = self
             .client
             .graphql(
-                mutation,
+                &mutation,
                 Variables {
                     input: LlmchatCompletionInput {
                         model: self.data.llm_provider.model.clone(),
@@ -577,13 +562,12 @@ impl Agent {
 
     /// Delete the agent
     pub async fn delete(self) -> Result<()> {
-        let mutation = r#"
-            mutation DeleteAgent($id: ID!) {
-                deleteAgent(id: $id) {
-                    success
-                }
-            }
-        "#;
+        let mutation = QueryBuilder::mutation_with_params(
+            "DeleteAgent",
+            "deleteAgent(id: $id)",
+            &["success"],
+            &[("id", "ID!")],
+        );
 
         #[derive(Serialize)]
         struct Variables {
@@ -604,7 +588,7 @@ impl Agent {
         let _response: Response = self
             .client
             .graphql(
-                mutation,
+                &mutation,
                 Variables {
                     id: self.data.id.clone(),
                 },

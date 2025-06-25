@@ -2,7 +2,7 @@
 //!
 //! This module provides client interfaces for creating and managing serverless functions.
 
-use crate::{types::*, Client, Result};
+use crate::{schema::QueryBuilder, types::*, Client, Result};
 use serde::{Deserialize, Serialize};
 
 /// Client for function operations
@@ -24,19 +24,20 @@ impl FunctionClient {
 
     /// Get a function by ID
     pub async fn get(&self, id: FunctionId) -> Result<Function> {
-        let query = r#"
-            query GetFunction($id: ID!) {
-                function(id: $id) {
-                    id
-                    name
-                    description
-                    runtime
-                    entrypoint
-                    createdAt
-                    updatedAt
-                }
-            }
-        "#;
+        let query = QueryBuilder::query_with_params(
+            "GetFunction",
+            "function(id: $id)",
+            &[
+                "id",
+                "name",
+                "description",
+                "runtime",
+                "entrypoint",
+                "createdAt",
+                "updatedAt",
+            ],
+            &[("id", "ID!")],
+        );
 
         #[derive(Serialize)]
         struct Variables {
@@ -48,7 +49,7 @@ impl FunctionClient {
             function: FunctionData,
         }
 
-        let response: Response = self.client.graphql(query, Variables { id }).await?;
+        let response: Response = self.client.graphql(&query, Variables { id }).await?;
 
         Ok(Function {
             client: self.client.clone(),
@@ -58,26 +59,26 @@ impl FunctionClient {
 
     /// List functions
     pub async fn list(&self) -> Result<Vec<Function>> {
-        let query = r#"
-            query ListFunctions {
-                functions {
-                    id
-                    name
-                    description
-                    runtime
-                    entrypoint
-                    createdAt
-                    updatedAt
-                }
-            }
-        "#;
+        let query = QueryBuilder::query(
+            "ListFunctions",
+            "functions",
+            &[
+                "id",
+                "name",
+                "description",
+                "runtime",
+                "entrypoint",
+                "createdAt",
+                "updatedAt",
+            ],
+        );
 
         #[derive(Deserialize)]
         struct Response {
             functions: Vec<FunctionData>,
         }
 
-        let response: Response = self.client.graphql(query, ()).await?;
+        let response: Response = self.client.graphql(&query, ()).await?;
 
         Ok(response
             .functions
@@ -160,19 +161,20 @@ impl FunctionBuilder {
             message: "Function entrypoint is required".to_string(),
         })?;
 
-        let mutation = r#"
-            mutation CreateFunction($input: CreateFunctionInput!) {
-                createFunction(input: $input) {
-                    id
-                    name
-                    description
-                    runtime
-                    entrypoint
-                    createdAt
-                    updatedAt
-                }
-            }
-        "#;
+        let mutation = QueryBuilder::mutation_with_params(
+            "CreateFunction",
+            "createFunction(input: $input)",
+            &[
+                "id",
+                "name",
+                "description",
+                "runtime",
+                "entrypoint",
+                "createdAt",
+                "updatedAt",
+            ],
+            &[("input", "CreateFunctionInput!")],
+        );
 
         #[derive(Serialize)]
         struct Variables {
@@ -197,7 +199,7 @@ impl FunctionBuilder {
         let response: Response = self
             .client
             .graphql(
-                mutation,
+                &mutation,
                 Variables {
                     input: CreateFunctionInput {
                         name,
@@ -247,19 +249,21 @@ impl Function {
 
     /// Execute the function
     pub async fn execute(&self, input: serde_json::Value) -> Result<FunctionExecution> {
-        let mutation = r#"
-            mutation ExecuteFunction($functionId: ID!, $input: JSON!) {
-                executeFunction(functionId: $functionId, input: $input) {
-                    id
-                    functionId
-                    status
-                    input
-                    output
-                    startedAt
-                    completedAt
-                }
-            }
-        "#;
+        let mutation = QueryBuilder::mutation_with_params(
+            "ExecuteFunction",
+            "executeFunction(functionId: $functionId, input: $input)",
+            &[
+                "id",
+                "functionId",
+                "status",
+                "input",
+                "output",
+                "startedAt",
+                "completedAt",
+                "errorMessage",
+            ],
+            &[("functionId", "ID!"), ("input", "JSON!")],
+        );
 
         #[derive(Serialize)]
         struct Variables {
@@ -277,9 +281,9 @@ impl Function {
         let response: Response = self
             .client
             .graphql(
-                mutation,
+                &mutation,
                 Variables {
-                    function_id: self.data.id,
+                    function_id: self.data.id.clone(),
                     input,
                 },
             )
@@ -293,13 +297,12 @@ impl Function {
 
     /// Delete the function
     pub async fn delete(self) -> Result<()> {
-        let mutation = r#"
-            mutation DeleteFunction($id: ID!) {
-                deleteFunction(id: $id) {
-                    success
-                }
-            }
-        "#;
+        let mutation = QueryBuilder::mutation_with_params(
+            "DeleteFunction",
+            "deleteFunction(id: $id)",
+            &["success"],
+            &[("id", "ID!")],
+        );
 
         #[derive(Serialize)]
         struct Variables {
@@ -319,7 +322,7 @@ impl Function {
 
         let _response: Response = self
             .client
-            .graphql(mutation, Variables { id: self.data.id })
+            .graphql(&mutation, Variables { id: self.data.id })
             .await?;
 
         Ok(())

@@ -3,7 +3,7 @@
 //! This module provides the main client for communicating with the Circuit Breaker server.
 //! It handles HTTP requests, GraphQL queries, and authentication.
 
-use crate::{Error, Result};
+use crate::{schema::QueryBuilder, Error, Result};
 use reqwest::{header, Client as HttpClient, Method};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -103,16 +103,11 @@ impl Client {
 
     /// Test connection to the server
     pub async fn ping(&self) -> Result<PingResponse> {
-        let query = r#"
-            query {
-                llmProviders {
-                    name
-                    healthStatus {
-                        isHealthy
-                    }
-                }
-            }
-        "#;
+        let query = QueryBuilder::query(
+            "Ping",
+            "llmProviders",
+            &["name", "healthStatus { isHealthy }"],
+        );
 
         #[derive(Deserialize)]
         struct Response {
@@ -133,12 +128,12 @@ impl Client {
             is_healthy: bool,
         }
 
-        let result: Response = self.graphql(query, ()).await?;
+        let result: Response = self.graphql(&query, ()).await?;
 
-        let healthy_providers = result
+        let _healthy_providers = result
             .llm_providers
             .iter()
-            .filter(|p| p.health_status.is_healthy)
+            .filter(|provider| provider.health_status.is_healthy)
             .count();
 
         Ok(PingResponse {
@@ -150,16 +145,11 @@ impl Client {
 
     /// Get server information
     pub async fn info(&self) -> Result<ServerInfo> {
-        let query = r#"
-            query {
-                llmProviders {
-                    name
-                    healthStatus {
-                        isHealthy
-                    }
-                }
-            }
-        "#;
+        let query = QueryBuilder::query(
+            "Info",
+            "llmProviders",
+            &["name", "healthStatus { isHealthy }"],
+        );
 
         #[derive(Deserialize)]
         struct Response {
@@ -180,7 +170,7 @@ impl Client {
             is_healthy: bool,
         }
 
-        let result: Response = self.graphql(query, ()).await?;
+        let result: Response = self.graphql(&query, ()).await?;
 
         let features: Vec<String> = result
             .llm_providers
@@ -238,6 +228,16 @@ impl Client {
     /// Access NATS-enhanced operations API
     pub fn nats(&self) -> crate::nats::NATSClient {
         crate::nats::NATSClient::new(self.clone())
+    }
+
+    /// Access real-time subscription API
+    pub fn subscriptions(&self) -> crate::subscriptions::SubscriptionClient {
+        crate::subscriptions::SubscriptionClient::new(self.clone())
+    }
+
+    /// Get the base URL for the client
+    pub fn base_url(&self) -> &url::Url {
+        &self.config.base_url
     }
 
     /// Make a GraphQL request
@@ -298,8 +298,8 @@ impl Client {
         V: Serialize,
     {
         match variables {
-            Some(vars) => self.graphql(query, vars).await,
-            None => self.graphql(query, serde_json::Value::Null).await,
+            Some(vars) => self.graphql(&query, vars).await,
+            None => self.graphql(&query, serde_json::Value::Null).await,
         }
     }
 
@@ -328,11 +328,6 @@ impl Client {
                 message: error_text,
             })
         }
-    }
-
-    /// Get the base URL
-    pub fn base_url(&self) -> &Url {
-        &self.config.base_url
     }
 
     /// Get the HTTP client

@@ -5,7 +5,9 @@
  * analytics for the Circuit Breaker workflow automation server.
  */
 
-import { Client } from './client.js';
+import { Client } from "./client.js";
+import { CostUpdateEvent } from "./subscriptions.js";
+import { QueryBuilder } from "./schema";
 
 // ============================================================================
 // Types
@@ -133,9 +135,23 @@ export class AnalyticsClient {
    * @returns Promise that resolves to a cost update stream
    */
   async subscribeCostUpdates(userId?: string): Promise<CostUpdateStream> {
-    // This would need WebSocket/SSE implementation
-    // For now, throw an error indicating subscriptions aren't implemented
-    throw new Error('Real-time subscriptions not yet implemented');
+    const subscriptions = this.client.subscriptions();
+    const builder = subscriptions.costUpdates();
+
+    if (userId) {
+      builder.userId(userId);
+    }
+
+    const stream = new CostUpdateStream();
+
+    const subscriptionId = await builder.subscribe(
+      (update: CostUpdateEvent) => {
+        stream._emit(update);
+      },
+    );
+
+    stream._setSubscriptionId(subscriptionId);
+    return stream;
   }
 }
 
@@ -172,20 +188,24 @@ export class BudgetStatusBuilder {
    * Execute the budget status query
    */
   async get(): Promise<BudgetStatus> {
-    const query = `
-      query BudgetStatus($userId: String, $projectId: String) {
-        budgetStatus(userId: $userId, projectId: $projectId) {
-          budgetId
-          limit
-          used
-          percentageUsed
-          isExhausted
-          isWarning
-          remaining
-          message
-        }
-      }
-    `;
+    const query = QueryBuilder.queryWithParams(
+      "BudgetStatus",
+      "budgetStatus(userId: $userId, projectId: $projectId)",
+      [
+        "budgetId",
+        "limit",
+        "used",
+        "percentageUsed",
+        "isExhausted",
+        "isWarning",
+        "remaining",
+        "message",
+      ],
+      [
+        ["userId", "String"],
+        ["projectId", "String"],
+      ],
+    );
 
     const variables = {
       userId: this._userId,
@@ -275,26 +295,27 @@ export class CostAnalyticsBuilder {
    */
   async get(): Promise<CostAnalytics> {
     if (!this._startDate) {
-      throw new Error('startDate is required');
+      throw new Error("startDate is required");
     }
     if (!this._endDate) {
-      throw new Error('endDate is required');
+      throw new Error("endDate is required");
     }
 
-    const query = `
-      query CostAnalytics($input: CostAnalyticsInput!) {
-        costAnalytics(input: $input) {
-          totalCost
-          totalTokens
-          averageCostPerToken
-          providerBreakdown
-          modelBreakdown
-          dailyCosts
-          periodStart
-          periodEnd
-        }
-      }
-    `;
+    const query = QueryBuilder.queryWithParams(
+      "CostAnalytics",
+      "costAnalytics(input: $input)",
+      [
+        "totalCost",
+        "totalTokens",
+        "averageCostPerToken",
+        "providerBreakdown",
+        "modelBreakdown",
+        "dailyCosts",
+        "periodStart",
+        "periodEnd",
+      ],
+      [["input", "CostAnalyticsInput!"]],
+    );
 
     const input: CostAnalyticsInput = {
       userId: this._userId,
@@ -320,18 +341,18 @@ export class CostAnalyticsBuilder {
 
     // Convert JSON values to Records
     const providerBreakdown =
-      typeof response.costAnalytics.providerBreakdown === 'object'
-        ? response.costAnalytics.providerBreakdown as Record<string, number>
+      typeof response.costAnalytics.providerBreakdown === "object"
+        ? (response.costAnalytics.providerBreakdown as Record<string, number>)
         : {};
 
     const modelBreakdown =
-      typeof response.costAnalytics.modelBreakdown === 'object'
-        ? response.costAnalytics.modelBreakdown as Record<string, number>
+      typeof response.costAnalytics.modelBreakdown === "object"
+        ? (response.costAnalytics.modelBreakdown as Record<string, number>)
         : {};
 
     const dailyCosts =
-      typeof response.costAnalytics.dailyCosts === 'object'
-        ? response.costAnalytics.dailyCosts as Record<string, number>
+      typeof response.costAnalytics.dailyCosts === "object"
+        ? (response.costAnalytics.dailyCosts as Record<string, number>)
         : {};
 
     return {
@@ -404,29 +425,30 @@ export class SetBudgetBuilder {
    */
   async execute(): Promise<BudgetStatus> {
     if (this._limit === undefined) {
-      throw new Error('limit is required');
+      throw new Error("limit is required");
     }
     if (!this._period) {
-      throw new Error('period is required');
+      throw new Error("period is required");
     }
     if (this._warningThreshold === undefined) {
-      throw new Error('warningThreshold is required');
+      throw new Error("warningThreshold is required");
     }
 
-    const query = `
-      mutation SetBudget($input: BudgetInput!) {
-        setBudget(input: $input) {
-          budgetId
-          limit
-          used
-          percentageUsed
-          isExhausted
-          isWarning
-          remaining
-          message
-        }
-      }
-    `;
+    const query = QueryBuilder.mutationWithParams(
+      "SetBudget",
+      "setBudget(input: $input)",
+      [
+        "budgetId",
+        "limit",
+        "used",
+        "percentageUsed",
+        "isExhausted",
+        "isWarning",
+        "remaining",
+        "message",
+      ],
+      [["input", "BudgetInput!"]],
+    );
 
     const input: BudgetInput = {
       userId: this._userId,
@@ -469,24 +491,52 @@ export class SetBudgetBuilder {
 // ============================================================================
 
 /**
- * Stream of cost updates (placeholder for future subscription implementation)
+ * Stream of cost updates with real subscription implementation
  */
 export class CostUpdateStream {
-  // This would contain WebSocket/SSE stream implementation
+  private callbacks: Array<(event: CostUpdateEvent) => void> = [];
+  private subscriptionId?: string;
 
   /**
    * Listen to cost update events
    */
   onUpdate(callback: (event: CostUpdateEvent) => void): void {
-    // Placeholder implementation
-    throw new Error('Subscription streams not yet implemented');
+    this.callbacks.push(callback);
+  }
+
+  /**
+   * Internal method to emit events to listeners
+   */
+  _emit(event: CostUpdateEvent): void {
+    this.callbacks.forEach((callback) => {
+      try {
+        callback(event);
+      } catch (error) {
+        console.error("Error in cost update callback:", error);
+      }
+    });
+  }
+
+  /**
+   * Internal method to set subscription ID
+   */
+  _setSubscriptionId(id: string): void {
+    this.subscriptionId = id;
+  }
+
+  /**
+   * Get the subscription ID
+   */
+  getSubscriptionId(): string | undefined {
+    return this.subscriptionId;
   }
 
   /**
    * Close the stream
    */
   close(): void {
-    // Placeholder implementation
+    this.callbacks = [];
+    // TODO: Unsubscribe from the actual subscription
   }
 }
 
@@ -557,8 +607,8 @@ export async function getUserMonthlyCostAnalytics(
   year: number,
   month: number,
 ): Promise<CostAnalytics> {
-  const startDate = `${year}-${month.toString().padStart(2, '0')}-01`;
-  const endDate = new Date(year, month, 0).toISOString().split('T')[0]; // Last day of month
+  const startDate = `${year}-${month.toString().padStart(2, "0")}-01`;
+  const endDate = new Date(year, month, 0).toISOString().split("T")[0]; // Last day of month
 
   return client
     .analytics()
@@ -582,7 +632,7 @@ export async function setUserMonthlyBudget(
     .setBudget()
     .userId(userId)
     .limit(limit)
-    .period('monthly')
+    .period("monthly")
     .warningThreshold(warningThreshold)
     .execute();
 }
