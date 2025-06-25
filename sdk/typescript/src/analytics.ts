@@ -6,7 +6,7 @@
  */
 
 import { Client } from "./client.js";
-import { CostUpdateEvent } from "./subscriptions.js";
+
 import { QueryBuilder } from "./schema";
 
 // ============================================================================
@@ -150,7 +150,7 @@ export class AnalyticsClient {
       },
     );
 
-    stream._setSubscriptionId(subscriptionId);
+    stream._setSubscriptionId(subscriptionId.toString());
     return stream;
   }
 }
@@ -212,7 +212,7 @@ export class BudgetStatusBuilder {
       projectId: this._projectId,
     };
 
-    const response = await this.client.graphql<{
+    const response = await this.client.query<{
       budgetStatus: {
         budgetId: string;
         limit: number;
@@ -320,13 +320,13 @@ export class CostAnalyticsBuilder {
     const input: CostAnalyticsInput = {
       userId: this._userId,
       projectId: this._projectId,
-      startDate: this._startDate,
-      endDate: this._endDate,
+      startDate: this._startDate!,
+      endDate: this._endDate!,
     };
 
     const variables = { input };
 
-    const response = await this.client.graphql<{
+    const response = await this.client.query<{
       costAnalytics: {
         totalCost: number;
         totalTokens: number;
@@ -453,14 +453,14 @@ export class SetBudgetBuilder {
     const input: BudgetInput = {
       userId: this._userId,
       projectId: this._projectId,
-      limit: this._limit,
-      period: this._period,
-      warningThreshold: this._warningThreshold,
+      limit: this._limit!,
+      period: this._period!,
+      warningThreshold: this._warningThreshold!,
     };
 
     const variables = { input };
 
-    const response = await this.client.graphql<{
+    const response = await this.client.mutation<{
       setBudget: {
         budgetId: string;
         limit: number;
@@ -614,7 +614,7 @@ export async function getUserMonthlyCostAnalytics(
     .analytics()
     .costAnalytics()
     .userId(userId)
-    .dateRange(startDate, endDate)
+    .dateRange(startDate, endDate || "")
     .get();
 }
 

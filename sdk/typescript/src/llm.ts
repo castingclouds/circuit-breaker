@@ -1,37 +1,71 @@
 /**
  * LLM API client for Circuit Breaker TypeScript SDK
+ *
+ * This client only communicates with the Circuit Breaker router,
+ * which presents an OpenAI-compatible API and handles all provider routing internally.
  */
 
 import {
   ChatMessage,
   ChatCompletionRequest,
   ChatCompletionResponse,
-  PaginationOptions,
-  PaginatedResult,
+  SmartCompletionRequest,
+  CircuitBreakerOptions,
+  RoutingStrategy,
+  TaskType,
+  BudgetConstraint,
+  ModelInfo,
+  ModelsResponse,
 } from "./types.js";
 import type { Client } from "./client.js";
+import { streamChatCompletionFromRouter } from "./sse";
 
 export class LLMClient {
   constructor(private client: Client) {}
 
   /**
-   * Send a chat completion request
+   * Send a smart completion request with Circuit Breaker routing
+   */
+  async smartCompletion(
+    request: SmartCompletionRequest,
+  ): Promise<ChatCompletionResponse> {
+    const chatRequest: ChatCompletionRequest = {
+      model: request.model,
+      messages: request.messages,
+      ...(request.temperature !== undefined && {
+        temperature: request.temperature,
+      }),
+      ...(request.max_tokens !== undefined && {
+        max_tokens: request.max_tokens,
+      }),
+      ...(request.stream !== undefined && { stream: request.stream }),
+      ...(request.circuit_breaker && {
+        circuit_breaker: request.circuit_breaker,
+      }),
+    };
+    return this.chatCompletion(chatRequest);
+  }
+
+  /**
+   * Send a chat completion request to the Circuit Breaker router
    */
   async chatCompletion(
     request: ChatCompletionRequest,
   ): Promise<ChatCompletionResponse> {
-    // Use OpenAI-compatible endpoint on port 8081
-    const response = await fetch("http://localhost:8081/v1/chat/completions", {
+    const config = this.client.getConfig();
+
+    const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(config.apiKey && { Authorization: `Bearer ${config.apiKey}` }),
       },
       body: JSON.stringify(request),
     });
 
     if (!response.ok) {
       throw new Error(
-        `LLM API error: ${response.status} ${response.statusText}`,
+        `Circuit Breaker router error: ${response.status} ${response.statusText}`,
       );
     }
 
@@ -74,79 +108,243 @@ export class LLMClient {
   }
 
   /**
-   * List available models
+   * List available models from the Circuit Breaker router
    */
-  async listModels(): Promise<PaginatedResult<LLMModel>> {
-    const response = await fetch("http://localhost:8081/v1/models");
+  async listModels(): Promise<ModelInfo[]> {
+    const config = this.client.getConfig();
+
+    const response = await fetch(`${config.baseUrl}/v1/models`, {
+      headers: {
+        ...(config.apiKey && { Authorization: `Bearer ${config.apiKey}` }),
+      },
+    });
+
     if (!response.ok) {
       throw new Error(
-        `LLM API error: ${response.status} ${response.statusText}`,
+        `Failed to list models: ${response.status} ${response.statusText}`,
       );
     }
-    const data = await response.json();
-    return {
-      data: data.data || [],
-      total: data.data?.length || 0,
-      hasMore: false,
-    };
+
+    const modelsResponse: ModelsResponse = await response.json();
+    return modelsResponse.data;
   }
 
   /**
-   * Get model information
+   * Get model details
    */
-  async getModel(modelId: string): Promise<LLMModel> {
-    const response = await fetch(`http://localhost:8081/v1/models/${modelId}`);
+  async getModel(modelId: string): Promise<ModelInfo> {
+    const config = this.client.getConfig();
+
+    const response = await fetch(`${config.baseUrl}/v1/models/${modelId}`, {
+      headers: {
+        ...(config.apiKey && { Authorization: `Bearer ${config.apiKey}` }),
+      },
+    });
+
     if (!response.ok) {
       throw new Error(
-        `LLM API error: ${response.status} ${response.statusText}`,
+        `Failed to get model: ${response.status} ${response.statusText}`,
       );
     }
+
     return response.json();
   }
 
   /**
-   * Stream chat completion (if supported by server)
+   * Stream chat completion using Circuit Breaker router's SSE endpoint (callback style)
    */
   async streamChatCompletion(
     request: ChatCompletionRequest & { stream: true },
     onChunk: (chunk: ChatCompletionChunk) => void,
+    onError?: (error: Error) => void,
   ): Promise<void> {
-    // Note: This would require server-sent events or WebSocket support
-    // For now, we'll fall back to regular completion
-    const response = await this.chatCompletion({ ...request, stream: false });
+    const config = this.client.getConfig();
 
-    // Simulate streaming by calling onChunk with the full response
-    const chunk: ChatCompletionChunk = {
-      id: response.id,
-      choices: response.choices.map((choice) => ({
-        index: choice.index,
-        delta: { content: choice.message.content },
-        finish_reason: choice.finish_reason,
-      })),
-      model: response.model,
-      created: response.created,
-    };
+    try {
+      // Use the helper function to stream from router
+      const streamGenerator = streamChatCompletionFromRouter(
+        config.baseUrl,
+        request,
+        {
+          headers: config.apiKey
+            ? { Authorization: `Bearer ${config.apiKey}` }
+            : {},
+          timeout: 30000, // 30 second timeout
+        },
+      );
 
-    onChunk(chunk);
+      for await (const streamingChunk of streamGenerator) {
+        // Convert to ChatCompletionChunk format
+        const chunk: ChatCompletionChunk = {
+          id: streamingChunk.id,
+          choices: streamingChunk.choices.map((choice) => ({
+            index: choice.index,
+            delta: {
+              ...(choice.delta?.content && { content: choice.delta.content }),
+              ...(choice.delta?.role && {
+                role: choice.delta.role as "assistant",
+              }),
+            },
+            ...(choice.finish_reason && {
+              finish_reason: choice.finish_reason,
+            }),
+          })),
+          model: streamingChunk.model,
+          created: streamingChunk.created,
+        };
+
+        onChunk(chunk);
+      }
+    } catch (error) {
+      if (onError) {
+        onError(error instanceof Error ? error : new Error(String(error)));
+      } else {
+        throw error;
+      }
+    }
   }
 
   /**
-   * Count tokens in text (approximate)
+   * Stream chat completion using Circuit Breaker router's SSE endpoint (async iterator style)
    */
-  async countTokens(model: string, text: string): Promise<TokenCount> {
-    const body = { model, text };
-    return this.client.request<TokenCount>(
-      "POST",
-      "/api/llm/tokens/count",
-      body,
+  async *streamChatCompletionIterator(
+    request: ChatCompletionRequest & { stream: true },
+  ): AsyncGenerator<ChatCompletionChunk, void, unknown> {
+    const config = this.client.getConfig();
+
+    // Use the helper function to stream from router
+    const streamGenerator = streamChatCompletionFromRouter(
+      config.baseUrl,
+      request,
+      {
+        headers: config.apiKey
+          ? { Authorization: `Bearer ${config.apiKey}` }
+          : {},
+        timeout: 30000, // 30 second timeout
+      },
     );
+
+    for await (const streamingChunk of streamGenerator) {
+      // Convert to ChatCompletionChunk format
+      const chunk: ChatCompletionChunk = {
+        id: streamingChunk.id,
+        choices: streamingChunk.choices.map((choice) => ({
+          index: choice.index,
+          delta: {
+            ...(choice.delta?.content && { content: choice.delta.content }),
+            ...(choice.delta?.role && {
+              role: choice.delta.role as "assistant",
+            }),
+          },
+          ...(choice.finish_reason && {
+            finish_reason: choice.finish_reason,
+          }),
+        })),
+        model: streamingChunk.model,
+        created: streamingChunk.created,
+      };
+
+      yield chunk;
+    }
   }
 
   /**
-   * Get provider health status
+   * Stream chat completion (convenience method that returns async iterator)
+   * This method is used by the demo and provides a more convenient API
+   */
+  async *stream(
+    request: ChatCompletionRequest & { stream: true },
+  ): AsyncGenerator<ChatCompletionChunk, void, unknown> {
+    yield* this.streamChatCompletionIterator(request);
+  }
+
+  /**
+   * Get embeddings from the Circuit Breaker router
+   */
+  async embeddings(
+    model: string,
+    input: string | string[],
+    options?: {
+      dimensions?: number;
+      encoding_format?: "float" | "base64";
+    },
+  ): Promise<EmbeddingResponse> {
+    const config = this.client.getConfig();
+
+    const response = await fetch(`${config.baseUrl}/v1/embeddings`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(config.apiKey && { Authorization: `Bearer ${config.apiKey}` }),
+      },
+      body: JSON.stringify({
+        model,
+        input,
+        ...options,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Circuit Breaker router error: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Count tokens in text (if supported by the router)
+   */
+  async countTokens(_model: string, text: string): Promise<TokenCount> {
+    // This would use a Circuit Breaker-specific endpoint if available
+    // For now, provide a simple approximation
+    const tokenCount = Math.ceil(text.length / 4); // Rough approximation
+    return {
+      tokens: tokenCount,
+      estimated: true,
+    };
+  }
+
+  /**
+   * Get provider health status from Circuit Breaker router
    */
   async getProviderHealth(): Promise<ProviderHealth[]> {
-    return this.client.request<ProviderHealth[]>("GET", "/api/llm/health");
+    const config = this.client.getConfig();
+
+    // This assumes the router exposes health information
+    // The exact endpoint would depend on the router's API
+    try {
+      const response = await fetch(`${config.baseUrl}/health`, {
+        headers: {
+          ...(config.apiKey && { Authorization: `Bearer ${config.apiKey}` }),
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Health check failed: ${response.status}`);
+      }
+
+      const health = await response.json();
+
+      // Transform router health format to expected format
+      return [
+        {
+          provider: "circuit-breaker",
+          status: health.status === "ok" ? "healthy" : "unhealthy",
+          response_time_ms: health.response_time,
+          last_check: new Date().toISOString(),
+        },
+      ];
+    } catch (error) {
+      return [
+        {
+          provider: "circuit-breaker",
+          status: "unhealthy",
+          last_check: new Date().toISOString(),
+        },
+      ];
+    }
   }
 }
 
@@ -188,6 +386,25 @@ export interface MessageDelta {
 }
 
 /**
+ * Embedding response
+ */
+export interface EmbeddingResponse {
+  object: "list";
+  data: EmbeddingData[];
+  model: string;
+  usage: {
+    prompt_tokens: number;
+    total_tokens: number;
+  };
+}
+
+export interface EmbeddingData {
+  object: "embedding";
+  index: number;
+  embedding: number[];
+}
+
+/**
  * Token count response
  */
 export interface TokenCount {
@@ -214,6 +431,8 @@ export class ChatBuilder {
   private messages: ChatMessage[] = [];
   private temperature?: number;
   private maxTokens?: number;
+  private stream?: boolean;
+  private circuitBreakerOptions?: CircuitBreakerOptions;
 
   constructor(model: string) {
     this.model = model;
@@ -268,6 +487,88 @@ export class ChatBuilder {
   }
 
   /**
+   * Enable streaming
+   */
+  setStream(stream: boolean): ChatBuilder {
+    this.stream = stream;
+    return this;
+  }
+
+  /**
+   * Set Circuit Breaker routing options
+   */
+  setCircuitBreakerOptions(options: CircuitBreakerOptions): ChatBuilder {
+    this.circuitBreakerOptions = options;
+    return this;
+  }
+
+  /**
+   * Set routing strategy
+   */
+  setRoutingStrategy(strategy: RoutingStrategy): ChatBuilder {
+    if (!this.circuitBreakerOptions) {
+      this.circuitBreakerOptions = {};
+    }
+    this.circuitBreakerOptions.routing_strategy = strategy;
+    return this;
+  }
+
+  /**
+   * Set maximum cost per 1k tokens
+   */
+  setMaxCostPer1kTokens(maxCost: number): ChatBuilder {
+    if (!this.circuitBreakerOptions) {
+      this.circuitBreakerOptions = {};
+    }
+    this.circuitBreakerOptions.max_cost_per_1k_tokens = maxCost;
+    return this;
+  }
+
+  /**
+   * Set task type for optimized routing
+   */
+  setTaskType(taskType: TaskType): ChatBuilder {
+    if (!this.circuitBreakerOptions) {
+      this.circuitBreakerOptions = {};
+    }
+    this.circuitBreakerOptions.task_type = taskType;
+    return this;
+  }
+
+  /**
+   * Set fallback models
+   */
+  setFallbackModels(models: string[]): ChatBuilder {
+    if (!this.circuitBreakerOptions) {
+      this.circuitBreakerOptions = {};
+    }
+    this.circuitBreakerOptions.fallback_models = models;
+    return this;
+  }
+
+  /**
+   * Set maximum latency constraint
+   */
+  setMaxLatency(maxLatencyMs: number): ChatBuilder {
+    if (!this.circuitBreakerOptions) {
+      this.circuitBreakerOptions = {};
+    }
+    this.circuitBreakerOptions.max_latency_ms = maxLatencyMs;
+    return this;
+  }
+
+  /**
+   * Set budget constraints
+   */
+  setBudgetConstraint(budget: BudgetConstraint): ChatBuilder {
+    if (!this.circuitBreakerOptions) {
+      this.circuitBreakerOptions = {};
+    }
+    this.circuitBreakerOptions.budget_constraint = budget;
+    return this;
+  }
+
+  /**
    * Build the chat completion request
    */
   build(): ChatCompletionRequest {
@@ -280,6 +581,30 @@ export class ChatBuilder {
       messages: this.messages,
       ...(this.temperature !== undefined && { temperature: this.temperature }),
       ...(this.maxTokens !== undefined && { max_tokens: this.maxTokens }),
+      ...(this.stream !== undefined && { stream: this.stream }),
+      ...(this.circuitBreakerOptions && {
+        circuit_breaker: this.circuitBreakerOptions,
+      }),
+    };
+  }
+
+  /**
+   * Build as smart completion request
+   */
+  buildSmart(): SmartCompletionRequest {
+    if (this.messages.length === 0) {
+      throw new Error("At least one message is required");
+    }
+
+    return {
+      model: this.model,
+      messages: this.messages,
+      ...(this.temperature !== undefined && { temperature: this.temperature }),
+      ...(this.maxTokens !== undefined && { max_tokens: this.maxTokens }),
+      ...(this.stream !== undefined && { stream: this.stream }),
+      ...(this.circuitBreakerOptions && {
+        circuit_breaker: this.circuitBreakerOptions,
+      }),
     };
   }
 
@@ -289,6 +614,14 @@ export class ChatBuilder {
   async execute(client: LLMClient): Promise<ChatCompletionResponse> {
     const request = this.build();
     return client.chatCompletion(request);
+  }
+
+  /**
+   * Execute as smart completion
+   */
+  async executeSmart(client: LLMClient): Promise<ChatCompletionResponse> {
+    const request = this.buildSmart();
+    return client.smartCompletion(request);
   }
 
   /**
@@ -308,6 +641,40 @@ export function createChat(model: string): ChatBuilder {
 }
 
 /**
+ * Create a smart chat builder with virtual model
+ */
+export function createSmartChat(virtualModel: string): ChatBuilder {
+  return new ChatBuilder(virtualModel);
+}
+
+/**
+ * Create a cost-optimized chat builder
+ */
+export function createCostOptimizedChat(): ChatBuilder {
+  return new ChatBuilder(COMMON_MODELS.SMART_CHEAP).setRoutingStrategy(
+    "cost_optimized",
+  );
+}
+
+/**
+ * Create a performance-optimized chat builder
+ */
+export function createFastChat(): ChatBuilder {
+  return new ChatBuilder(COMMON_MODELS.SMART_FAST).setRoutingStrategy(
+    "performance_first",
+  );
+}
+
+/**
+ * Create a balanced chat builder
+ */
+export function createBalancedChat(): ChatBuilder {
+  return new ChatBuilder(COMMON_MODELS.SMART_BALANCED).setRoutingStrategy(
+    "load_balanced",
+  );
+}
+
+/**
  * Quick chat function for simple use cases
  */
 export async function quickChat(
@@ -324,19 +691,45 @@ export async function quickChat(
 }
 
 /**
- * Common model constants
+ * Common model constants for Circuit Breaker router
+ * These are examples - actual available models depend on router configuration
  */
 export const COMMON_MODELS = {
+  // Virtual Models (Circuit Breaker Smart Routing)
+  SMART_FAST: "cb:fastest",
+  SMART_CHEAP: "cb:cost-optimal",
+  SMART_BALANCED: "cb:smart-chat",
+  SMART_CREATIVE: "cb:creative",
+  SMART_CODING: "cb:coding",
+  SMART_ANALYSIS: "cb:analysis",
+
+  // Direct Provider Models
+  // OpenAI models
   GPT_3_5_TURBO: "gpt-3.5-turbo",
-  GPT_4: "o4-mini-2025-04-16",
-  GPT_4O_MINI: "o4-mini-2025-04-16",
+  GPT_4: "gpt-4",
   GPT_4_TURBO: "gpt-4-turbo-preview",
+  GPT_4O_MINI: "gpt-4o-mini",
+
+  // Anthropic models
   CLAUDE_3_HAIKU: "claude-3-haiku-20240307",
   CLAUDE_3_SONNET: "claude-3-sonnet-20240229",
   CLAUDE_3_OPUS: "claude-3-opus-20240229",
+
+  // Google models
+  GEMINI_FLASH: "gemini-1.5-flash",
+  GEMINI_PRO: "gemini-1.5-pro",
+
+  // Local models (via Ollama)
   LLAMA_2_7B: "llama2:7b",
   LLAMA_2_13B: "llama2:13b",
-  LLAMA_2_70B: "llama2:70b",
+  LLAMA_3_1_8B: "llama3.1:8b",
+  QWEN_CODER_3B: "qwen2.5-coder:3b",
+  QWEN_CODER_7B: "qwen2.5-coder:7b",
+  CODELLAMA_7B: "codellama:7b",
+
+  // Embedding models
+  NOMIC_EMBED: "nomic-embed-text:latest",
+  ALL_MINILM: "all-minilm:l6-v2",
 } as const;
 
 /**
@@ -395,6 +788,41 @@ export class Conversation {
     this.messages.push({ role: "assistant", content: assistantMessage });
 
     return assistantMessage;
+  }
+
+  /**
+   * Send a message with streaming response
+   */
+  async sendStream(
+    message: string,
+    onChunk: (content: string) => void,
+  ): Promise<string> {
+    this.messages.push({ role: "user", content: message });
+    await this.truncateContext();
+
+    let fullResponse = "";
+
+    await this.client.streamChatCompletion(
+      {
+        model: this.model,
+        messages: this.messages,
+        stream: true,
+        ...(this.temperature !== undefined && {
+          temperature: this.temperature,
+        }),
+        ...(this.maxTokens !== undefined && { max_tokens: this.maxTokens }),
+      },
+      (chunk) => {
+        const content = chunk.choices[0]?.delta?.content || "";
+        if (content) {
+          fullResponse += content;
+          onChunk(content);
+        }
+      },
+    );
+
+    this.messages.push({ role: "assistant", content: fullResponse });
+    return fullResponse;
   }
 
   /**

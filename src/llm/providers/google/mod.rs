@@ -7,54 +7,29 @@ pub mod types;
 
 pub use client::GoogleClient;
 pub use config::{
-    GoogleConfig, 
-    get_config_requirements, 
-    get_default_config, 
-    get_available_models,
-    is_gemini_model,
-    has_parameter_restriction,
-    model_supports_capability,
-    get_model_cost_info,
-    supports_vision,
-    supports_multimodal,
-    supports_function_calling,
-    get_context_window,
-    get_max_output_tokens,
-    validate_api_key,
-    get_default_safety_settings
+    get_available_models, get_config_requirements, get_context_window, get_default_config,
+    get_default_safety_settings, get_max_output_tokens, get_model_cost_info,
+    has_parameter_restriction, is_gemini_model, model_supports_capability,
+    supports_function_calling, supports_multimodal, supports_vision, validate_api_key,
+    GoogleConfig,
 };
 pub use types::{
-    GoogleRequest,
-    GoogleResponse,
-    GoogleContent,
-    GooglePart,
-    GoogleGenerationConfig,
-    GoogleSafetySetting,
-    GoogleTool,
-    GoogleFunctionDeclaration,
-    GoogleCandidate,
-    GoogleUsageMetadata,
-    GooglePromptFeedback,
-    GoogleSafetyRating,
-    GoogleStreamingChunk,
-    GoogleStreamingCandidate,
-    GoogleError,
-    GoogleErrorDetails,
-    GoogleModelsResponse,
-    GoogleModel,
-    create_system_content,
-    convert_conversation_history
+    convert_conversation_history, create_system_content, GoogleCandidate, GoogleContent,
+    GoogleError, GoogleErrorDetails, GoogleFunctionDeclaration, GoogleGenerationConfig,
+    GoogleModel, GoogleModelsResponse, GooglePart, GooglePromptFeedback, GoogleRequest,
+    GoogleResponse, GoogleSafetyRating, GoogleSafetySetting, GoogleStreamingCandidate,
+    GoogleStreamingChunk, GoogleTool, GoogleUsageMetadata,
 };
 
 /// Create a new Google client with API key
 pub fn create_client(api_key: String, base_url: Option<String>) -> GoogleClient {
     let mut config = GoogleConfig::default();
     config.api_key = api_key;
-    
+
     if let Some(url) = base_url {
         config.base_url = url;
     }
-    
+
     GoogleClient::new(config)
 }
 
@@ -62,9 +37,9 @@ pub fn create_client(api_key: String, base_url: Option<String>) -> GoogleClient 
 pub fn create_client_from_env() -> Result<GoogleClient, String> {
     let api_key = std::env::var("GOOGLE_API_KEY")
         .map_err(|_| "GOOGLE_API_KEY environment variable not found")?;
-    
+
     let base_url = std::env::var("GOOGLE_BASE_URL").ok();
-    
+
     Ok(create_client(api_key, base_url))
 }
 
@@ -98,16 +73,19 @@ pub fn model_supports_streaming(model: &str) -> bool {
 }
 
 /// Get recommended models for different use cases
-pub fn get_recommended_models() -> std::collections::HashMap<&'static str, Vec<&'static str>> {
+pub fn get_recommended_models() -> std::collections::HashMap<&'static str, Vec<String>> {
     let mut recommendations = std::collections::HashMap::new();
-    
-    recommendations.insert("general", vec!["gemini-pro", "gemini-1.5-flash"]);
-    recommendations.insert("vision", vec!["gemini-pro-vision", "gemini-1.5-pro"]);
-    recommendations.insert("large_context", vec!["gemini-1.5-pro", "gemini-1.5-flash"]);
-    recommendations.insert("cost_effective", vec!["gemini-1.5-flash", "gemini-pro"]);
-    recommendations.insert("multimodal", vec!["gemini-1.5-pro", "gemini-2.0-flash-exp"]);
-    recommendations.insert("experimental", vec!["gemini-2.0-flash-exp", "gemini-2.5-flash-preview-05-20"]);
-    
+    let default_model =
+        std::env::var("GOOGLE_DEFAULT_MODEL").unwrap_or_else(|_| "gemini-1.5-flash".to_string());
+
+    // Only recommend the default model from environment
+    recommendations.insert("general", vec![default_model.clone()]);
+    recommendations.insert("vision", vec![default_model.clone()]);
+    recommendations.insert("large_context", vec![default_model.clone()]);
+    recommendations.insert("cost_effective", vec![default_model.clone()]);
+    recommendations.insert("multimodal", vec![default_model.clone()]);
+    recommendations.insert("experimental", vec![default_model]);
+
     recommendations
 }
 
@@ -125,8 +103,8 @@ mod tests {
     #[test]
     fn test_create_client_with_custom_url() {
         let client = create_client(
-            "test-key".to_string(), 
-            Some("https://custom.googleapis.com/v1beta".to_string())
+            "test-key".to_string(),
+            Some("https://custom.googleapis.com/v1beta".to_string()),
         );
         assert_eq!(client.provider_type(), crate::llm::LLMProviderType::Google);
     }
@@ -142,11 +120,14 @@ mod tests {
     fn test_available_models() {
         let models = get_available_models();
         assert!(!models.is_empty());
-        
-        // Check for specific models
-        assert!(models.iter().any(|m| m.id == "gemini-pro"));
-        assert!(models.iter().any(|m| m.id == "gemini-2.5-flash-preview-05-20"));
-        assert!(models.iter().any(|m| m.id == "gemini-1.5-pro"));
+
+        // Should only contain one model (the default from environment)
+        assert_eq!(models.len(), 1);
+
+        // Check that the model matches the default
+        let default_model = std::env::var("GOOGLE_DEFAULT_MODEL")
+            .unwrap_or_else(|_| "gemini-1.5-flash".to_string());
+        assert!(models.iter().any(|m| m.id == default_model));
     }
 
     #[test]
@@ -161,8 +142,10 @@ mod tests {
     #[test]
     fn test_api_key_validation() {
         // Valid Google API key format
-        assert!(validate_google_api_key("AIzaSyDZ65OZIFeraf5qNrf-1vRf3qL54UJMgqU"));
-        
+        assert!(validate_google_api_key(
+            "AIzaSyDZ65OZIFeraf5qNrf-1vRf3qL54UJMgqU"
+        ));
+
         // Invalid formats
         assert!(!validate_google_api_key("invalid-key"));
         assert!(!validate_google_api_key("sk-1234567890")); // OpenAI format
@@ -179,9 +162,15 @@ mod tests {
 
     #[test]
     fn test_context_windows() {
-        assert_eq!(get_context_window("gemini-1.5-pro"), 2097152); // 2M tokens
-        assert_eq!(get_context_window("gemini-1.5-flash"), 1048576); // 1M tokens
-        assert_eq!(get_context_window("gemini-pro"), 32768); // 32K tokens
+        let default_model = std::env::var("GOOGLE_DEFAULT_MODEL")
+            .unwrap_or_else(|_| "gemini-1.5-flash".to_string());
+
+        // Test context window for the default model
+        let context_window = get_context_window(&default_model);
+        assert!(context_window > 0);
+
+        // Test fallback for unknown models
+        assert_eq!(get_context_window("unknown-model"), 32768); // Default fallback
     }
 
     #[test]
@@ -191,29 +180,36 @@ mod tests {
         assert!(recommendations.contains_key("vision"));
         assert!(recommendations.contains_key("large_context"));
         assert!(recommendations.contains_key("cost_effective"));
-        
-        // Check that recommendations contain valid models
+
+        // Check that recommendations contain the default model
         let general_models = recommendations.get("general").unwrap();
-        assert!(general_models.contains(&"gemini-pro"));
+        let default_model = std::env::var("GOOGLE_DEFAULT_MODEL")
+            .unwrap_or_else(|_| "gemini-1.5-flash".to_string());
+        assert!(general_models.contains(&default_model));
     }
 
     #[test]
     fn test_list_model_ids() {
         let model_ids = list_model_ids();
         assert!(!model_ids.is_empty());
-        assert!(model_ids.contains(&"gemini-pro".to_string()));
-        assert!(model_ids.contains(&"gemini-1.5-pro".to_string()));
+
+        let default_model = std::env::var("GOOGLE_DEFAULT_MODEL")
+            .unwrap_or_else(|_| "gemini-1.5-flash".to_string());
+        assert!(model_ids.contains(&default_model));
     }
 
     #[test]
     fn test_model_info_lookup() {
-        let model_info = get_model_info("gemini-pro");
+        let default_model = std::env::var("GOOGLE_DEFAULT_MODEL")
+            .unwrap_or_else(|_| "gemini-1.5-flash".to_string());
+
+        let model_info = get_model_info(&default_model);
         assert!(model_info.is_some());
-        
+
         let info = model_info.unwrap();
-        assert_eq!(info.id, "gemini-pro");
+        assert_eq!(info.id, default_model);
         assert_eq!(info.provider, crate::llm::LLMProviderType::Google);
-        
+
         // Test non-existent model
         let non_existent = get_model_info("non-existent-model");
         assert!(non_existent.is_none());
@@ -221,8 +217,10 @@ mod tests {
 
     #[test]
     fn test_streaming_support() {
-        assert!(model_supports_streaming("gemini-pro"));
-        assert!(model_supports_streaming("gemini-1.5-flash"));
+        let default_model = std::env::var("GOOGLE_DEFAULT_MODEL")
+            .unwrap_or_else(|_| "gemini-1.5-flash".to_string());
+
+        assert!(model_supports_streaming(&default_model));
         assert!(!model_supports_streaming("non-existent-model"));
     }
 }

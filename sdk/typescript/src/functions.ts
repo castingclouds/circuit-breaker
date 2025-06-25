@@ -3,14 +3,8 @@
  * Note: Functions are handled through the activity system in GraphQL
  */
 
-import {
-  Function,
-  FunctionCreateInput,
-  ExecutionStatus,
-  PaginationOptions,
-} from "./types";
+import { Function, FunctionCreateInput, PaginationOptions } from "./types";
 import type { Client } from "./client";
-import { QueryBuilder } from "./schema";
 
 export class FunctionClient {
   constructor(private _client: Client) {}
@@ -40,15 +34,8 @@ export class FunctionClient {
   /**
    * List all functions
    */
-  async list(options?: PaginationOptions): Promise<Function[]> {
-    // Return available activities as a proxy for functions
-    const query = QueryBuilder.queryWithParams(
-      "GetAvailableActivities",
-      "availableActivities(resourceId: $resourceId)",
-      ["id", "name", "fromStates", "toState", "conditions", "description"],
-      [["resourceId", "ID!"]],
-    );
-
+  async list(_options?: PaginationOptions): Promise<Function[]> {
+    // Functions are currently handled through the workflow activity system
     // This would need a resource ID, so we return empty for now
     console.warn(
       "Function listing is not directly supported. Use workflow activities instead.",
@@ -83,10 +70,7 @@ export class FunctionClient {
    * Execute a function
    * This maps to executing an activity on a resource
    */
-  async execute(
-    _id: string,
-    _input: Record<string, any>,
-  ): Promise<FunctionExecution> {
+  async execute(_id: string, _input: Record<string, any>): Promise<any> {
     throw new Error(
       "Direct function execution is not supported. " +
         "Use resource.executeActivity() to execute function-like activities.",
@@ -96,7 +80,7 @@ export class FunctionClient {
   /**
    * Get function execution status
    */
-  async getExecution(_executionId: string): Promise<FunctionExecution> {
+  async getExecution(_executionId: string): Promise<any> {
     throw new Error(
       "Function execution tracking is not supported. " +
         "Use workflow execution tracking instead.",

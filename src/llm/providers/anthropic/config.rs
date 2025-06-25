@@ -1,13 +1,16 @@
 //! Anthropic provider configuration
 //! This module contains configuration structures and defaults specific to Anthropic
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-use crate::llm::{LLMProviderType, traits::{
-    ModelInfo, ProviderConfig, ProviderConfigRequirements, AuthMethod, 
-    RateLimitInfo, ParameterRestriction, ModelCapability
-}};
+use crate::llm::{
+    traits::{
+        AuthMethod, ModelCapability, ModelInfo, ParameterRestriction, ProviderConfig,
+        ProviderConfigRequirements, RateLimitInfo,
+    },
+    LLMProviderType,
+};
 
 /// Anthropic-specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,10 +33,12 @@ pub struct AnthropicConfig {
 
 impl Default for AnthropicConfig {
     fn default() -> Self {
+        let default_model = std::env::var("ANTHROPIC_DEFAULT_MODEL")
+            .unwrap_or_else(|_| "claude-3-sonnet-20240229".to_string());
         Self {
             api_key: String::new(),
             base_url: "https://api.anthropic.com".to_string(),
-            default_model: "claude-3-sonnet-20240229".to_string(),
+            default_model,
             timeout_seconds: 30,
             max_retries: 3,
             custom_headers: HashMap::new(),
@@ -45,7 +50,7 @@ impl Default for AnthropicConfig {
 /// Get Anthropic provider configuration requirements
 pub fn get_config_requirements() -> ProviderConfigRequirements {
     let parameter_restrictions = HashMap::new();
-    
+
     ProviderConfigRequirements {
         api_key_env_var: "ANTHROPIC_API_KEY".to_string(),
         base_url_env_var: Some("ANTHROPIC_BASE_URL".to_string()),
@@ -62,10 +67,12 @@ pub fn get_config_requirements() -> ProviderConfigRequirements {
 
 /// Get default Anthropic provider configuration
 pub fn get_default_config() -> ProviderConfig {
+    let default_model = std::env::var("ANTHROPIC_DEFAULT_MODEL")
+        .unwrap_or_else(|_| "claude-3-sonnet-20240229".to_string());
     ProviderConfig {
         provider_type: LLMProviderType::Anthropic,
         base_url: "https://api.anthropic.com".to_string(),
-        default_model: "claude-3-sonnet-20240229".to_string(),
+        default_model,
         models: get_available_models(),
         settings: HashMap::new(),
         enabled: true,
@@ -74,112 +81,34 @@ pub fn get_default_config() -> ProviderConfig {
 }
 
 /// Get available Anthropic models with their configurations
+/// Only loads the default model from environment to avoid hardcoded non-existent models
 pub fn get_available_models() -> Vec<ModelInfo> {
-    vec![
-        // Claude 3 models
-        ModelInfo {
-            id: "claude-3-haiku-20240307".to_string(),
-            name: "Claude 3 Haiku".to_string(),
-            provider: LLMProviderType::Anthropic,
-            context_window: 200000,
-            max_output_tokens: 4096,
-            supports_streaming: true,
-            supports_function_calling: false,
-            cost_per_input_token: 0.00000025,  // $0.25 per 1M tokens
-            cost_per_output_token: 0.00000125, // $1.25 per 1M tokens
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::CodeGeneration,
-                ModelCapability::ReasoningChain,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        ModelInfo {
-            id: "claude-3-sonnet-20240229".to_string(),
-            name: "Claude 3 Sonnet".to_string(),
-            provider: LLMProviderType::Anthropic,
-            context_window: 200000,
-            max_output_tokens: 4096,
-            supports_streaming: true,
-            supports_function_calling: false,
-            cost_per_input_token: 0.000003,  // $3 per 1M tokens
-            cost_per_output_token: 0.000015, // $15 per 1M tokens
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::CodeGeneration,
-                ModelCapability::ReasoningChain,
-                ModelCapability::Translation,
-                ModelCapability::Summarization,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        ModelInfo {
-            id: "claude-3-opus-20240229".to_string(),
-            name: "Claude 3 Opus".to_string(),
-            provider: LLMProviderType::Anthropic,
-            context_window: 200000,
-            max_output_tokens: 4096,
-            supports_streaming: true,
-            supports_function_calling: false,
-            cost_per_input_token: 0.000015,  // $15 per 1M tokens
-            cost_per_output_token: 0.000075, // $75 per 1M tokens
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::CodeGeneration,
-                ModelCapability::ReasoningChain,
-                ModelCapability::Translation,
-                ModelCapability::Summarization,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        // Claude 3.5 models
-        ModelInfo {
-            id: "claude-3-5-sonnet-20240620".to_string(),
-            name: "Claude 3.5 Sonnet".to_string(),
-            provider: LLMProviderType::Anthropic,
-            context_window: 200000,
-            max_output_tokens: 4096,
-            supports_streaming: true,
-            supports_function_calling: true,
-            cost_per_input_token: 0.000003,  // $3 per 1M tokens
-            cost_per_output_token: 0.000015, // $15 per 1M tokens
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::CodeGeneration,
-                ModelCapability::ReasoningChain,
-                ModelCapability::Translation,
-                ModelCapability::Summarization,
-                ModelCapability::FunctionCalling,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        // Custom models (for testing)
-        ModelInfo {
-            id: "claude-sonnet-4-20250514".to_string(),
-            name: "Claude 4 Sonnet (Custom)".to_string(),
-            provider: LLMProviderType::Anthropic,
-            context_window: 200000,
-            max_output_tokens: 8192,
-            supports_streaming: true,
-            supports_function_calling: true,
-            cost_per_input_token: 0.000003,  // $3 per 1M tokens
-            cost_per_output_token: 0.000015, // $15 per 1M tokens
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::CodeGeneration,
-                ModelCapability::ReasoningChain,
-                ModelCapability::Translation,
-                ModelCapability::Summarization,
-                ModelCapability::FunctionCalling,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-    ]
+    let default_model = std::env::var("ANTHROPIC_DEFAULT_MODEL")
+        .unwrap_or_else(|_| "claude-3-sonnet-20240229".to_string());
+
+    // Create a single model info for the default model from environment
+    let model_info = ModelInfo {
+        id: default_model.clone(),
+        name: format!("Anthropic {}", default_model),
+        provider: LLMProviderType::Anthropic,
+        context_window: 200000,
+        max_output_tokens: 4096,
+        supports_streaming: true,
+        supports_function_calling: false,
+        cost_per_input_token: 0.000003, // Default to Claude 3 Sonnet pricing
+        cost_per_output_token: 0.000015,
+        capabilities: vec![
+            ModelCapability::TextGeneration,
+            ModelCapability::ConversationalAI,
+            ModelCapability::CodeGeneration,
+            ModelCapability::ReasoningChain,
+            ModelCapability::Translation,
+            ModelCapability::Summarization,
+        ],
+        parameter_restrictions: HashMap::new(),
+    };
+
+    vec![model_info]
 }
 
 /// Check if a model has specific parameter restrictions

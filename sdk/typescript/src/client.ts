@@ -107,52 +107,69 @@ export class Client {
    * Test connection to the server
    */
   async ping(): Promise<PingResponse> {
-    const query = QueryBuilder.query("Ping", "llmProviders", [
-      "name",
-      "healthStatus { isHealthy }",
-    ]);
+    try {
+      const response = await fetch(`${this.config.baseUrl}/health`, {
+        method: "GET",
+        headers: this.baseHeaders,
+        signal: AbortSignal.timeout(this.config.timeout),
+      });
 
-    const result = await this.graphqlRequest<{
-      llmProviders: Array<{
-        name: string;
-        healthStatus: { isHealthy: boolean };
-      }>;
-    }>(query);
+      if (!response.ok) {
+        throw new NetworkError(
+          `HTTP ${response.status}: ${response.statusText}`,
+        );
+      }
 
-    // Convert GraphQL response to expected ping format
-    const _healthyProviders = result.llmProviders.filter(
-      (p) => p.healthStatus.isHealthy,
-    );
+      const healthData = await response.json();
 
-    return {
-      status: "ok",
-      version: "1.0.0", // Could be retrieved from server if available
-      uptime_seconds: 0, // Could be retrieved from server if available
-    };
+      return {
+        status: healthData.status || "ok",
+        version: healthData.version || "1.0.0",
+        uptime_seconds: healthData.timestamp || 0,
+      };
+    } catch (error) {
+      if (error instanceof NetworkError) {
+        throw error;
+      }
+      throw new NetworkError(`Health check failed: ${error}`);
+    }
   }
 
   /**
    * Get server information
    */
   async info(): Promise<ServerInfo> {
-    const query = QueryBuilder.query("Info", "llmProviders", [
-      "name",
-      "healthStatus { isHealthy }",
-    ]);
+    try {
+      // Get health info
+      const healthResponse = await fetch(`${this.config.baseUrl}/health`, {
+        method: "GET",
+        headers: this.baseHeaders,
+        signal: AbortSignal.timeout(this.config.timeout),
+      });
 
-    const result = await this.graphqlRequest<{
-      llmProviders: Array<{
-        name: string;
-        healthStatus: { isHealthy: boolean };
-      }>;
-    }>(query);
+      const healthData = await healthResponse.json();
 
-    return {
-      name: "Circuit Breaker GraphQL Server",
-      version: "1.0.0",
-      features: ["workflows", "agents", "functions", "llm", "rules"],
-      providers: result.llmProviders.map((p) => p.name),
-    };
+      // Get models to determine providers
+      const modelsResponse = await fetch(`${this.config.baseUrl}/v1/models`, {
+        method: "GET",
+        headers: this.baseHeaders,
+        signal: AbortSignal.timeout(this.config.timeout),
+      });
+
+      const modelsData = await modelsResponse.json();
+      const providers = [
+        ...new Set(modelsData.data?.map((model: any) => model.provider) || []),
+      ];
+
+      return {
+        name: "Circuit Breaker OpenAI-Compatible API Server",
+        version: healthData.version || "1.0.0",
+        features: ["llm", "smart-routing", "virtual-models", "streaming"],
+        providers: providers,
+      };
+    } catch (error) {
+      throw new NetworkError(`Server info failed: ${error}`);
+    }
   }
 
   // ============================================================================
@@ -251,7 +268,7 @@ export class Client {
     const request: GraphQLRequest = {
       query,
       variables: variables || {},
-      operationName,
+      ...(operationName && { operationName }),
     };
 
     try {
@@ -402,7 +419,6 @@ export class Client {
   private handleGraphQLErrors(
     errors: Array<{ message: string; path?: Array<string | number> }>,
   ): CircuitBreakerError {
-    const _mainError = errors[0];
     const message = errors.map((e) => e.message).join(", ");
 
     // Determine error type based on message content

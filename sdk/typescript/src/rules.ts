@@ -392,8 +392,12 @@ export class ClientRuleEngine {
         if (!condition.conditions || condition.conditions.length === 0) {
           throw new Error("Not condition requires exactly one sub-condition");
         }
+        const firstCondition = condition.conditions?.[0];
+        if (!firstCondition) {
+          throw new Error("Not condition missing required sub-condition");
+        }
         const notResult = this.evaluateCondition(
-          condition.conditions[0],
+          firstCondition,
           data,
           metadata,
           ruleId,

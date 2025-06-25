@@ -12,7 +12,7 @@ A comprehensive Rust SDK for building and managing workflows using the Circuit B
 - **📊 Resource Management**: Manage stateful resources with automatic state transitions
 - **🧠 Rules Engine**: Define and evaluate business rules with multiple rule types (simple, composite, JavaScript)
 - **🐳 Function System**: Execute containerized functions with Docker integration
-- **🤖 LLM Router**: Route requests across multiple LLM providers with load balancing and failover
+- **🤖 Smart LLM Router**: Virtual models with intelligent routing, cost optimization, and task-aware selection
 - **🎯 AI Agents**: Build conversational and state-machine based AI agents
 - **⚡ Streaming Support**: Real-time streaming for LLM responses and workflow events
 - **🔒 Type Safety**: Full Rust type safety with comprehensive error handling
@@ -31,25 +31,151 @@ tokio = { version = "1.0", features = ["full"] }
 ### Basic Usage
 
 ```rust
-use circuit_breaker_sdk::{CircuitBreakerSDK, WorkflowBuilder};
+use circuit_breaker_sdk::{Client, create_chat, COMMON_MODELS};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create SDK instance
-    let sdk = CircuitBreakerSDK::new("http://localhost:4000/graphql").await?;
-
-    // Build a workflow
-    let workflow = WorkflowBuilder::new("Order Processing")
-        .add_state("pending")
-        .add_state("processing") 
-        .add_state("completed")
-        .add_transition("pending", "processing", "start_processing")
-        .add_transition("processing", "completed", "complete_order")
-        .set_initial_state("pending")
+    // Create client
+    let client = Client::builder()
+        .base_url("http://localhost:3000")?
+        .api_key("your-api-key".to_string())
         .build()?;
 
-    // Create the workflow
-    let workflow_id = sdk.workflows().create(workflow).await?;
+    // Simple LLM chat through Circuit Breaker router
+    let response = client.llm()
+        .chat(COMMON_MODELS::GPT_4O_MINI, "Hello, world!")
+        .await?;
+    
+    println!("Response: {}", response);
+
+    // Advanced chat with system prompt
+    let advanced_response = create_chat(COMMON_MODELS::CLAUDE_3_HAIKU)
+        .set_system_prompt("You are a helpful assistant")
+        .add_user_message("Explain circuit breakers")
+        .set_temperature(0.7)
+        .execute(&client.llm())
+        .await?;
+
+    Ok(())
+}
+```
+
+### LLM Router Features
+
+The Circuit Breaker LLM Router provides intelligent model selection with virtual models and smart routing:
+
+#### Virtual Models for Smart Routing
+
+```rust
+use circuit_breaker_sdk::{Client, create_cost_optimized_chat, create_fast_chat, COMMON_MODELS};
+
+let client = Client::builder()
+    .base_url("http://localhost:3000")?
+    .build()?;
+
+let llm = client.llm();
+
+// Virtual models automatically select best provider
+let cheap_response = llm.chat(COMMON_MODELS::SMART_CHEAP, "Hello!").await?;
+let fast_response = llm.chat(COMMON_MODELS::SMART_FAST, "Hello!").await?;
+let balanced_response = llm.chat(COMMON_MODELS::SMART_BALANCED, "Hello!").await?;
+let creative_response = llm.chat(COMMON_MODELS::SMART_CREATIVE, "Hello!").await?;
+```
+
+#### Smart Completion with Circuit Breaker Options
+
+```rust
+use circuit_breaker_sdk::{SmartCompletionRequest, CircuitBreakerOptions, RoutingStrategy, TaskType};
+
+let smart_request = SmartCompletionRequest {
+    model: COMMON_MODELS::SMART_CHEAP.to_string(),
+    messages: vec![/* your messages */],
+    circuit_breaker: Some(CircuitBreakerOptions {
+        routing_strategy: Some(RoutingStrategy::CostOptimized),
+        max_cost_per_1k_tokens: Some(0.01),
+        task_type: Some(TaskType::CodeGeneration),
+        fallback_models: Some(vec!["gpt-3.5-turbo".to_string()]),
+        max_latency_ms: Some(5000),
+        ..Default::default()
+    }),
+    ..Default::default()
+};
+
+let response = llm.smart_completion(smart_request).await?;
+```
+
+#### Convenience Builders
+
+```rust
+// Cost-optimized for budget-conscious applications
+let cost_response = create_cost_optimized_chat()
+    .add_user_message("Summarize this document")
+    .set_max_cost_per_1k_tokens(0.005)
+    .execute(&llm)
+    .await?;
+
+// Performance-first for real-time applications
+let fast_response = create_fast_chat()
+    .add_user_message("Quick question")
+    .execute(&llm)
+    .await?;
+
+// Task-specific optimization
+let code_response = create_smart_chat(COMMON_MODELS::SMART_CODING)
+    .set_task_type(TaskType::CodeGeneration)
+    .add_user_message("Write a sorting algorithm")
+    .execute(&llm)
+    .await?;
+```
+
+#### Streaming with Smart Routing
+
+```rust
+let stream = llm.chat_completion_stream(ChatCompletionRequest {
+    model: COMMON_MODELS::SMART_CREATIVE.to_string(),
+    circuit_breaker: Some(CircuitBreakerOptions {
+        routing_strategy: Some(RoutingStrategy::LoadBalanced),
+        task_type: Some(TaskType::CreativeWriting),
+        require_streaming: Some(true),
+        ..Default::default()
+    }),
+    ..Default::default()
+}).await?;
+
+use futures::StreamExt;
+while let Some(chunk) = stream.next().await {
+    match chunk {
+        Ok(chunk) => {
+            if let Some(content) = chunk.choices[0].delta.content.as_ref() {
+                print!("{}", content);
+            }
+        }
+        Err(e) => eprintln!("Stream error: {}", e),
+    }
+}
+```
+
+### Workflow Management
+
+```rust
+use circuit_breaker_sdk::{Client, create_workflow};
+
+let client = Client::builder()
+    .base_url("http://localhost:3000")?
+    .build()?;
+
+// Build a workflow
+let workflow = create_workflow("Order Processing")
+    .add_state("pending")
+    .add_state("processing") 
+    .add_state("completed")
+    .add_transition("pending", "processing", "start_processing")
+    .add_transition("processing", "completed", "complete_order")
+    .set_initial_state("pending")
+    .build()?;
+
+// Create the workflow
+let workflow_id = client.workflows().create(workflow).await?;
 
     // Create a resource
     let resource = sdk.resources().create(&workflow_id, serde_json::json!({

@@ -55,6 +55,40 @@ Comprehensive demonstration of Circuit Breaker's multi-provider LLM capabilities
 cargo run --example multi_provider_demo
 ```
 
+### 3. NATS Event Streaming Demo (`nats_demo.rs`)
+
+Comprehensive demonstration of NATS event streaming functionality and feature parity with the TypeScript SDK:
+
+- 🔄 **NATS Client Integration**: Direct access to NATS-enhanced operations
+- 📊 **Workflow Instance Creation**: Create workflows with NATS event tracking
+- 🔍 **Resource Retrieval**: Get resources with NATS metadata and event history
+- 📈 **State-Based Queries**: Find resources in specific workflow states
+- ⚡ **Activity Execution**: Execute activities with NATS event publishing
+- 🛠️ **Fluent Builders**: Ergonomic builder patterns for complex operations
+- 🎯 **Convenience Functions**: Standalone functions for common operations
+- ⚠️ **Error Handling**: Comprehensive error handling demonstration
+
+**Key Features:**
+- CreateWorkflowInstanceBuilder with fluent API
+- ExecuteActivityWithNATSBuilder with NATS headers support
+- Complete type safety with Rust's type system
+- Feature parity with TypeScript SDK
+- Real-time event streaming and history tracking
+
+**Run the demo:**
+```bash
+cargo run --example nats_demo
+```
+
+**Features demonstrated:**
+- CreateWorkflowInstanceBuilder with fluent API and NATS event tracking
+- ExecuteActivityWithNATSBuilder supporting custom NATS headers
+- Resource retrieval with complete event history
+- State-based resource queries across workflows
+- Convenience functions for common NATS operations
+- Comprehensive error handling patterns
+- Feature parity verification with TypeScript SDK
+
 ## Multi-Provider Configuration
 
 The multi-provider demo showcases Circuit Breaker's ability to work with multiple LLM providers simultaneously:
@@ -117,9 +151,16 @@ let response = create_chat(COMMON_MODELS::CLAUDE_3_HAIKU)
 - Client-side fallback capabilities
 - Flexible rule builder patterns
 
+### ⚡ NATS Event Streaming
+- Real-time workflow event tracking
+- NATS-enhanced resource operations
+- Event history and state transitions
+- Custom NATS headers and subjects
+- Builder patterns for complex operations
+
 ### 🔍 Monitoring & Analytics
 - Provider health monitoring
-- Cost tracking and analysis
+- Cost tracking and analysis  
 - Performance metrics
 - Error handling and fallbacks
 
@@ -132,6 +173,9 @@ cargo run --example basic_usage
 
 # Run multi-provider demo
 cargo run --example multi_provider_demo
+
+# Run NATS demo
+cargo run --example nats_demo
 
 # Run other examples
 cargo run --example workflow_management
@@ -284,6 +328,8 @@ More examples coming soon:
 - `ai_agent.rs` - Advanced AI agent configurations
 - `rules_demo.rs` - Complex rule engine scenarios
 - `llm_integration.rs` - Deep LLM integration patterns
+- `subscription_demo.rs` - Real-time subscription patterns
+- `analytics_demo.rs` - Cost analytics and budget management
 
 ## Contributing
 

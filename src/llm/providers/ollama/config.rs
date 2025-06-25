@@ -1,13 +1,16 @@
 //! Ollama provider configuration
 //! This module contains configuration structures and defaults specific to Ollama
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-use crate::llm::{LLMProviderType, traits::{
-    ModelInfo, ProviderConfig, ProviderConfigRequirements,
-    RateLimitInfo, ParameterRestriction, ModelCapability
-}};
+use crate::llm::{
+    traits::{
+        ModelCapability, ModelInfo, ParameterRestriction, ProviderConfig,
+        ProviderConfigRequirements, RateLimitInfo,
+    },
+    LLMProviderType,
+};
 
 /// Ollama-specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,21 +48,21 @@ impl Default for OllamaConfig {
 /// Get Ollama provider configuration requirements
 pub fn get_config_requirements() -> ProviderConfigRequirements {
     let mut parameter_restrictions = HashMap::new();
-    
+
     // Ollama uses different parameter names than OpenAI
     parameter_restrictions.insert(
         "max_tokens".to_string(),
-        ParameterRestriction::Custom("Use num_predict instead".to_string())
+        ParameterRestriction::Custom("Use num_predict instead".to_string()),
     );
-    
+
     parameter_restrictions.insert(
         "frequency_penalty".to_string(),
-        ParameterRestriction::NotSupported
+        ParameterRestriction::NotSupported,
     );
-    
+
     parameter_restrictions.insert(
         "presence_penalty".to_string(),
-        ParameterRestriction::NotSupported
+        ParameterRestriction::NotSupported,
     );
 
     ProviderConfigRequirements {
@@ -134,191 +137,12 @@ pub fn get_default_models() -> Vec<ModelInfo> {
             name: "Nomic Embed Text".to_string(),
             provider: LLMProviderType::Ollama,
             context_window: 8192,
-            max_output_tokens: 0, // Embedding models don't generate text
+            max_output_tokens: 0,      // Embedding models don't generate text
             supports_streaming: false, // Embeddings are not streamed
             supports_function_calling: false,
             cost_per_input_token: 0.0,
             cost_per_output_token: 0.0,
-            capabilities: vec![
-                ModelCapability::Embedding,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        // Common fallback models
-        ModelInfo {
-            id: "llama2".to_string(),
-            name: "Llama 2 7B".to_string(),
-            provider: LLMProviderType::Ollama,
-            context_window: 4096,
-            max_output_tokens: 2048,
-            supports_streaming: true,
-            supports_function_calling: false, // Most Ollama models don't support function calling yet
-            cost_per_input_token: 0.0,  // Local inference is free
-            cost_per_output_token: 0.0,
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::Reasoning,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        ModelInfo {
-            id: "llama2:13b".to_string(),
-            name: "Llama 2 13B".to_string(),
-            provider: LLMProviderType::Ollama,
-            context_window: 4096,
-            max_output_tokens: 2048,
-            supports_streaming: true,
-            supports_function_calling: false,
-            cost_per_input_token: 0.0,
-            cost_per_output_token: 0.0,
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::Reasoning,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        ModelInfo {
-            id: "llama2:70b".to_string(),
-            name: "Llama 2 70B".to_string(),
-            provider: LLMProviderType::Ollama,
-            context_window: 4096,
-            max_output_tokens: 2048,
-            supports_streaming: true,
-            supports_function_calling: false,
-            cost_per_input_token: 0.0,
-            cost_per_output_token: 0.0,
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::Reasoning,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        // Code Llama models
-        ModelInfo {
-            id: "codellama".to_string(),
-            name: "Code Llama 7B".to_string(),
-            provider: LLMProviderType::Ollama,
-            context_window: 16384,
-            max_output_tokens: 4096,
-            supports_streaming: true,
-            supports_function_calling: false,
-            cost_per_input_token: 0.0,
-            cost_per_output_token: 0.0,
-            capabilities: vec![
-                ModelCapability::CodeGeneration,
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        ModelInfo {
-            id: "codellama:13b".to_string(),
-            name: "Code Llama 13B".to_string(),
-            provider: LLMProviderType::Ollama,
-            context_window: 16384,
-            max_output_tokens: 4096,
-            supports_streaming: true,
-            supports_function_calling: false,
-            cost_per_input_token: 0.0,
-            cost_per_output_token: 0.0,
-            capabilities: vec![
-                ModelCapability::CodeGeneration,
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        // Mistral models
-        ModelInfo {
-            id: "mistral".to_string(),
-            name: "Mistral 7B".to_string(),
-            provider: LLMProviderType::Ollama,
-            context_window: 8192,
-            max_output_tokens: 4096,
-            supports_streaming: true,
-            supports_function_calling: false,
-            cost_per_input_token: 0.0,
-            cost_per_output_token: 0.0,
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::Reasoning,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        // Phi models (Microsoft)
-        ModelInfo {
-            id: "phi".to_string(),
-            name: "Phi 2B".to_string(),
-            provider: LLMProviderType::Ollama,
-            context_window: 2048,
-            max_output_tokens: 1024,
-            supports_streaming: true,
-            supports_function_calling: false,
-            cost_per_input_token: 0.0,
-            cost_per_output_token: 0.0,
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::CodeGeneration,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        // Gemma models (Google)
-        ModelInfo {
-            id: "gemma:2b".to_string(),
-            name: "Gemma 2B".to_string(),
-            provider: LLMProviderType::Ollama,
-            context_window: 8192,
-            max_output_tokens: 4096,
-            supports_streaming: true,
-            supports_function_calling: false,
-            cost_per_input_token: 0.0,
-            cost_per_output_token: 0.0,
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::Reasoning,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        ModelInfo {
-            id: "gemma:7b".to_string(),
-            name: "Gemma 7B".to_string(),
-            provider: LLMProviderType::Ollama,
-            context_window: 8192,
-            max_output_tokens: 4096,
-            supports_streaming: true,
-            supports_function_calling: false,
-            cost_per_input_token: 0.0,
-            cost_per_output_token: 0.0,
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::Reasoning,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        // Additional common models
-        ModelInfo {
-            id: "llama3".to_string(),
-            name: "Llama 3 8B".to_string(),
-            provider: LLMProviderType::Ollama,
-            context_window: 8192,
-            max_output_tokens: 4096,
-            supports_streaming: true,
-            supports_function_calling: false,
-            cost_per_input_token: 0.0,
-            cost_per_output_token: 0.0,
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::Reasoning,
-                ModelCapability::CodeGeneration,
-            ],
+            capabilities: vec![ModelCapability::Embedding],
             parameter_restrictions: HashMap::new(),
         },
     ]
@@ -358,13 +182,13 @@ pub fn is_embedding_model(model: &str) -> bool {
 /// Get recommended models for different use cases
 pub fn get_recommended_models() -> HashMap<&'static str, Vec<&'static str>> {
     let mut recommendations = HashMap::new();
-    
-    recommendations.insert("chat", vec!["gemma3:4b", "llama3", "llama2"]);
-    recommendations.insert("code", vec!["qwen2.5-coder:3b", "codellama", "phi"]);
-    recommendations.insert("reasoning", vec!["gemma3:4b", "llama3", "mistral"]);
-    recommendations.insert("fast", vec!["qwen2.5-coder:3b", "gemma3:4b", "phi"]);
-    recommendations.insert("quality", vec!["gemma3:4b", "qwen2.5-coder:3b", "llama3"]);
+
+    recommendations.insert("chat", vec!["gemma3:4b"]);
+    recommendations.insert("code", vec!["qwen2.5-coder:3b"]);
+    recommendations.insert("reasoning", vec!["gemma3:4b"]);
+    recommendations.insert("fast", vec!["qwen2.5-coder:3b", "gemma3:4b"]);
+    recommendations.insert("quality", vec!["gemma3:4b", "qwen2.5-coder:3b"]);
     recommendations.insert("embeddings", vec!["nomic-embed-text:latest"]);
-    
+
     recommendations
 }

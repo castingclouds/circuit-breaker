@@ -1,13 +1,16 @@
 //! OpenAI provider configuration
 //! This module contains configuration structures and defaults specific to OpenAI
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-use crate::llm::{LLMProviderType, traits::{
-    ModelInfo, ProviderConfig, ProviderConfigRequirements, AuthMethod, 
-    RateLimitInfo, ParameterRestriction, ModelCapability
-}};
+use crate::llm::{
+    traits::{
+        AuthMethod, ModelCapability, ModelInfo, ParameterRestriction, ProviderConfig,
+        ProviderConfigRequirements, RateLimitInfo,
+    },
+    LLMProviderType,
+};
 
 /// OpenAI-specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,7 +21,7 @@ pub struct OpenAIConfig {
     pub base_url: String,
     /// Organization ID (optional)
     pub organization: Option<String>,
-    /// Project ID (optional)  
+    /// Project ID (optional)
     pub project: Option<String>,
     /// Default model to use
     pub default_model: String,
@@ -32,12 +35,14 @@ pub struct OpenAIConfig {
 
 impl Default for OpenAIConfig {
     fn default() -> Self {
+        let default_model =
+            std::env::var("OPENAI_DEFAULT_MODEL").unwrap_or_else(|_| "gpt-4".to_string());
         Self {
             api_key: String::new(),
             base_url: "https://api.openai.com/v1".to_string(),
             organization: None,
             project: None,
-            default_model: "gpt-4".to_string(),
+            default_model,
             timeout_seconds: 30,
             max_retries: 3,
             custom_headers: HashMap::new(),
@@ -48,16 +53,16 @@ impl Default for OpenAIConfig {
 /// Get OpenAI provider configuration requirements
 pub fn get_config_requirements() -> ProviderConfigRequirements {
     let mut parameter_restrictions = HashMap::new();
-    
+
     // o4 models have specific parameter restrictions
     parameter_restrictions.insert(
         "temperature".to_string(),
-        ParameterRestriction::Custom("o4 models only support temperature=1.0".to_string())
+        ParameterRestriction::Custom("o4 models only support temperature=1.0".to_string()),
     );
-    
+
     parameter_restrictions.insert(
         "max_tokens".to_string(),
-        ParameterRestriction::Custom("o4 models use max_completion_tokens instead".to_string())
+        ParameterRestriction::Custom("o4 models use max_completion_tokens instead".to_string()),
     );
 
     ProviderConfigRequirements {
@@ -76,10 +81,12 @@ pub fn get_config_requirements() -> ProviderConfigRequirements {
 
 /// Get default OpenAI provider configuration
 pub fn get_default_config() -> ProviderConfig {
+    let default_model =
+        std::env::var("OPENAI_DEFAULT_MODEL").unwrap_or_else(|_| "gpt-4".to_string());
     ProviderConfig {
         provider_type: LLMProviderType::OpenAI,
         base_url: "https://api.openai.com/v1".to_string(),
-        default_model: "gpt-4".to_string(),
+        default_model,
         models: get_available_models(),
         settings: HashMap::new(),
         enabled: true,
@@ -88,128 +95,33 @@ pub fn get_default_config() -> ProviderConfig {
 }
 
 /// Get available OpenAI models with their configurations
+/// Only loads the default model from environment to avoid hardcoded non-existent models
 pub fn get_available_models() -> Vec<ModelInfo> {
-    vec![
-        // GPT-4 models
-        ModelInfo {
-            id: "gpt-4".to_string(),
-            name: "GPT-4".to_string(),
-            provider: LLMProviderType::OpenAI,
-            context_window: 8192,
-            max_output_tokens: 4096,
-            supports_streaming: true,
-            supports_function_calling: true,
-            cost_per_input_token: 0.00003,  // $0.03 per 1K tokens
-            cost_per_output_token: 0.00006, // $0.06 per 1K tokens
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::CodeGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::FunctionCalling,
-                ModelCapability::ReasoningChain,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        ModelInfo {
-            id: "gpt-4-turbo".to_string(),
-            name: "GPT-4 Turbo".to_string(),
-            provider: LLMProviderType::OpenAI,
-            context_window: 128000,
-            max_output_tokens: 4096,
-            supports_streaming: true,
-            supports_function_calling: true,
-            cost_per_input_token: 0.00001,  // $0.01 per 1K tokens
-            cost_per_output_token: 0.00003, // $0.03 per 1K tokens
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::CodeGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::FunctionCalling,
-                ModelCapability::VisionInput,
-                ModelCapability::JsonMode,
-                ModelCapability::ReasoningChain,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        // GPT-3.5 models
-        ModelInfo {
-            id: "gpt-3.5-turbo".to_string(),
-            name: "GPT-3.5 Turbo".to_string(),
-            provider: LLMProviderType::OpenAI,
-            context_window: 16384,
-            max_output_tokens: 4096,
-            supports_streaming: true,
-            supports_function_calling: true,
-            cost_per_input_token: 0.000001,  // $0.001 per 1K tokens
-            cost_per_output_token: 0.000002, // $0.002 per 1K tokens
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::CodeGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::FunctionCalling,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        // o4 models (latest reasoning models)
-        ModelInfo {
-            id: "o4-mini-2025-04-16".to_string(),
-            name: "o4-mini (April 2025)".to_string(),
-            provider: LLMProviderType::OpenAI,
-            context_window: 128000,
-            max_output_tokens: 65536,
-            supports_streaming: true,
-            supports_function_calling: false, // o4 models don't support function calling yet
-            cost_per_input_token: 0.000003,  // $0.003 per 1K tokens
-            cost_per_output_token: 0.000012, // $0.012 per 1K tokens
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::CodeGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::ReasoningChain,
-            ],
-            parameter_restrictions: {
-                let mut restrictions = HashMap::new();
-                restrictions.insert(
-                    "temperature".to_string(),
-                    ParameterRestriction::Fixed(serde_json::Value::Number(serde_json::Number::from(1)))
-                );
-                restrictions.insert(
-                    "max_tokens".to_string(),
-                    ParameterRestriction::Custom("Use max_completion_tokens instead".to_string())
-                );
-                restrictions
-            },
-        },
-        ModelInfo {
-            id: "o4-2025-04-16".to_string(),
-            name: "o4 (April 2025)".to_string(),
-            provider: LLMProviderType::OpenAI,
-            context_window: 128000,
-            max_output_tokens: 65536,
-            supports_streaming: true,
-            supports_function_calling: false,
-            cost_per_input_token: 0.000015,  // $0.015 per 1K tokens
-            cost_per_output_token: 0.00006,  // $0.06 per 1K tokens
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::CodeGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::ReasoningChain,
-            ],
-            parameter_restrictions: {
-                let mut restrictions = HashMap::new();
-                restrictions.insert(
-                    "temperature".to_string(),
-                    ParameterRestriction::Fixed(serde_json::Value::Number(serde_json::Number::from(1)))
-                );
-                restrictions.insert(
-                    "max_tokens".to_string(),
-                    ParameterRestriction::Custom("Use max_completion_tokens instead".to_string())
-                );
-                restrictions
-            },
-        },
-    ]
+    let default_model =
+        std::env::var("OPENAI_DEFAULT_MODEL").unwrap_or_else(|_| "gpt-4".to_string());
+
+    // Create a single model info for the default model from environment
+    let model_info = ModelInfo {
+        id: default_model.clone(),
+        name: format!("OpenAI {}", default_model),
+        provider: LLMProviderType::OpenAI,
+        context_window: 8192,
+        max_output_tokens: 4096,
+        supports_streaming: true,
+        supports_function_calling: true,
+        cost_per_input_token: 0.00003, // Default to GPT-4 pricing
+        cost_per_output_token: 0.00006,
+        capabilities: vec![
+            ModelCapability::TextGeneration,
+            ModelCapability::CodeGeneration,
+            ModelCapability::ConversationalAI,
+            ModelCapability::FunctionCalling,
+            ModelCapability::ReasoningChain,
+        ],
+        parameter_restrictions: HashMap::new(),
+    };
+
+    vec![model_info]
 }
 
 /// Check if a model has specific parameter restrictions

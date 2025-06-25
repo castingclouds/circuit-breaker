@@ -50,6 +50,10 @@ export {
   Conversation,
   createChat,
   createConversation,
+  createSmartChat,
+  createCostOptimizedChat,
+  createFastChat,
+  createBalancedChat,
   quickChat,
   COMMON_MODELS,
 } from "./llm.js";
@@ -110,6 +114,19 @@ export {
 } from "./nats.js";
 
 // ============================================================================
+// SSE Streaming
+// ============================================================================
+
+export {
+  SSEParser,
+  responseToSSEStream,
+  SSEError,
+  SSEParseError,
+  SSEStreamError,
+} from "./sse";
+export type { SSEEvent, StreamingChunk, StreamingChoice } from "./sse";
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -158,6 +175,14 @@ export type {
   ChatMessage,
   ChatCompletionRequest,
   ChatCompletionResponse,
+  SmartCompletionRequest,
+  CircuitBreakerOptions,
+  RoutingStrategy,
+  TaskType,
+  BudgetConstraint,
+  ChatFunction,
+  ModelInfo,
+  ModelsResponse,
   Choice,
   Usage,
 } from "./types.js";

@@ -321,7 +321,7 @@ export class MCPClient {
 
     const variables = { id };
 
-    const response = await this.client.graphql<{
+    const response = await this.client.query<{
       mcpServer: MCPServer | null;
     }>(query, variables);
 
@@ -357,7 +357,7 @@ export class MCPClient {
 
     const variables = { id };
 
-    const response = await this.client.graphql<{
+    const response = await this.client.query<{
       deleteMcpServer: {
         success: boolean;
         message: string;
@@ -396,7 +396,7 @@ export class MCPClient {
       ["id", "name", "type", "config", "isEnabled"],
     );
 
-    const response = await this.client.graphql<{
+    const response = await this.client.query<{
       mcpOAuthProviders: MCPOAuthProvider[];
     }>(query);
 
@@ -418,8 +418,8 @@ export class MCPClient {
 
     const variables = { serverId };
 
-    const response = await this.client.graphql<{
-      mcpServerCapabilities: MCPServerCapabilities | null;
+    const response = await this.client.query<{
+      mcpServerCapabilities: MCPServerCapabilities;
     }>(query, variables);
 
     return response.mcpServerCapabilities;
@@ -438,7 +438,7 @@ export class MCPClient {
 
     const variables = { serverId };
 
-    const response = await this.client.graphql<{
+    const response = await this.client.query<{
       mcpServerHealth: MCPServerHealth;
     }>(query, variables);
 
@@ -462,7 +462,7 @@ export class MCPClient {
     const input = { serverId, userId };
     const variables = { input };
 
-    const response = await this.client.graphql<{
+    const response = await this.client.query<{
       initiateMcpOAuth: MCPOAuthInitiation;
     }>(query, variables);
 
@@ -493,7 +493,7 @@ export class MCPClient {
     const input = { state, code };
     const variables = { input };
 
-    const response = await this.client.graphql<{
+    const response = await this.client.query<{
       completeMcpOAuth: MCPSession;
     }>(query, variables);
 
@@ -616,7 +616,7 @@ export class MCPServersBuilder {
           pagination: this._pagination,
         };
 
-    const response = await this.client.graphql<{
+    const response = await this.client.query<{
       mcpServers?: MCPServerConnection;
       mcpServersByTenant?: MCPServerConnection;
     }>(query, variables);
@@ -706,16 +706,16 @@ export class CreateMCPServerBuilder {
     );
 
     const input: CreateMCPServerInput = {
-      name: this._name,
-      description: this._description,
-      type: this._type,
-      config: this._config || {},
-      tenantId: this._tenantId,
+      name: this._name!,
+      description: this._description || undefined,
+      type: this._type!,
+      config: this._config!,
+      tenantId: this._tenantId || undefined,
     };
 
     const variables = { input };
 
-    const response = await this.client.graphql<{
+    const response = await this.client.mutation<{
       createMcpServer: MCPServer;
     }>(query, variables);
 
@@ -794,15 +794,15 @@ export class UpdateMCPServerBuilder {
     );
 
     const input: UpdateMCPServerInput = {
-      name: this._name,
-      description: this._description,
-      status: this._status,
-      config: this._config,
+      name: this._name || undefined,
+      description: this._description || undefined,
+      status: this._status || undefined,
+      config: this._config || undefined,
     };
 
     const variables = { id: this.id, input };
 
-    const response = await this.client.graphql<{
+    const response = await this.client.mutation<{
       updateMcpServer: MCPServer;
     }>(query, variables);
 
@@ -906,17 +906,17 @@ export class ConfigureOAuthBuilder {
     );
 
     const input: ConfigureOAuthInput = {
-      serverId: this._serverId,
-      provider: this._provider,
-      clientId: this._clientId,
-      clientSecret: this._clientSecret,
-      scopes: this._scopes,
-      redirectUri: this._redirectUri,
+      serverId: this._serverId!,
+      provider: this._provider!,
+      clientId: this._clientId!,
+      clientSecret: this._clientSecret!,
+      scopes: this._scopes || [],
+      redirectUri: this._redirectUri || undefined,
     };
 
     const variables = { input };
 
-    const response = await this.client.graphql<{
+    const response = await this.client.mutation<{
       configureMcpOAuth: MCPOAuthConfig;
     }>(query, variables);
 
@@ -1002,11 +1002,11 @@ export class ConfigureJWTBuilder {
 
     const variables = { input };
 
-    const response = await this.client.graphql<{
-      configureMcpJwt: MCPJWTConfig;
+    const response = await this.client.mutation<{
+      configureMcpJWT: MCPJWTConfig;
     }>(query, variables);
 
-    return response.configureMcpJwt;
+    return response.configureMcpJWT;
   }
 }
 

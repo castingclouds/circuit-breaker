@@ -3,8 +3,8 @@
 
 use axum::{
     extract::State,
-    http::{StatusCode, HeaderMap, header},
-    response::{Response, IntoResponse},
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 
@@ -12,21 +12,18 @@ use axum::body::Body;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::{info, error, debug};
+use tracing::{debug, error, info};
 
 use super::types::{
-    ChatCompletionRequest, ChatCompletionResponse, ChatCompletionStreamResponse,
-    ChatCompletionChoice, ChatCompletionStreamChoice, ChatMessage, ChatMessageDelta,
-    ChatRole, ModelsResponse, Model, ErrorResponse, Usage,
-    EmbeddingsRequest, EmbeddingsResponse, EmbeddingObject, EmbeddingsUsage, EmbeddingsInput,
-    create_error_response, generate_completion_id, current_timestamp,
-    CircuitBreakerConfig, is_virtual_model, get_virtual_models,
+    create_error_response, current_timestamp, generate_completion_id, get_virtual_models,
+    is_virtual_model, ChatCompletionChoice, ChatCompletionRequest, ChatCompletionResponse,
+    ChatCompletionStreamChoice, ChatCompletionStreamResponse, ChatMessage, ChatMessageDelta,
+    ChatRole, CircuitBreakerConfig, EmbeddingObject, EmbeddingsInput, EmbeddingsRequest,
+    EmbeddingsResponse, EmbeddingsUsage, ErrorResponse, Model, ModelsResponse, Usage,
 };
 use crate::llm::{
-    LLMRequest, LLMProviderType, LLMRouter,
-    cost::CostOptimizer, MessageRole,
-    EmbeddingsRequest as LLMEmbeddingsRequest,
-    EmbeddingsInput as LLMEmbeddingsInput,
+    cost::CostOptimizer, EmbeddingsInput as LLMEmbeddingsInput,
+    EmbeddingsRequest as LLMEmbeddingsRequest, LLMProviderType, LLMRequest, LLMRouter, MessageRole,
 };
 
 /// Shared application state for the OpenAI API
@@ -74,18 +71,21 @@ impl OpenAIApiState {
         // Create LLM router (async constructor)
         let llm_router = Arc::new(
             futures::executor::block_on(LLMRouter::new_for_testing())
-                .unwrap_or_else(|_| panic!("Failed to create LLM router"))
+                .unwrap_or_else(|_| panic!("Failed to create LLM router")),
         );
-        
+
         // Create cost optimizer with default dependencies
         let usage_tracker = Arc::new(crate::llm::cost::InMemoryUsageTracker::new());
         let budget_manager = Arc::new(crate::llm::cost::BudgetManager::new(usage_tracker));
         let cost_analyzer = Arc::new(crate::llm::cost::CostAnalyzer::new());
-        let cost_optimizer = Arc::new(RwLock::new(CostOptimizer::new(budget_manager, cost_analyzer)));
+        let cost_optimizer = Arc::new(RwLock::new(CostOptimizer::new(
+            budget_manager,
+            cost_analyzer,
+        )));
         let api_keys = Arc::new(RwLock::new(HashMap::new()));
-        
-        // Initialize with default models only
-        let models = Arc::new(RwLock::new(Self::default_models()));
+
+        // Initialize with empty models - will be populated by refresh_models()
+        let models = Arc::new(RwLock::new(Vec::new()));
 
         Self {
             llm_router,
@@ -96,61 +96,8 @@ impl OpenAIApiState {
     }
 
     fn default_models() -> Vec<ModelConfig> {
-        let mut models = vec![
-            // Real provider models
-            ModelConfig {
-                id: "claude-3-haiku-20240307".to_string(),
-                provider: LLMProviderType::Anthropic,
-                display_name: "Claude 3 Haiku".to_string(),
-                context_window: 200000,
-                max_output_tokens: 4096,
-                supports_streaming: true,
-                cost_per_input_token: 0.00000025,
-                cost_per_output_token: 0.00000125,
-            },
-            ModelConfig {
-                id: "claude-3-sonnet-20240229".to_string(),
-                provider: LLMProviderType::Anthropic,
-                display_name: "Claude 3 Sonnet".to_string(),
-                context_window: 200000,
-                max_output_tokens: 4096,
-                supports_streaming: true,
-                cost_per_input_token: 0.000003,
-                cost_per_output_token: 0.000015,
-            },
-            ModelConfig {
-                id: "claude-sonnet-4-20250514".to_string(),
-                provider: LLMProviderType::Anthropic,
-                display_name: "Claude 4 Sonnet".to_string(),
-                context_window: 200000,
-                max_output_tokens: 8192,
-                supports_streaming: true,
-                cost_per_input_token: 0.000003,
-                cost_per_output_token: 0.000015,
-            },
-            ModelConfig {
-                id: "o4-mini-2025-04-16".to_string(),
-                provider: LLMProviderType::OpenAI,
-                display_name: "OpenAI o4 Mini".to_string(),
-                context_window: 128000,
-                max_output_tokens: 16384,
-                supports_streaming: true,
-                cost_per_input_token: 0.000001,
-                cost_per_output_token: 0.000002,
-            },
-            ModelConfig {
-                id: "gemini-2.5-flash-preview-05-20".to_string(),
-                provider: LLMProviderType::Google,
-                display_name: "Gemini 2.5 Flash Preview".to_string(),
-                context_window: 1048576,
-                max_output_tokens: 8192,
-                supports_streaming: true,
-                cost_per_input_token: 0.000000075,
-                cost_per_output_token: 0.0000003,
-            },
-        ];
-
         // Add virtual models for smart routing
+        let mut models = Vec::new();
         for virtual_model in get_virtual_models() {
             models.push(ModelConfig {
                 id: virtual_model.id,
@@ -170,10 +117,10 @@ impl OpenAIApiState {
     /// Get models from the LLM router (async)
     async fn get_models_from_router(router: &LLMRouter) -> Vec<ModelConfig> {
         let mut models = Vec::new();
-        
+
         // Get providers from router
         let providers = router.get_providers().await;
-        
+
         for provider in providers {
             for model in provider.models {
                 models.push(ModelConfig {
@@ -188,22 +135,26 @@ impl OpenAIApiState {
                 });
             }
         }
-        
+
         models
     }
 
     /// Refresh models from the router
     pub async fn refresh_models(&self) {
-        let new_models = Self::get_models_from_router(&self.llm_router).await;
+        let router_models = Self::get_models_from_router(&self.llm_router).await;
+        let virtual_models = Self::default_models(); // Only virtual models now
         let mut models = self.models.write().await;
-        
-        // Keep default models and add router models
-        *models = Self::default_models();
-        models.extend(new_models);
+
+        // Load models from router (environment-configured) and add virtual models
+        *models = router_models;
+        models.extend(virtual_models);
     }
 
     /// Extract API key from headers
-    async fn extract_api_key(&self, headers: &HeaderMap) -> Result<Option<ApiKeyInfo>, ErrorResponse> {
+    async fn extract_api_key(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<Option<ApiKeyInfo>, ErrorResponse> {
         let auth_header = headers
             .get(header::AUTHORIZATION)
             .and_then(|h| h.to_str().ok())
@@ -249,10 +200,22 @@ pub async fn list_models(
             created: current_timestamp(),
             owned_by: "circuit-breaker".to_string(),
             extra: HashMap::from([
-                ("provider".to_string(), serde_json::Value::String(config.provider.to_string())),
-                ("context_window".to_string(), serde_json::Value::Number(config.context_window.into())),
-                ("max_output_tokens".to_string(), serde_json::Value::Number(config.max_output_tokens.into())),
-                ("supports_streaming".to_string(), serde_json::Value::Bool(config.supports_streaming)),
+                (
+                    "provider".to_string(),
+                    serde_json::Value::String(config.provider.to_string()),
+                ),
+                (
+                    "context_window".to_string(),
+                    serde_json::Value::Number(config.context_window.into()),
+                ),
+                (
+                    "max_output_tokens".to_string(),
+                    serde_json::Value::Number(config.max_output_tokens.into()),
+                ),
+                (
+                    "supports_streaming".to_string(),
+                    serde_json::Value::Bool(config.supports_streaming),
+                ),
             ]),
         })
         .collect();
@@ -269,30 +232,30 @@ pub async fn chat_completions(
     headers: HeaderMap,
     Json(request): Json<ChatCompletionRequest>,
 ) -> Result<Response, ErrorResponse> {
-    debug!("Processing chat completion request for model: {}", request.model);
+    debug!(
+        "Processing chat completion request for model: {}",
+        request.model
+    );
 
     // Extract API key (optional for some deployments)
     let _api_key_info = state.extract_api_key(&headers).await?;
 
     // Extract Circuit Breaker config from request
     let cb_config = request.circuit_breaker.clone();
-    
+
     // Check if smart routing should be used
     let use_smart_routing = cb_config.is_some() || is_virtual_model(&request.model);
-    
+
     // For non-virtual models, validate they exist
     if !is_virtual_model(&request.model) {
-        let _model_config = state
-            .get_model(&request.model)
-            .await
-            .ok_or_else(|| {
-                create_error_response(
-                    format!("Model '{}' not found", request.model),
-                    "invalid_request_error".to_string(),
-                    Some("model".to_string()),
-                    None,
-                )
-            })?;
+        let _model_config = state.get_model(&request.model).await.ok_or_else(|| {
+            create_error_response(
+                format!("Model '{}' not found", request.model),
+                "invalid_request_error".to_string(),
+                Some("model".to_string()),
+                None,
+            )
+        })?;
     }
 
     // Convert to internal request format
@@ -353,14 +316,18 @@ async fn handle_regular_completion(
             index: 0,
             message: ChatMessage {
                 role: ChatRole::Assistant,
-                content: response.choices.first()
+                content: response
+                    .choices
+                    .first()
                     .map(|c| c.message.content.clone())
                     .unwrap_or_default(),
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
-            finish_reason: response.choices.first()
+            finish_reason: response
+                .choices
+                .first()
                 .and_then(|c| c.finish_reason.clone()),
             logprobs: None,
         }],
@@ -375,7 +342,8 @@ async fn handle_regular_completion(
     // Track costs
     {
         let _cost_optimizer = state.cost_optimizer.write().await;
-        let estimated_cost = (response.usage.prompt_tokens as f64 * model_config.cost_per_input_token)
+        let estimated_cost = (response.usage.prompt_tokens as f64
+            * model_config.cost_per_input_token)
             + (response.usage.completion_tokens as f64 * model_config.cost_per_output_token);
 
         debug!("Estimated cost: ${:.4}", estimated_cost);
@@ -392,7 +360,7 @@ async fn handle_streaming_completion(
     llm_request: LLMRequest,
 ) -> Result<Response, ErrorResponse> {
     use futures::StreamExt;
-    
+
     debug!("Starting streaming completion for model: {}", request.model);
 
     // Get the LLM router stream
@@ -413,7 +381,7 @@ async fn handle_streaming_completion(
 
     // Create manual SSE response with proper headers
     let (mut sender, body) = Body::channel();
-    
+
     tokio::spawn(async move {
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
@@ -424,8 +392,10 @@ async fn handle_streaming_completion(
                         created: streaming_chunk.created,
                         model: streaming_chunk.model.clone(),
                         system_fingerprint: None,
-                        choices: streaming_chunk.choices.into_iter().map(|choice| {
-                            ChatCompletionStreamChoice {
+                        choices: streaming_chunk
+                            .choices
+                            .into_iter()
+                            .map(|choice| ChatCompletionStreamChoice {
                                 index: choice.index,
                                 delta: ChatMessageDelta {
                                     role: Some(match choice.delta.role {
@@ -434,19 +404,19 @@ async fn handle_streaming_completion(
                                         MessageRole::System => ChatRole::System,
                                         MessageRole::Function => ChatRole::Assistant,
                                     }),
-                                    content: if choice.delta.content.is_empty() { 
-                                        None 
-                                    } else { 
-                                        Some(choice.delta.content) 
+                                    content: if choice.delta.content.is_empty() {
+                                        None
+                                    } else {
+                                        Some(choice.delta.content)
                                     },
                                     tool_calls: None,
                                 },
                                 logprobs: None,
                                 finish_reason: choice.finish_reason,
-                            }
-                        }).collect(),
+                            })
+                            .collect(),
                     };
-                    
+
                     if let Ok(json_str) = serde_json::to_string(&sse_data) {
                         let sse_line = format!("data: {}\n\n", json_str);
                         if sender.send_data(sse_line.into()).await.is_err() {
@@ -455,13 +425,16 @@ async fn handle_streaming_completion(
                     }
                 }
                 Err(e) => {
-                    let error_data = format!("data: {{\"error\": \"{}\", \"type\": \"stream_error\"}}\n\n", e);
+                    let error_data = format!(
+                        "data: {{\"error\": \"{}\", \"type\": \"stream_error\"}}\n\n",
+                        e
+                    );
                     let _ = sender.send_data(error_data.into()).await;
                     break;
                 }
             }
         }
-        
+
         // Send final done message
         let _ = sender.send_data("data: [DONE]\n\n".into()).await;
     });
@@ -483,7 +456,7 @@ async fn handle_streaming_completion(
                 None,
             )
         })?;
-        
+
     Ok(response.into_response())
 }
 
@@ -495,12 +468,17 @@ async fn handle_smart_streaming_completion(
     llm_request: LLMRequest,
 ) -> Result<Response, ErrorResponse> {
     use futures::StreamExt;
-    
-    debug!("Starting smart streaming completion for model: {}", request.model);
+
+    debug!(
+        "Starting smart streaming completion for model: {}",
+        request.model
+    );
 
     // Get the LLM router stream with smart routing
     let router = &state.llm_router;
-    let stream_result = router.smart_chat_completion_stream(llm_request, cb_config).await;
+    let stream_result = router
+        .smart_chat_completion_stream(llm_request, cb_config)
+        .await;
 
     let mut stream = match stream_result {
         Ok(stream) => stream,
@@ -516,7 +494,7 @@ async fn handle_smart_streaming_completion(
 
     // Create manual SSE response
     let (mut sender, body) = Body::channel();
-    
+
     tokio::spawn(async move {
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
@@ -527,8 +505,10 @@ async fn handle_smart_streaming_completion(
                         created: streaming_chunk.created,
                         model: streaming_chunk.model.clone(),
                         system_fingerprint: None,
-                        choices: streaming_chunk.choices.into_iter().map(|choice| {
-                            ChatCompletionStreamChoice {
+                        choices: streaming_chunk
+                            .choices
+                            .into_iter()
+                            .map(|choice| ChatCompletionStreamChoice {
                                 index: choice.index,
                                 delta: ChatMessageDelta {
                                     role: Some(match choice.delta.role {
@@ -537,19 +517,19 @@ async fn handle_smart_streaming_completion(
                                         MessageRole::System => ChatRole::System,
                                         MessageRole::Function => ChatRole::Assistant,
                                     }),
-                                    content: if choice.delta.content.is_empty() { 
-                                        None 
-                                    } else { 
-                                        Some(choice.delta.content) 
+                                    content: if choice.delta.content.is_empty() {
+                                        None
+                                    } else {
+                                        Some(choice.delta.content)
                                     },
                                     tool_calls: None,
                                 },
                                 logprobs: None,
                                 finish_reason: choice.finish_reason,
-                            }
-                        }).collect(),
+                            })
+                            .collect(),
                     };
-                    
+
                     if let Ok(json_str) = serde_json::to_string(&sse_data) {
                         let sse_line = format!("data: {}\n\n", json_str);
                         if sender.send_data(sse_line.into()).await.is_err() {
@@ -558,13 +538,16 @@ async fn handle_smart_streaming_completion(
                     }
                 }
                 Err(e) => {
-                    let error_data = format!("data: {{\"error\": \"{}\", \"type\": \"stream_error\"}}\n\n", e);
+                    let error_data = format!(
+                        "data: {{\"error\": \"{}\", \"type\": \"stream_error\"}}\n\n",
+                        e
+                    );
                     let _ = sender.send_data(error_data.into()).await;
                     break;
                 }
             }
         }
-        
+
         // Send final done message
         let _ = sender.send_data("data: [DONE]\n\n".into()).await;
     });
@@ -575,7 +558,7 @@ async fn handle_smart_streaming_completion(
         .header("Connection", "keep-alive")
         .body(body)
         .unwrap();
-        
+
     Ok(response.into_response())
 }
 
@@ -586,17 +569,14 @@ pub async fn get_model(
 ) -> Result<Json<Model>, ErrorResponse> {
     debug!("Getting model information for: {}", model_id);
 
-    let model_config = state
-        .get_model(&model_id)
-        .await
-        .ok_or_else(|| {
-            create_error_response(
-                format!("Model '{}' not found", model_id),
-                "invalid_request_error".to_string(),
-                Some("model".to_string()),
-                None,
-            )
-        })?;
+    let model_config = state.get_model(&model_id).await.ok_or_else(|| {
+        create_error_response(
+            format!("Model '{}' not found", model_id),
+            "invalid_request_error".to_string(),
+            Some("model".to_string()),
+            None,
+        )
+    })?;
 
     let model = Model {
         id: model_config.id.clone(),
@@ -604,12 +584,36 @@ pub async fn get_model(
         created: current_timestamp(),
         owned_by: "circuit-breaker".to_string(),
         extra: HashMap::from([
-            ("provider".to_string(), serde_json::Value::String(model_config.provider.to_string())),
-            ("context_window".to_string(), serde_json::Value::Number(model_config.context_window.into())),
-            ("max_output_tokens".to_string(), serde_json::Value::Number(model_config.max_output_tokens.into())),
-            ("supports_streaming".to_string(), serde_json::Value::Bool(model_config.supports_streaming)),
-            ("cost_per_input_token".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(model_config.cost_per_input_token).unwrap_or_else(|| serde_json::Number::from(0)))),
-            ("cost_per_output_token".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(model_config.cost_per_output_token).unwrap_or_else(|| serde_json::Number::from(0)))),
+            (
+                "provider".to_string(),
+                serde_json::Value::String(model_config.provider.to_string()),
+            ),
+            (
+                "context_window".to_string(),
+                serde_json::Value::Number(model_config.context_window.into()),
+            ),
+            (
+                "max_output_tokens".to_string(),
+                serde_json::Value::Number(model_config.max_output_tokens.into()),
+            ),
+            (
+                "supports_streaming".to_string(),
+                serde_json::Value::Bool(model_config.supports_streaming),
+            ),
+            (
+                "cost_per_input_token".to_string(),
+                serde_json::Value::Number(
+                    serde_json::Number::from_f64(model_config.cost_per_input_token)
+                        .unwrap_or_else(|| serde_json::Number::from(0)),
+                ),
+            ),
+            (
+                "cost_per_output_token".to_string(),
+                serde_json::Value::Number(
+                    serde_json::Number::from_f64(model_config.cost_per_output_token)
+                        .unwrap_or_else(|| serde_json::Number::from(0)),
+                ),
+            ),
         ]),
     };
 
@@ -623,7 +627,10 @@ async fn handle_smart_regular_completion(
     cb_config: Option<CircuitBreakerConfig>,
     llm_request: LLMRequest,
 ) -> Result<Response, ErrorResponse> {
-    info!("Processing smart regular completion for model: {}", request.model);
+    info!(
+        "Processing smart regular completion for model: {}",
+        request.model
+    );
 
     // Use smart routing
     let response = state
@@ -653,14 +660,18 @@ async fn handle_smart_regular_completion(
             index: 0,
             message: ChatMessage {
                 role: ChatRole::Assistant,
-                content: response.choices.first()
+                content: response
+                    .choices
+                    .first()
                     .map(|c| c.message.content.clone())
                     .unwrap_or_default(),
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
-            finish_reason: response.choices.first()
+            finish_reason: response
+                .choices
+                .first()
                 .and_then(|c| c.finish_reason.clone()),
             logprobs: None,
         }],
@@ -676,14 +687,16 @@ async fn handle_smart_regular_completion(
     if let Some(config) = cb_config {
         // Add smart routing metadata to the response
         debug!("Smart routing used strategy: {:?}", config.routing_strategy);
-        debug!("Selected provider: {}", response.routing_info.selected_provider);
+        debug!(
+            "Selected provider: {}",
+            response.routing_info.selected_provider
+        );
     }
 
     Ok(Json(openai_response).into_response())
 }
 
 /// Handle smart routing for streaming completion (temporarily disabled for compilation)
-
 
 /// Error handler for invalid routes
 /// Handle embeddings requests
@@ -711,13 +724,16 @@ pub async fn embeddings(
     match state.llm_router.embeddings(&llm_request, "").await {
         Ok(llm_response) => {
             // Convert LLM response to OpenAI format
-            let data = llm_response.data.into_iter().enumerate().map(|(index, embedding)| {
-                EmbeddingObject {
+            let data = llm_response
+                .data
+                .into_iter()
+                .enumerate()
+                .map(|(index, embedding)| EmbeddingObject {
                     object: "embedding".to_string(),
                     embedding: embedding.embedding.into_iter().map(|x| x as f32).collect(),
                     index: index as u32,
-                }
-            }).collect();
+                })
+                .collect();
 
             let response = EmbeddingsResponse {
                 object: "list".to_string(),
@@ -730,17 +746,18 @@ pub async fn embeddings(
             };
 
             Ok(Json(response))
-        },
+        }
         Err(e) => {
             let error_message = e.to_string();
-            
+
             // Check if this is an embeddings disabled error
-            if error_message.contains("Embeddings API is disabled") || 
-               error_message.contains("Embedding API disabled") ||
-               error_message.contains("embeddings disabled") {
+            if error_message.contains("Embeddings API is disabled")
+                || error_message.contains("Embedding API disabled")
+                || error_message.contains("embeddings disabled")
+            {
                 info!("📋 Embeddings request for model '{}' - embeddings are disabled on the provider (this is normal)", request.model);
                 debug!("Embeddings disabled details: {}", error_message);
-                
+
                 Err(ErrorResponse {
                     error: super::types::ErrorDetail {
                         message: format!("Embeddings are not available for model '{}'. The provider has embeddings disabled, which is a common configuration for chat-focused deployments.", request.model),
@@ -805,11 +822,13 @@ mod tests {
     #[tokio::test]
     async fn test_model_config_creation() {
         let models = OpenAIApiState::default_models();
-        assert!(!models.is_empty());
-        assert!(models.iter().any(|m| m.id == "o4-mini-2025-04-16"));
-        assert!(models.iter().any(|m| m.id == "claude-3-haiku-20240307"));
-        assert!(models.iter().any(|m| m.id == "claude-sonnet-4-20250514"));
-        assert!(models.iter().any(|m| m.id == "gemini-2.5-flash-preview-05-20"));
+        // Should only contain virtual models now
+        assert!(models
+            .iter()
+            .all(|m| matches!(m.provider, LLMProviderType::Custom(_))));
+        // Check for virtual models
+        assert!(models.iter().any(|m| m.id == "auto"));
+        assert!(models.iter().any(|m| m.id.starts_with("cb:")));
     }
 
     #[test]

@@ -317,65 +317,6 @@ pub struct ExecutionResult {
 }
 
 // ============================================================================
-// LLM Types
-// ============================================================================
-
-/// LLM request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LLMRequest {
-    pub model: String,
-    pub messages: Vec<ChatMessage>,
-    pub temperature: Option<f32>,
-    pub max_tokens: Option<u32>,
-    pub stream: Option<bool>,
-}
-
-/// LLM response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LLMResponse {
-    pub id: String,
-    pub model: String,
-    pub choices: Vec<ChatChoice>,
-    pub usage: Option<TokenUsage>,
-}
-
-/// Chat message
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatMessage {
-    pub role: ChatRole,
-    pub content: String,
-    pub name: Option<String>,
-}
-
-/// Chat message roles
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ChatRole {
-    #[serde(rename = "system")]
-    System,
-    #[serde(rename = "user")]
-    User,
-    #[serde(rename = "assistant")]
-    Assistant,
-}
-
-/// Chat completion choice
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatChoice {
-    pub index: u32,
-    pub message: ChatMessage,
-    pub finish_reason: Option<String>,
-}
-
-/// Token usage information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenUsage {
-    #[serde(rename = "promptTokens")]
-    pub prompt_tokens: u32,
-    #[serde(rename = "completionTokens")]
-    pub completion_tokens: u32,
-    #[serde(rename = "totalTokens")]
-    pub total_tokens: u32,
-}
 
 // ============================================================================
 // Pagination Types

@@ -297,6 +297,85 @@ const chat = createChat('gpt-4')
 const response = await chat.execute(llmClient);
 ```
 
+### SSE Streaming
+
+The SDK provides comprehensive Server-Sent Events (SSE) streaming for real-time LLM interactions:
+
+```typescript
+import { 
+  SSEParser, 
+  responseToSSEStream, 
+  parseProviderEvent, 
+  Anthropic, 
+  OpenAI, 
+  Google 
+} from 'circuit-breaker-sdk';
+
+// Real-time streaming chat completion
+await llmClient.streamChatCompletion(
+  {
+    model: 'claude-3-haiku-20240307',
+    messages: [{ role: 'user', content: 'Write a poem about AI' }],
+    temperature: 0.7,
+    stream: true
+  },
+  (chunk) => {
+    // Handle each streaming chunk
+    const content = chunk.choices[0]?.delta?.content;
+    if (content) {
+      process.stdout.write(content);
+    }
+    
+    if (chunk.choices[0]?.finish_reason) {
+      console.log('\n✅ Stream completed');
+    }
+  },
+  (error) => {
+    console.error('Streaming error:', error);
+  }
+);
+```
+
+#### Manual SSE Parsing
+
+```typescript
+// Parse SSE events manually
+const parser = new SSEParser();
+const events = parser.parseChunk('data: {"text": "hello"}\n\n');
+
+// Convert HTTP response to SSE stream
+const response = await fetch('/api/stream');
+for await (const event of responseToSSEStream(response)) {
+  console.log('SSE Event:', event.data);
+}
+
+// Provider-specific parsing
+const anthropicChunk = Anthropic.eventToChunk(event, 'req-123', 'claude-3');
+const openaiChunk = OpenAI.eventToChunk(event, 'req-123', 'gpt-4');
+const googleChunk = Google.eventToChunk(event, 'req-123', 'gemini-pro');
+
+// Auto-detect provider format
+const chunk = parseProviderEvent(event, 'req-123', 'model-name');
+```
+
+#### SSE Error Handling
+
+```typescript
+import { SSEError, SSEParseError, SSEStreamError } from 'circuit-breaker-sdk';
+
+try {
+  // SSE operations
+} catch (error) {
+  if (error instanceof SSEStreamError) {
+    console.log('Stream error:', error.statusCode, error.message);
+  } else if (error instanceof SSEParseError) {
+    console.log('Parse error:', error.rawData);
+  } else if (error instanceof SSEError) {
+    console.log('SSE error:', error.provider, error.message);
+  }
+}
+```
+
 ### Conversations
 
 ```typescript

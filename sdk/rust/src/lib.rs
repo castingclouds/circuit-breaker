@@ -58,7 +58,11 @@ pub use types::*;
 pub use agents::{Agent, AgentBuilder};
 pub use analytics::{AnalyticsClient, BudgetStatus, CostAnalytics};
 pub use functions::{Function, FunctionBuilder, FunctionExecution};
-pub use llm::{ChatBuilder, LLMClient, COMMON_MODELS};
+pub use llm::{
+    BudgetConstraint, ChatBuilder, ChatCompletionRequest, ChatCompletionResponse, ChatMessage,
+    ChatRole, CircuitBreakerOptions, LLMClient, RoutingStrategy, SmartCompletionRequest, TaskType,
+    COMMON_MODELS,
+};
 pub use mcp::{MCPClient, MCPServer, MCPServerStatus, MCPServerType};
 pub use nats::{HistoryEvent, NATSClient, NATSResource};
 pub use resources::{Resource, ResourceBuilder};
@@ -69,9 +73,14 @@ pub use workflows::{Workflow, WorkflowBuilder, WorkflowExecution};
 // Re-export convenience builders
 pub use agents::create_agent;
 pub use analytics::{budget_status, cost_analytics, set_budget};
-pub use llm::create_chat;
+pub use llm::{
+    create_balanced_chat, create_chat, create_cost_optimized_chat, create_fast_chat,
+    create_smart_chat,
+};
 pub use mcp::{create_mcp_server, list_mcp_servers};
-pub use nats::{create_workflow_instance, execute_activity_with_nats};
+pub use nats::{
+    create_workflow_instance, execute_activity_with_nats, get_nats_resource, get_resources_in_state,
+};
 pub use resources::create_resource;
 pub use subscriptions::{subscribe_resource_updates, subscribe_workflow_events};
 pub use workflows::create_workflow;
@@ -114,6 +123,12 @@ pub enum Error {
 
     #[error("Rate limit exceeded: {message}")]
     RateLimit { message: String },
+
+    #[error("LLM error: {message}")]
+    LLM { message: String },
+
+    #[error("Stream error: {message}")]
+    Stream { message: String },
 }
 
 impl From<reqwest::Error> for Error {

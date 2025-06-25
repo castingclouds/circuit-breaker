@@ -290,17 +290,134 @@ impl LLMRouter {
         }
     }
 
-    /// Resolve virtual model name to actual model name
+    /// Resolve virtual model name to actual model name using smart routing
     pub fn resolve_virtual_model(&self, model: &str) -> String {
-        match model {
-            "auto" => "claude-3-haiku-20240307".to_string(), // Default to fast, cost-effective model
-            "cb:smart-chat" => "claude-3-sonnet-20240229".to_string(), // Balanced model for chat
-            "cb:cost-optimal" => "claude-3-haiku-20240307".to_string(), // Cheapest option
-            "cb:fastest" => "o4-mini-2025-04-16".to_string(), // Fastest response
-            "cb:coding" => "claude-3-5-sonnet-20240620".to_string(), // Best for coding
-            "cb:analysis" => "claude-3-5-sonnet-20240620".to_string(), // Best for analysis
-            "cb:creative" => "claude-3-opus-20240229".to_string(), // Most creative
-            _ => model.to_string(),                          // Return as-is if not a virtual model
+        // Check if this is a virtual model
+        if !crate::api::types::is_virtual_model(model) {
+            return model.to_string();
+        }
+
+        use tracing::{debug, info};
+        debug!("Resolving virtual model: {}", model);
+
+        // Get virtual model definition
+        let virtual_models = crate::api::types::get_virtual_models();
+        let virtual_model_def = virtual_models.iter().find(|vm| vm.id == model);
+
+        if virtual_model_def.is_none() {
+            return model.to_string(); // Return as-is if not found
+        }
+
+        let virtual_model_def = virtual_model_def.unwrap();
+
+        // Get all available real models from providers
+        let mut available_models = Vec::new();
+        for (provider_type, client) in &self.providers {
+            let models = client.get_available_models();
+            for model_info in models {
+                // Skip virtual models, only include real provider models
+                if !crate::api::types::is_virtual_model(&model_info.id) {
+                    available_models.push((model_info, provider_type.clone()));
+                }
+            }
+        }
+
+        if available_models.is_empty() {
+            return model.to_string(); // Return original if no models available
+        }
+
+        // Apply routing strategy to select best model
+        let selected_model = match virtual_model_def.strategy {
+            crate::api::types::SmartRoutingStrategy::CostOptimized => {
+                // Select cheapest model
+                available_models
+                    .iter()
+                    .min_by(|a, b| {
+                        let cost_a = a.0.cost_per_input_token + a.0.cost_per_output_token;
+                        let cost_b = b.0.cost_per_input_token + b.0.cost_per_output_token;
+                        cost_a
+                            .partial_cmp(&cost_b)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|(model_info, _)| model_info.id.clone())
+            }
+            crate::api::types::SmartRoutingStrategy::PerformanceFirst => {
+                // Select first available model (could be enhanced with latency metrics)
+                available_models
+                    .first()
+                    .map(|(model_info, _)| model_info.id.clone())
+            }
+            crate::api::types::SmartRoutingStrategy::Balanced => {
+                // Select a good balance of cost and performance
+                // For now, just select the middle option by cost
+                let mut sorted_models = available_models.clone();
+                sorted_models.sort_by(|a, b| {
+                    let cost_a = a.0.cost_per_input_token + a.0.cost_per_output_token;
+                    let cost_b = b.0.cost_per_input_token + b.0.cost_per_output_token;
+                    cost_a
+                        .partial_cmp(&cost_b)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                let middle_idx = sorted_models.len() / 2;
+                sorted_models
+                    .get(middle_idx)
+                    .map(|(model_info, _)| model_info.id.clone())
+            }
+            crate::api::types::SmartRoutingStrategy::TaskSpecific => {
+                // For task-specific routing, just select first available for now
+                // This could be enhanced to consider model capabilities
+                available_models
+                    .first()
+                    .map(|(model_info, _)| model_info.id.clone())
+            }
+            crate::api::types::SmartRoutingStrategy::ReliabilityFirst => {
+                // For reliability, select first available (could be enhanced with uptime metrics)
+                available_models
+                    .first()
+                    .map(|(model_info, _)| model_info.id.clone())
+            }
+        };
+
+        let selected = selected_model.unwrap_or_else(|| model.to_string());
+
+        info!(
+            "Resolved virtual model '{}' to real model '{}'",
+            model, selected
+        );
+        selected
+    }
+
+    /// Smart chat completion (for API handler compatibility)
+    pub async fn smart_chat_completion(
+        &self,
+        request: LLMRequest,
+        _config: Option<crate::api::types::CircuitBreakerConfig>,
+    ) -> LLMResult<LLMResponse> {
+        // Check if this is a virtual model that needs smart routing
+        if crate::api::types::is_virtual_model(&request.model) {
+            let real_model = self.resolve_virtual_model(&request.model);
+            let mut real_request = request.clone();
+            real_request.model = real_model;
+            self.chat_completion(real_request).await
+        } else {
+            self.chat_completion(request).await
+        }
+    }
+
+    /// Smart streaming chat completion (for API handler compatibility)
+    pub async fn smart_chat_completion_stream(
+        &self,
+        request: LLMRequest,
+        _config: Option<crate::api::types::CircuitBreakerConfig>,
+    ) -> LLMResult<Box<dyn futures::Stream<Item = LLMResult<StreamingChunk>> + Send + Unpin>> {
+        // Check if this is a virtual model that needs smart routing
+        if crate::api::types::is_virtual_model(&request.model) {
+            let real_model = self.resolve_virtual_model(&request.model);
+            let mut real_request = request.clone();
+            real_request.model = real_model;
+            self.stream_chat_completion(real_request).await
+        } else {
+            self.stream_chat_completion(request).await
         }
     }
 
@@ -541,26 +658,6 @@ impl LLMRouter {
     /// Get health status for all providers (for GraphQL compatibility)
     pub async fn get_health_status(&self) -> HashMap<LLMProviderType, ProviderHealthStatus> {
         self.health_status.read().await.clone()
-    }
-
-    /// Smart chat completion (for API handler compatibility)
-    pub async fn smart_chat_completion(
-        &self,
-        request: LLMRequest,
-        _config: Option<crate::api::types::CircuitBreakerConfig>,
-    ) -> LLMResult<LLMResponse> {
-        // For now, just use regular chat completion
-        self.chat_completion(request).await
-    }
-
-    /// Smart streaming chat completion (for API handler compatibility)
-    pub async fn smart_chat_completion_stream(
-        &self,
-        request: LLMRequest,
-        _config: Option<crate::api::types::CircuitBreakerConfig>,
-    ) -> LLMResult<Box<dyn futures::Stream<Item = LLMResult<StreamingChunk>> + Send + Unpin>> {
-        // For now, just use regular streaming
-        self.stream_chat_completion(request).await
     }
 
     /// Generate embeddings using the appropriate provider

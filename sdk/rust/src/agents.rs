@@ -2,7 +2,7 @@
 //!
 //! This module provides client interfaces for creating and managing AI agents.
 
-use crate::{schema::QueryBuilder, types::*, Client, Result};
+use crate::{schema::QueryBuilder, types::*, ChatMessage, ChatRole, Client, Result};
 use serde::{Deserialize, Serialize};
 
 /// Client for agent operations
@@ -518,7 +518,7 @@ impl Agent {
         #[derive(Deserialize)]
         struct Response {
             #[serde(rename = "llmChatCompletion")]
-            llm_chat_completion: LLMResponse,
+            llm_chat_completion: crate::llm::ChatCompletionResponse,
         }
 
         // Create messages including the agent's system prompt

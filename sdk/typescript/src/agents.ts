@@ -230,7 +230,7 @@ export class AgentClient {
 
     const variables = {
       input: {
-        model: agent.llmProvider?.model || "gpt-3.5-turbo",
+        model: agent.llmConfig?.model || "gpt-3.5-turbo",
         messages: agentMessages,
         temperature: agent.llmConfig?.temperature || 0.7,
         maxTokens: agent.llmConfig?.maxTokens || 1000,

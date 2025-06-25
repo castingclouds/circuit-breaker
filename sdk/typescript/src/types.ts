@@ -300,6 +300,14 @@ export interface ChatCompletionRequest {
   temperature?: number;
   max_tokens?: number;
   stream?: boolean;
+  top_p?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  stop?: string[];
+  user?: string;
+  functions?: ChatFunction[];
+  function_call?: any;
+  circuit_breaker?: CircuitBreakerOptions;
 }
 
 export interface ChatCompletionResponse {
@@ -320,6 +328,68 @@ export interface Usage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+}
+
+export interface SmartCompletionRequest {
+  model: string;
+  messages: ChatMessage[];
+  temperature?: number;
+  max_tokens?: number;
+  stream?: boolean;
+  circuit_breaker?: CircuitBreakerOptions;
+}
+
+export interface CircuitBreakerOptions {
+  routing_strategy?: RoutingStrategy;
+  max_cost_per_1k_tokens?: number;
+  max_latency_ms?: number;
+  fallback_models?: string[];
+  task_type?: TaskType;
+  require_streaming?: boolean;
+  budget_constraint?: BudgetConstraint;
+}
+
+export type RoutingStrategy =
+  | "cost_optimized"
+  | "performance_first"
+  | "load_balanced"
+  | "failover_chain"
+  | "model_specific";
+
+export type TaskType =
+  | "general_chat"
+  | "coding"
+  | "analysis"
+  | "creative"
+  | "reasoning";
+
+export interface BudgetConstraint {
+  daily_limit?: number;
+  monthly_limit?: number;
+  per_request_limit?: number;
+}
+
+export interface ChatFunction {
+  name: string;
+  description?: string;
+  parameters: any;
+}
+
+export interface ModelInfo {
+  id: string;
+  object: string;
+  created?: number;
+  owned_by: string;
+  provider?: string;
+  context_window?: number;
+  supports_streaming?: boolean;
+  cost_per_input_token?: number;
+  cost_per_output_token?: number;
+}
+
+export interface ModelsResponse {
+  object: string;
+  data: ModelInfo[];
 }
 
 // ============================================================================

@@ -240,6 +240,16 @@ impl Client {
         &self.config.base_url
     }
 
+    /// Get the API key for the client
+    pub fn api_key(&self) -> Option<&str> {
+        self.config.api_key.as_deref()
+    }
+
+    /// Get the timeout in milliseconds
+    pub fn timeout_ms(&self) -> u64 {
+        self.config.timeout_ms
+    }
+
     /// Make a GraphQL request
     pub async fn graphql<T, V>(&self, query: &str, variables: V) -> Result<T>
     where

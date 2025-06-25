@@ -222,3 +222,4 @@ tarpaulin-report.html
 
 # vllm_env
 setup/vllm_env
+sdk/typescript/dist/

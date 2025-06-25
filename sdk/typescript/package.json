@@ -18,6 +18,8 @@
     "prepublishOnly": "npm run clean && npm run build",
     "example:basic": "npx tsx examples/basic-usage.ts",
     "example:multi-provider": "npx tsx examples/multi-provider-demo.ts",
+    "example:smart-routing": "npx tsx examples/smart-routing-demo.ts",
+    "example:sse-streaming": "npx tsx examples/sse-streaming-demo.ts",
     "examples": "npm run example:basic"
   },
   "keywords": [
