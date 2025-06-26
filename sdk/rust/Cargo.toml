@@ -9,7 +9,16 @@ repository = "https://github.com/circuit-breaker/sdk"
 homepage = "https://github.com/circuit-breaker/sdk"
 documentation = "https://docs.rs/circuit-breaker-sdk"
 readme = "README.md"
-keywords = ["workflow", "automation", "state-machine", "graphql", "ai", "llm", "docker", "functions"]
+keywords = [
+    "workflow",
+    "automation",
+    "state-machine",
+    "graphql",
+    "ai",
+    "llm",
+    "docker",
+    "functions",
+]
 categories = ["api-bindings", "development-tools", "web-programming"]
 rust-version = "1.70"
 
@@ -30,7 +39,7 @@ name = "analytics_demo"
 path = "examples/analytics_demo.rs"
 
 [[example]]
-name = "smart_router_demo"
+name = "smart_routing"
 path = "examples/smart_routing_demo.rs"
 
 [[example]]

@@ -10,7 +10,9 @@ use circuit_breaker_sdk::{
     create_smart_chat, ChatCompletionRequest, ChatMessage, ChatRole, CircuitBreakerOptions, Client,
     Result, RoutingStrategy, SmartCompletionRequest, TaskType, COMMON_MODELS,
 };
+use futures::StreamExt;
 use std::env;
+
 use tokio;
 
 #[tokio::main]
@@ -35,7 +37,10 @@ async fn main() -> Result<()> {
 
     // Test connection
     match client.ping().await {
-        Ok(ping) => println!("✅ Circuit Breaker server: {}", ping.message),
+        Ok(ping) => println!(
+            "✅ Circuit Breaker server: {} v{}",
+            ping.status, ping.version
+        ),
         Err(e) => {
             println!("❌ Failed to connect: {}", e);
             println!("   Make sure the Circuit Breaker server is running");
@@ -292,8 +297,8 @@ async fn main() -> Result<()> {
     };
 
     match llm_client.chat_completion_stream(streaming_request).await {
-        Ok(mut stream) => {
-            use futures::StreamExt;
+        Ok(stream) => {
+            let mut stream = Box::pin(stream);
 
             print!("   🌊 Streaming response: ");
             std::io::Write::flush(&mut std::io::stdout()).unwrap();
@@ -376,7 +381,7 @@ async fn main() -> Result<()> {
 
     use circuit_breaker_sdk::llm::ChatFunction;
 
-    let function_request = create_chat(COMMON_MODELS::GPT_4)
+    let function_request = create_chat(COMMON_MODELS::GEMINI_FLASH)
         .add_user_message("What's the weather like in San Francisco?")
         .add_function(ChatFunction {
             name: "get_weather".to_string(),

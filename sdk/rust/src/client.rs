@@ -103,43 +103,43 @@ impl Client {
 
     /// Test connection to the server
     pub async fn ping(&self) -> Result<PingResponse> {
-        let query = QueryBuilder::query(
-            "Ping",
-            "llmProviders",
-            &["name", "healthStatus { isHealthy }"],
-        );
+        let url = self
+            .config
+            .base_url
+            .join("v1/models")
+            .map_err(|e| Error::Configuration {
+                message: format!("Failed to construct models URL: {}", e),
+            })?;
 
-        #[derive(Deserialize)]
-        struct Response {
-            #[serde(rename = "llmProviders")]
-            llm_providers: Vec<LlmProviderHealth>,
+        println!("DEBUG: Attempting to connect to: {}", url);
+        println!("DEBUG: Base URL from config: {}", self.config.base_url);
+
+        let response = self
+            .http_client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| Error::Network {
+                message: format!("Failed to connect to models endpoint: {}", e),
+            })?;
+
+        if !response.status().is_success() {
+            return Err(Error::Server {
+                status: response.status().as_u16(),
+                message: "Models endpoint check failed".to_string(),
+            });
         }
 
-        #[derive(Deserialize)]
-        struct LlmProviderHealth {
-            name: String,
-            #[serde(rename = "healthStatus")]
-            health_status: HealthStatus,
-        }
-
-        #[derive(Deserialize)]
-        struct HealthStatus {
-            #[serde(rename = "isHealthy")]
-            is_healthy: bool,
-        }
-
-        let result: Response = self.graphql(&query, ()).await?;
-
-        let _healthy_providers = result
-            .llm_providers
-            .iter()
-            .filter(|provider| provider.health_status.is_healthy)
-            .count();
+        // Try to parse models response to verify it's working
+        let _models_response: serde_json::Value =
+            response.json().await.map_err(|e| Error::Parse {
+                message: format!("Failed to parse models response: {}", e),
+            })?;
 
         Ok(PingResponse {
             status: "ok".to_string(),
-            version: "1.0.0".to_string(), // Default version
-            uptime_seconds: 0,            // Not available from GraphQL
+            version: "0.1.0".to_string(),
+            uptime_seconds: 0,
         })
     }
 

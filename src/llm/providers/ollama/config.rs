@@ -35,8 +35,8 @@ impl Default for OllamaConfig {
     fn default() -> Self {
         Self {
             base_url: "http://localhost:11434".to_string(),
-            default_model: "qwen2.5-coder:3b".to_string(),
-            timeout_seconds: 60, // Longer timeout for local inference
+            default_model: "llama3.2:3b".to_string(), // Generic fallback, will be overridden by env
+            timeout_seconds: 60,                      // Longer timeout for local inference
             max_retries: 2,
             verify_ssl: true,
             custom_headers: HashMap::new(),
@@ -84,84 +84,112 @@ pub fn get_default_config() -> ProviderConfig {
     ProviderConfig {
         provider_type: LLMProviderType::Ollama,
         base_url: "http://localhost:11434".to_string(),
-        default_model: "qwen2.5-coder:3b".to_string(),
-        models: get_default_models(),
+        default_model: "llama3.2:3b".to_string(), // Generic fallback, will be overridden by env
+        models: Vec::new(),                       // Models will be fetched dynamically from Ollama
         settings: HashMap::new(),
         enabled: true,
         priority: 3, // Lower priority than cloud providers by default
     }
 }
 
-/// Get default Ollama models (based on commonly available models)
-/// Note: In a real implementation, these would be fetched dynamically from /api/tags
-pub fn get_default_models() -> Vec<ModelInfo> {
-    vec![
-        // User's specific models
-        ModelInfo {
-            id: "qwen2.5-coder:3b".to_string(),
-            name: "Qwen2.5 Coder 3B".to_string(),
-            provider: LLMProviderType::Ollama,
-            context_window: 32768,
-            max_output_tokens: 4096,
-            supports_streaming: true,
-            supports_function_calling: false,
-            cost_per_input_token: 0.0,
-            cost_per_output_token: 0.0,
-            capabilities: vec![
-                ModelCapability::CodeGeneration,
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::Reasoning,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        ModelInfo {
-            id: "gemma3:4b".to_string(),
-            name: "Gemma 3 4B".to_string(),
-            provider: LLMProviderType::Ollama,
-            context_window: 8192,
-            max_output_tokens: 4096,
-            supports_streaming: true,
-            supports_function_calling: false,
-            cost_per_input_token: 0.0,
-            cost_per_output_token: 0.0,
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::Reasoning,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-        ModelInfo {
-            id: "nomic-embed-text:latest".to_string(),
-            name: "Nomic Embed Text".to_string(),
-            provider: LLMProviderType::Ollama,
-            context_window: 8192,
-            max_output_tokens: 0,      // Embedding models don't generate text
-            supports_streaming: false, // Embeddings are not streamed
-            supports_function_calling: false,
-            cost_per_input_token: 0.0,
-            cost_per_output_token: 0.0,
-            capabilities: vec![ModelCapability::Embedding],
-            parameter_restrictions: HashMap::new(),
-        },
-    ]
+/// Get fallback models when Ollama is not available
+/// These are common models that might be available, but actual models should be fetched dynamically
+pub fn get_fallback_models() -> Vec<ModelInfo> {
+    // Return empty vec - models should be fetched dynamically from Ollama
+    // This is only used as a last resort when Ollama is completely unavailable
+    Vec::new()
 }
 
 /// Check if a model supports a specific capability
+/// Note: This is a heuristic based on model name patterns since models are dynamic
 pub fn model_supports_capability(model: &str, capability: &ModelCapability) -> bool {
-    let models = get_default_models();
-    models
-        .iter()
-        .find(|m| m.id == model)
-        .map(|m| m.capabilities.contains(capability))
-        .unwrap_or(false)
+    use ModelCapability::*;
+
+    match capability {
+        CodeGeneration => is_code_model(model),
+        Embedding => is_embedding_model(model),
+        TextGeneration | ConversationalAI => true, // Most models support these
+        Reasoning => is_reasoning_model(model) || is_code_model(model),
+        _ => false, // Conservative default for unknown capabilities
+    }
 }
 
 /// Get model information by ID
+/// Note: This creates a generic ModelInfo since models are fetched dynamically
 pub fn get_model_info(model: &str) -> Option<ModelInfo> {
-    let models = get_default_models();
-    models.into_iter().find(|m| m.id == model)
+    // Create a generic ModelInfo for any model name
+    // Actual capabilities should be determined by the Ollama client
+    Some(create_generic_model_info(model))
+}
+
+/// Create a generic ModelInfo for a given model name
+fn create_generic_model_info(model_id: &str) -> ModelInfo {
+    let capabilities = determine_model_capabilities_from_name(model_id);
+    let (context_window, max_output_tokens) = estimate_model_size_from_name(model_id);
+
+    ModelInfo {
+        id: model_id.to_string(),
+        name: format!("Ollama: {}", model_id),
+        provider: LLMProviderType::Ollama,
+        context_window,
+        max_output_tokens,
+        supports_streaming: true,
+        supports_function_calling: false, // Most local models don't support this yet
+        cost_per_input_token: 0.0,        // Local inference is free
+        cost_per_output_token: 0.0,
+        capabilities,
+        parameter_restrictions: HashMap::new(),
+    }
+}
+
+/// Determine model capabilities based on name patterns
+fn determine_model_capabilities_from_name(name: &str) -> Vec<crate::llm::traits::ModelCapability> {
+    use crate::llm::traits::ModelCapability;
+
+    let mut capabilities = vec![
+        ModelCapability::TextGeneration,
+        ModelCapability::ConversationalAI,
+    ];
+
+    // Code generation models
+    if name.contains("code") || name.contains("phi") || name.contains("granite") {
+        capabilities.push(ModelCapability::CodeGeneration);
+    }
+
+    // Reasoning models
+    if name.contains("llama") || name.contains("gemma") || name.contains("mistral") {
+        capabilities.push(ModelCapability::Reasoning);
+    }
+
+    // Embedding models
+    if name.contains("embed") {
+        capabilities.push(ModelCapability::Embedding);
+        // Embedding models typically don't do text generation
+        capabilities.retain(|cap| {
+            !matches!(
+                cap,
+                ModelCapability::TextGeneration | ModelCapability::ConversationalAI
+            )
+        });
+    }
+
+    capabilities
+}
+
+/// Estimate model capabilities from name patterns
+fn estimate_model_size_from_name(name: &str) -> (u32, u32) {
+    // Extract parameter size hints from model name
+    if name.contains("3b") || name.contains("3B") {
+        (8192, 4096)
+    } else if name.contains("7b") || name.contains("7B") {
+        (16384, 8192)
+    } else if name.contains("13b") || name.contains("13B") {
+        (32768, 16384)
+    } else if name.contains("70b") || name.contains("70B") {
+        (65536, 32768)
+    } else {
+        (8192, 4096) // Conservative default
+    }
 }
 
 /// Check if a model is a code-focused model
@@ -179,16 +207,17 @@ pub fn is_embedding_model(model: &str) -> bool {
     model.contains("embed") || model.contains("embedding")
 }
 
-/// Get recommended models for different use cases
-pub fn get_recommended_models() -> HashMap<&'static str, Vec<&'static str>> {
+/// Get recommended model patterns for different use cases
+/// Note: These are patterns/prefixes since actual models are dynamic
+pub fn get_recommended_model_patterns() -> HashMap<&'static str, Vec<&'static str>> {
     let mut recommendations = HashMap::new();
 
-    recommendations.insert("chat", vec!["gemma3:4b"]);
-    recommendations.insert("code", vec!["qwen2.5-coder:3b"]);
-    recommendations.insert("reasoning", vec!["gemma3:4b"]);
-    recommendations.insert("fast", vec!["qwen2.5-coder:3b", "gemma3:4b"]);
-    recommendations.insert("quality", vec!["gemma3:4b", "qwen2.5-coder:3b"]);
-    recommendations.insert("embeddings", vec!["nomic-embed-text:latest"]);
+    recommendations.insert("chat", vec!["llama", "gemma", "mistral"]);
+    recommendations.insert("code", vec!["coder", "codellama", "code", "granite"]);
+    recommendations.insert("reasoning", vec!["llama", "gemma", "mistral"]);
+    recommendations.insert("fast", vec!["gemma", "phi"]);
+    recommendations.insert("quality", vec!["llama", "mistral"]);
+    recommendations.insert("embeddings", vec!["embed", "nomic"]);
 
     recommendations
 }

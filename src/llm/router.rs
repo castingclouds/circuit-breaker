@@ -138,7 +138,8 @@ impl LLMRouter {
 
         // Check if Ollama is available by trying to connect
         if providers::ollama::check_availability(&ollama_url).await {
-            let client = providers::ollama::create_client(ollama_url.clone());
+            let client =
+                providers::ollama::create_client_from_env().map_err(|e| LLMError::Internal(e))?;
             providers.insert(
                 LLMProviderType::Ollama,
                 Box::new(client) as Box<dyn LLMProviderClient>,
@@ -364,11 +365,50 @@ impl LLMRouter {
                     .map(|(model_info, _)| model_info.id.clone())
             }
             crate::api::types::SmartRoutingStrategy::TaskSpecific => {
-                // For task-specific routing, just select first available for now
-                // This could be enhanced to consider model capabilities
-                available_models
-                    .first()
-                    .map(|(model_info, _)| model_info.id.clone())
+                // For task-specific routing, consider the task type and model capabilities
+                if let Some(task_type) = &virtual_model_def.task_type {
+                    match task_type {
+                        crate::api::types::TaskType::Coding => {
+                            // For coding tasks, prefer cloud models over Ollama
+                            // Priority: OpenAI > Anthropic > Google > Ollama
+                            let preferred_order = [
+                                crate::llm::LLMProviderType::OpenAI,
+                                crate::llm::LLMProviderType::Anthropic,
+                                crate::llm::LLMProviderType::Google,
+                                crate::llm::LLMProviderType::Ollama,
+                            ];
+
+                            // Find the first model from the preferred provider order
+                            let mut selected = None;
+                            for provider_type in &preferred_order {
+                                if let Some((model_info, _)) =
+                                    available_models.iter().find(|(_, p)| p == provider_type)
+                                {
+                                    selected = Some(model_info.id.clone());
+                                    break;
+                                }
+                            }
+
+                            // Fallback to first available if no preferred provider found
+                            selected.or_else(|| {
+                                available_models
+                                    .first()
+                                    .map(|(model_info, _)| model_info.id.clone())
+                            })
+                        }
+                        _ => {
+                            // For other task types, use first available for now
+                            available_models
+                                .first()
+                                .map(|(model_info, _)| model_info.id.clone())
+                        }
+                    }
+                } else {
+                    // No task type specified, use first available
+                    available_models
+                        .first()
+                        .map(|(model_info, _)| model_info.id.clone())
+                }
             }
             crate::api::types::SmartRoutingStrategy::ReliabilityFirst => {
                 // For reliability, select first available (could be enhanced with uptime metrics)
