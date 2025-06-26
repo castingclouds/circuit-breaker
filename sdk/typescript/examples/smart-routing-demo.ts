@@ -108,7 +108,7 @@ async function main() {
               "Explain circuit breaker pattern in software in one sentence.",
           },
         ],
-        max_tokens: 1000,
+        max_tokens: 4096,
       });
 
       const duration = Date.now() - startTime;
@@ -138,12 +138,10 @@ async function main() {
       },
     ],
     temperature: 0.7,
-    max_tokens: 1000,
     stream: false,
     circuit_breaker: {
       routing_strategy: "cost_optimized",
       max_cost_per_1k_tokens: 0.01,
-      task_type: "general",
       fallback_models: ["o4-mini-2025-04-16", "claude-sonnet-4-20250514"],
       max_latency_ms: 5000,
       require_streaming: false,
@@ -214,6 +212,7 @@ async function main() {
     const costResponse = await createCostOptimizedChat()
       .addUserMessage("Summarize the benefits of serverless computing")
       .setMaxCostPer1kTokens(0.005)
+      .setMaxTokens(4096)
       .execute(llm);
 
     const costContent =
@@ -227,6 +226,7 @@ async function main() {
   try {
     const fastResponse = await createFastChat()
       .addUserMessage("Quick: What is Docker?")
+      .setMaxTokens(4096)
       .execute(llm);
 
     const fastContent =
@@ -263,7 +263,7 @@ async function main() {
     const virtualResponse = await llm.chatCompletion({
       model: COMMON_MODELS.SMART_CREATIVE,
       messages: [{ role: "user", content: "Say 'Hello from virtual model!'" }],
-      max_tokens: 1000,
+      max_tokens: 4096,
     });
     const virtualContent =
       virtualResponse.choices[0]?.message?.content || "No response";

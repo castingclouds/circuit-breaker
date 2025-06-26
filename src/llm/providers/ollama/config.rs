@@ -35,8 +35,8 @@ impl Default for OllamaConfig {
     fn default() -> Self {
         Self {
             base_url: "http://localhost:11434".to_string(),
-            default_model: "llama3.2:3b".to_string(), // Generic fallback, will be overridden by env
-            timeout_seconds: 60,                      // Longer timeout for local inference
+            default_model: "gemma3:4b".to_string(), // Generic fallback, will be overridden by env
+            timeout_seconds: 60,                    // Longer timeout for local inference
             max_retries: 2,
             verify_ssl: true,
             custom_headers: HashMap::new(),

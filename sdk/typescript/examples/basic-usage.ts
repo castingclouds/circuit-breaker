@@ -255,7 +255,7 @@ async function main() {
         .setLLMProvider("openai")
         .setModel(COMMON_MODELS.GPT_O4_MINI)
         .setTemperature(0.7)
-        .setMaxTokens(1000)
+        .setMaxTokens(4096)
         .setSystemPrompt(
           `You are a helpful customer service agent for an e-commerce platform.
           Help customers with their orders, returns, and general inquiries.
@@ -311,7 +311,7 @@ async function main() {
             "Explain workflow automation benefits in one sentence.",
             {
               temperature: 0.3,
-              maxTokens: 1000,
+              maxTokens: 4096,
             },
           );
           const latency = Date.now() - startTime;
@@ -335,7 +335,7 @@ async function main() {
           const response = await llmClient.chat(
             model,
             "What is the capital of France?",
-            { maxTokens: 1000 },
+            { maxTokens: 4096 },
           );
           console.log(`🎯 ${name}: ${response}`);
         } catch (error) {
@@ -436,7 +436,7 @@ async function main() {
         )
         .addUserMessage("List 3 key benefits of workflow automation")
         .setTemperature(0.2)
-        .setMaxTokens(150);
+        .setMaxTokens(4096);
 
       const chatResult = await chatBuilder.execute(llmClient);
       console.log(
@@ -483,7 +483,7 @@ async function main() {
           },
         ],
         temperature: 0.5,
-        maxTokens: 1000,
+        maxTokens: 4096,
       };
 
       try {
@@ -516,7 +516,7 @@ async function main() {
           "Explain the benefits of workflow automation in 2 sentences.",
           {
             temperature: 0.3,
-            maxTokens: 1000,
+            maxTokens: 4096,
           },
         );
         console.log(`🤖 Fallback LLM response: ${response}`);
