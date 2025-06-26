@@ -17,15 +17,9 @@ pub mod COMMON_MODELS {
     pub const SMART_ANALYSIS: &str = "cb:analysis";
 
     // Direct Provider Models
-    pub const GPT_3_5_TURBO: &str = "gpt-3.5-turbo";
-    pub const GPT_4: &str = "gpt-4";
-    pub const GPT_4O_MINI: &str = "gpt-4o-mini";
-    pub const GPT_4_TURBO: &str = "gpt-4-turbo-preview";
-    pub const CLAUDE_3_HAIKU: &str = "claude-3-haiku-20240307";
-    pub const CLAUDE_3_SONNET: &str = "claude-3-sonnet-20240229";
-    pub const CLAUDE_3_OPUS: &str = "claude-3-opus-20240229";
-    pub const GEMINI_FLASH: &str = "gemini-1.5-flash";
-    pub const GEMINI_PRO: &str = "gemini-1.5-pro";
+    pub const GPT_O4_MINI: &str = "o4-mini-2025-04-16";
+    pub const CLAUDE_4_SONNET: &str = "claude-sonnet-4-20250514";
+    pub const GEMINI_FLASH: &str = "gemini-2.5-flash";
 }
 
 /// Client for LLM operations through Circuit Breaker router

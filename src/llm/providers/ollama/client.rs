@@ -4,28 +4,26 @@
 use async_trait::async_trait;
 use futures::Stream;
 use reqwest::{header::HeaderMap, header::HeaderValue, header::CONTENT_TYPE, Client};
-use tracing::{debug, error, warn};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
+use tracing::{debug, error, warn};
 
 use crate::llm::{
-    LLMError, LLMRequest, LLMResponse, LLMResult, StreamingChunk,
-    Choice, LLMProviderType, RoutingInfo, RoutingStrategy, TokenUsage,
-    EmbeddingsRequest, EmbeddingsResponse, EmbeddingsInput, EmbeddingData, EmbeddingsUsage
+    Choice, EmbeddingData, EmbeddingsInput, EmbeddingsRequest, EmbeddingsResponse, EmbeddingsUsage,
+    LLMError, LLMProviderType, LLMRequest, LLMResponse, LLMResult, RoutingInfo, RoutingStrategy,
+    StreamingChunk, TokenUsage,
 };
 
-use crate::llm::traits::{
-    LLMProviderClient, ModelInfo, ProviderConfigRequirements
-};
+use crate::llm::traits::{LLMProviderClient, ModelInfo, ProviderConfigRequirements};
 
+use super::config::{get_config_requirements, get_fallback_models, OllamaConfig};
 use super::types::{
-    OllamaRequest, OllamaResponse, OllamaChatMessage, OllamaError,
-    OllamaStreamingChunk, OllamaOptions, OllamaModelsResponse, OllamaModelInfo,
-    OllamaEmbeddingsRequest, OllamaEmbeddingsResponse
+    OllamaChatMessage, OllamaEmbeddingsRequest, OllamaEmbeddingsResponse, OllamaError,
+    OllamaModelInfo, OllamaModelsResponse, OllamaOptions, OllamaRequest, OllamaResponse,
+    OllamaStreamingChunk,
 };
-use super::config::{OllamaConfig, get_config_requirements, get_default_models, get_model_info};
 
 /// Ollama provider client
 pub struct OllamaClient {
@@ -47,14 +45,18 @@ impl OllamaClient {
 
     /// Get available models with async support (preferred method)
     pub async fn get_available_models_async(&self) -> Vec<ModelInfo> {
-        match self.fetch_available_models().await {
+        match self.fetch_available_models_from_openai_api().await {
             Ok(models) => {
-                debug!("Fetched {} models from Ollama", models.len());
+                debug!("Fetched {} models from Ollama OpenAI API", models.len());
                 models
-            },
+            }
             Err(e) => {
-                warn!("Failed to fetch models from Ollama, falling back to defaults: {}", e);
-                get_default_models()
+                warn!(
+                    "Failed to fetch models from Ollama OpenAI API, using configured default: {}",
+                    e
+                );
+                // Return just the configured default model as a fallback
+                vec![self.create_model_info_for_configured_default()]
             }
         }
     }
@@ -78,7 +80,7 @@ impl OllamaClient {
             headers.insert(
                 header_name,
                 HeaderValue::from_str(value)
-                    .map_err(|e| LLMError::Internal(format!("Invalid header value: {}", e)))?
+                    .map_err(|e| LLMError::Internal(format!("Invalid header value: {}", e)))?,
             );
         }
 
@@ -87,9 +89,8 @@ impl OllamaClient {
 
     /// Convert our internal request format to Ollama's format
     fn convert_request(&self, request: &LLMRequest) -> LLMResult<OllamaRequest> {
-        let messages: Vec<OllamaChatMessage> = request.messages.iter()
-            .map(|msg| msg.into())
-            .collect();
+        let messages: Vec<OllamaChatMessage> =
+            request.messages.iter().map(|msg| msg.into()).collect();
 
         // Convert parameters to Ollama options
         let mut options = OllamaOptions {
@@ -123,18 +124,28 @@ impl OllamaClient {
     }
 
     /// Convert Ollama response to our internal format
-    fn convert_response(&self, ollama_response: OllamaResponse, request_id: &str, start_time: Instant) -> LLMResult<LLMResponse> {
+    fn convert_response(
+        &self,
+        ollama_response: OllamaResponse,
+        request_id: &str,
+        start_time: Instant,
+    ) -> LLMResult<LLMResponse> {
         let choice = Choice {
             index: 0,
             message: ollama_response.message.into(),
-            finish_reason: if ollama_response.done { Some("stop".to_string()) } else { None },
+            finish_reason: if ollama_response.done {
+                Some("stop".to_string())
+            } else {
+                None
+            },
         };
 
         // Calculate token usage from Ollama metrics
         let usage = TokenUsage {
             prompt_tokens: ollama_response.prompt_eval_count.unwrap_or(0),
             completion_tokens: ollama_response.eval_count.unwrap_or(0),
-            total_tokens: ollama_response.prompt_eval_count.unwrap_or(0) + ollama_response.eval_count.unwrap_or(0),
+            total_tokens: ollama_response.prompt_eval_count.unwrap_or(0)
+                + ollama_response.eval_count.unwrap_or(0),
             estimated_cost: 0.0, // Local inference is free
         };
 
@@ -146,7 +157,10 @@ impl OllamaClient {
             fallback_used: false,
             provider_used: LLMProviderType::Ollama,
             total_latency_ms: start_time.elapsed().as_millis() as u64,
-            provider_latency_ms: ollama_response.total_duration.map(|d| d / 1_000_000).unwrap_or(0), // Convert nanoseconds to milliseconds
+            provider_latency_ms: ollama_response
+                .total_duration
+                .map(|d| d / 1_000_000)
+                .unwrap_or(0), // Convert nanoseconds to milliseconds
         };
 
         Ok(LLMResponse {
@@ -161,14 +175,15 @@ impl OllamaClient {
         })
     }
 
-    /// Fetch available models from Ollama
-    pub async fn fetch_available_models(&self) -> LLMResult<Vec<ModelInfo>> {
-        let url = format!("{}/api/tags", self.config.base_url);
-        let headers = self.build_headers("")?;
+    /// Fetch available models from Ollama's OpenAI-compatible API
+    async fn fetch_available_models_from_openai_api(&self) -> LLMResult<Vec<ModelInfo>> {
+        let headers = self.build_headers("")?; // Ollama typically doesn't require auth
+        let url = format!("{}/v1/models", self.config.base_url);
 
-        debug!("Fetching available models from: {}", url);
+        debug!("Fetching available models from OpenAI API: {}", url);
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .headers(headers)
             .send()
@@ -178,14 +193,67 @@ impl OllamaClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            return Err(LLMError::Provider(format!("Model fetch failed with status {}: {}", status, error_text)));
+            return Err(LLMError::Provider(format!(
+                "Model fetch failed with status {}: {}",
+                status, error_text
+            )));
         }
 
-        let models_response: OllamaModelsResponse = response.json().await
+        let models_response: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| LLMError::Parse(format!("Failed to parse models response: {}", e)))?;
+
+        // Parse OpenAI-compatible models response
+        let models = models_response
+            .get("data")
+            .and_then(|data| data.as_array())
+            .ok_or_else(|| LLMError::Parse("Invalid models response format".to_string()))?;
+
+        let model_infos = models
+            .iter()
+            .filter_map(|model| {
+                let id = model.get("id")?.as_str()?;
+                Some(self.create_model_info_from_id(id))
+            })
+            .collect();
+
+        Ok(model_infos)
+    }
+
+    /// Fallback: Fetch available models from Ollama's native API
+    async fn fetch_available_models(&self) -> LLMResult<Vec<ModelInfo>> {
+        let headers = self.build_headers("")?; // Ollama typically doesn't require auth
+        let url = format!("{}/api/tags", self.config.base_url);
+
+        debug!("Fetching available models from native API: {}", url);
+
+        let response = self
+            .client
+            .get(&url)
+            .headers(headers)
+            .send()
+            .await
+            .map_err(|e| LLMError::Network(format!("Failed to fetch models: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(LLMError::Provider(format!(
+                "Model fetch failed with status {}: {}",
+                status, error_text
+            )));
+        }
+
+        let models_response: OllamaModelsResponse = response
+            .json()
+            .await
             .map_err(|e| LLMError::Parse(format!("Failed to parse models response: {}", e)))?;
 
         // Convert Ollama model info to our ModelInfo format
-        let model_infos = models_response.models.into_iter()
+        let model_infos = models_response
+            .models
+            .into_iter()
             .map(|model| convert_ollama_model_to_info(model))
             .collect();
 
@@ -198,14 +266,18 @@ impl LLMProviderClient for OllamaClient {
     async fn chat_completion(&self, request: &LLMRequest, api_key: &str) -> LLMResult<LLMResponse> {
         let start_time = Instant::now();
         let request_id = uuid::Uuid::new_v4().to_string();
-        
-        debug!("Starting Ollama chat completion for model: {}", request.model);
+
+        debug!(
+            "Starting Ollama chat completion for model: {}",
+            request.model
+        );
 
         let ollama_request = self.convert_request(request)?;
         let url = format!("{}/api/chat", self.config.base_url);
         let headers = self.build_headers(api_key)?;
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .headers(headers)
             .json(&ollama_request)
@@ -216,16 +288,21 @@ impl LLMProviderClient for OllamaClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            
+
             // Try to parse as Ollama error
             if let Ok(ollama_error) = serde_json::from_str::<OllamaError>(&error_text) {
                 return Err(LLMError::Provider(ollama_error.error));
             }
-            
-            return Err(LLMError::Provider(format!("Request failed with status {}: {}", status, error_text)));
+
+            return Err(LLMError::Provider(format!(
+                "Request failed with status {}: {}",
+                status, error_text
+            )));
         }
 
-        let ollama_response: OllamaResponse = response.json().await
+        let ollama_response: OllamaResponse = response
+            .json()
+            .await
             .map_err(|e| LLMError::Parse(format!("Failed to parse response: {}", e)))?;
 
         self.convert_response(ollama_response, &request_id, start_time)
@@ -236,7 +313,10 @@ impl LLMProviderClient for OllamaClient {
         request: LLMRequest,
         api_key: String,
     ) -> LLMResult<Box<dyn Stream<Item = LLMResult<StreamingChunk>> + Send + Unpin>> {
-        debug!("Starting Ollama streaming chat completion for model: {}", request.model);
+        debug!(
+            "Starting Ollama streaming chat completion for model: {}",
+            request.model
+        );
 
         let mut ollama_request = self.convert_request(&request)?;
         ollama_request.stream = Some(true);
@@ -244,7 +324,8 @@ impl LLMProviderClient for OllamaClient {
         let url = format!("{}/api/chat", self.config.base_url);
         let headers = self.build_headers(&api_key)?;
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .headers(headers)
             .json(&ollama_request)
@@ -255,7 +336,10 @@ impl LLMProviderClient for OllamaClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            return Err(LLMError::Provider(format!("Stream request failed with status {}: {}", status, error_text)));
+            return Err(LLMError::Provider(format!(
+                "Stream request failed with status {}: {}",
+                status, error_text
+            )));
         }
 
         let stream = OllamaStreamAdapter::new(response.bytes_stream(), request.model.clone());
@@ -272,7 +356,8 @@ impl LLMProviderClient for OllamaClient {
 
         debug!("Performing Ollama health check at: {}", url);
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .headers(headers)
             .timeout(Duration::from_secs(10)) // Shorter timeout for health checks
@@ -285,19 +370,20 @@ impl LLMProviderClient for OllamaClient {
 
         let is_healthy = response.status().is_success();
         debug!("Ollama health check result: {}", is_healthy);
-        
+
         Ok(is_healthy)
     }
 
     fn get_available_models(&self) -> Vec<ModelInfo> {
-        // Return default models to avoid blocking executor issues
-        // For actual models from Ollama, use fetch_available_models() directly
-        get_default_models()
+        // For synchronous context, return just the configured default model
+        // This avoids blocking issues while still providing the user's configured model
+        vec![self.create_model_info_for_configured_default()]
     }
 
     fn supports_model(&self, model: &str) -> bool {
-        // Check against default models or use a more sophisticated lookup
-        get_model_info(model).is_some()
+        // For dynamic models, be permissive and let Ollama decide
+        // This allows any model that might be available on the Ollama instance
+        true
     }
 
     fn get_config_requirements(&self) -> ProviderConfigRequirements {
@@ -308,16 +394,22 @@ impl LLMProviderClient for OllamaClient {
         self
     }
 
-    async fn embeddings(&self, request: &EmbeddingsRequest, api_key: &str) -> LLMResult<EmbeddingsResponse> {
+    async fn embeddings(
+        &self,
+        request: &EmbeddingsRequest,
+        api_key: &str,
+    ) -> LLMResult<EmbeddingsResponse> {
         let start_time = Instant::now();
         let request_id = uuid::Uuid::new_v4().to_string();
-        
+
         debug!("Starting Ollama embeddings for model: {}", request.model);
 
         match &request.input {
             EmbeddingsInput::Text(text) => {
-                let embedding = self.get_single_embedding(&request.model, text, api_key).await?;
-                
+                let embedding = self
+                    .get_single_embedding(&request.model, text, api_key)
+                    .await?;
+
                 let data = vec![EmbeddingData {
                     index: 0,
                     embedding,
@@ -357,8 +449,10 @@ impl LLMProviderClient for OllamaClient {
                 let mut total_tokens = 0;
 
                 for (index, text) in texts.iter().enumerate() {
-                    let embedding = self.get_single_embedding(&request.model, text, api_key).await?;
-                    
+                    let embedding = self
+                        .get_single_embedding(&request.model, text, api_key)
+                        .await?;
+
                     embeddings_data.push(EmbeddingData {
                         index: index as u32,
                         embedding,
@@ -402,7 +496,12 @@ impl LLMProviderClient for OllamaClient {
 
 impl OllamaClient {
     /// Get embeddings for a single text
-    async fn get_single_embedding(&self, model: &str, text: &str, api_key: &str) -> LLMResult<Vec<f64>> {
+    async fn get_single_embedding(
+        &self,
+        model: &str,
+        text: &str,
+        api_key: &str,
+    ) -> LLMResult<Vec<f64>> {
         let ollama_request = OllamaEmbeddingsRequest {
             model: model.to_string(),
             prompt: text.to_string(),
@@ -413,7 +512,8 @@ impl OllamaClient {
         let url = format!("{}/api/embeddings", self.config.base_url);
         let headers = self.build_headers(api_key)?;
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .headers(headers)
             .json(&ollama_request)
@@ -424,16 +524,21 @@ impl OllamaClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            
+
             // Try to parse as Ollama error
             if let Ok(ollama_error) = serde_json::from_str::<OllamaError>(&error_text) {
                 return Err(LLMError::Provider(ollama_error.error));
             }
-            
-            return Err(LLMError::Provider(format!("Embeddings request failed with status {}: {}", status, error_text)));
+
+            return Err(LLMError::Provider(format!(
+                "Embeddings request failed with status {}: {}",
+                status, error_text
+            )));
         }
 
-        let ollama_response: OllamaEmbeddingsResponse = response.json().await
+        let ollama_response: OllamaEmbeddingsResponse = response
+            .json()
+            .await
             .map_err(|e| LLMError::Parse(format!("Failed to parse embeddings response: {}", e)))?;
 
         Ok(ollama_response.embedding)
@@ -448,7 +553,10 @@ struct OllamaStreamAdapter {
 }
 
 impl OllamaStreamAdapter {
-    fn new(stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static, model: String) -> Self {
+    fn new(
+        stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
+        model: String,
+    ) -> Self {
         Self {
             inner: Box::pin(stream),
             model,
@@ -471,7 +579,11 @@ impl OllamaStreamAdapter {
                     choices: vec![crate::llm::StreamingChoice {
                         index: 0,
                         delta: ollama_chunk.message.into(),
-                        finish_reason: if ollama_chunk.done { Some("stop".to_string()) } else { None },
+                        finish_reason: if ollama_chunk.done {
+                            Some("stop".to_string())
+                        } else {
+                            None
+                        },
                     }],
                     provider: LLMProviderType::Ollama,
                 };
@@ -479,7 +591,10 @@ impl OllamaStreamAdapter {
             }
             Err(e) => {
                 error!("Failed to parse Ollama streaming chunk: {}", e);
-                Some(Err(LLMError::Parse(format!("Invalid streaming chunk: {}", e))))
+                Some(Err(LLMError::Parse(format!(
+                    "Invalid streaming chunk: {}",
+                    e
+                ))))
             }
         }
     }
@@ -499,14 +614,17 @@ impl Stream for OllamaStreamAdapter {
                     while let Some(newline_pos) = self.buffer.find('\n') {
                         let line = self.buffer.drain(..=newline_pos).collect::<String>();
                         let line = line.trim();
-                        
+
                         if let Some(result) = self.parse_chunk(line) {
                             return Poll::Ready(Some(result));
                         }
                     }
                 }
                 Poll::Ready(Some(Err(e))) => {
-                    return Poll::Ready(Some(Err(LLMError::Network(format!("Stream error: {}", e)))));
+                    return Poll::Ready(Some(Err(LLMError::Network(format!(
+                        "Stream error: {}",
+                        e
+                    )))));
                 }
                 Poll::Ready(None) => {
                     // Process any remaining data in buffer
@@ -527,8 +645,53 @@ impl Stream for OllamaStreamAdapter {
 
 impl Unpin for OllamaStreamAdapter {}
 
+impl OllamaClient {
+    /// Create ModelInfo for the configured default model
+    fn create_model_info_for_configured_default(&self) -> ModelInfo {
+        self.create_model_info_from_id(&self.config.default_model)
+    }
+
+    /// Create ModelInfo from a model ID
+    fn create_model_info_from_id(&self, model_id: &str) -> ModelInfo {
+        let capabilities = determine_model_capabilities_from_name(model_id);
+        let (context_window, max_output_tokens) = estimate_model_capabilities_from_name(model_id);
+
+        ModelInfo {
+            id: model_id.to_string(),
+            name: format!("Ollama: {}", model_id),
+            provider: LLMProviderType::Ollama,
+            context_window,
+            max_output_tokens,
+            supports_streaming: true,
+            supports_function_calling: false,
+            cost_per_input_token: 0.0, // Local inference is free
+            cost_per_output_token: 0.0,
+            capabilities,
+            parameter_restrictions: std::collections::HashMap::new(),
+        }
+    }
+}
+
+/// Estimate model capabilities from just the model name (for configured defaults)
+fn estimate_model_capabilities_from_name(name: &str) -> (u32, u32) {
+    // Extract parameter size hints from model name
+    if name.contains("3b") || name.contains("3B") {
+        (8192, 4096)
+    } else if name.contains("7b") || name.contains("7B") {
+        (16384, 8192)
+    } else if name.contains("13b") || name.contains("13B") {
+        (32768, 16384)
+    } else if name.contains("70b") || name.contains("70B") {
+        (65536, 32768)
+    } else {
+        (8192, 4096) // Conservative default
+    }
+}
+
 /// Helper function to extract system message from messages
-fn extract_system_message(messages: Vec<OllamaChatMessage>) -> (Option<String>, Vec<OllamaChatMessage>) {
+fn extract_system_message(
+    messages: Vec<OllamaChatMessage>,
+) -> (Option<String>, Vec<OllamaChatMessage>) {
     let mut system_message = None;
     let mut filtered_messages = Vec::new();
 
@@ -546,19 +709,23 @@ fn extract_system_message(messages: Vec<OllamaChatMessage>) -> (Option<String>, 
 /// Convert Ollama model info to our ModelInfo format
 fn convert_ollama_model_to_info(ollama_model: OllamaModelInfo) -> ModelInfo {
     // Extract parameter size and estimate context window
-    let (context_window, max_output_tokens) = estimate_model_capabilities(&ollama_model.name, &ollama_model.details.parameter_size);
-    
+    let (context_window, max_output_tokens) =
+        estimate_model_capabilities(&ollama_model.name, &ollama_model.details.parameter_size);
+
     let capabilities = determine_model_capabilities(&ollama_model.name);
 
     ModelInfo {
         id: ollama_model.name.clone(),
-        name: format!("{} ({})", ollama_model.name, ollama_model.details.parameter_size),
+        name: format!(
+            "{} ({})",
+            ollama_model.name, ollama_model.details.parameter_size
+        ),
         provider: LLMProviderType::Ollama,
         context_window,
         max_output_tokens,
         supports_streaming: true, // Most Ollama models support streaming
         supports_function_calling: false, // Most local models don't support function calling yet
-        cost_per_input_token: 0.0,  // Local inference is free
+        cost_per_input_token: 0.0, // Local inference is free
         cost_per_output_token: 0.0,
         capabilities,
         parameter_restrictions: HashMap::new(),
@@ -568,7 +735,8 @@ fn convert_ollama_model_to_info(ollama_model: OllamaModelInfo) -> ModelInfo {
 /// Estimate model capabilities based on name and parameter size
 fn estimate_model_capabilities(name: &str, parameter_size: &str) -> (u32, u32) {
     // Extract parameter count
-    let param_count = parameter_size.chars()
+    let param_count = parameter_size
+        .chars()
         .take_while(|c| c.is_ascii_digit())
         .collect::<String>()
         .parse::<u32>()
@@ -594,29 +762,43 @@ fn estimate_model_capabilities(name: &str, parameter_size: &str) -> (u32, u32) {
     (context_window, max_output_tokens)
 }
 
-/// Determine model capabilities based on name
-fn determine_model_capabilities(name: &str) -> Vec<crate::llm::traits::ModelCapability> {
+/// Determine model capabilities based on name patterns
+fn determine_model_capabilities_from_name(name: &str) -> Vec<crate::llm::traits::ModelCapability> {
     use crate::llm::traits::ModelCapability;
-    
+
     let mut capabilities = vec![
         ModelCapability::TextGeneration,
         ModelCapability::ConversationalAI,
     ];
 
-    if name.contains("code") || name.contains("phi") {
+    // Code generation models
+    if name.contains("code") || name.contains("phi") || name.contains("granite") {
         capabilities.push(ModelCapability::CodeGeneration);
     }
 
-    if name.contains("llama3") || name.contains("gemma") || name.contains("mistral") {
+    // Reasoning models
+    if name.contains("llama") || name.contains("gemma") || name.contains("mistral") {
         capabilities.push(ModelCapability::Reasoning);
     }
 
-    if name.contains("vision") || name.contains("multimodal") {
-        capabilities.push(ModelCapability::Vision);
-        capabilities.push(ModelCapability::Multimodal);
+    // Embedding models
+    if name.contains("embed") {
+        capabilities.push(ModelCapability::Embedding);
+        // Embedding models typically don't do text generation
+        capabilities.retain(|cap| {
+            !matches!(
+                cap,
+                ModelCapability::TextGeneration | ModelCapability::ConversationalAI
+            )
+        });
     }
 
     capabilities
+}
+
+/// Legacy function for backward compatibility
+pub fn determine_model_capabilities(name: &str) -> Vec<crate::llm::traits::ModelCapability> {
+    determine_model_capabilities_from_name(name)
 }
 
 /// Simple token estimation for embeddings
