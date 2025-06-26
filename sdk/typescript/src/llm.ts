@@ -16,6 +16,7 @@ import {
   BudgetConstraint,
   ModelInfo,
   ModelsResponse,
+  EmbeddingResponse,
 } from "./types.js";
 import type { Client } from "./client.js";
 import { streamChatCompletionFromRouter } from "./sse";
@@ -52,24 +53,11 @@ export class LLMClient {
   async chatCompletion(
     request: ChatCompletionRequest,
   ): Promise<ChatCompletionResponse> {
-    const config = this.client.getConfig();
-
-    const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(config.apiKey && { Authorization: `Bearer ${config.apiKey}` }),
-      },
-      body: JSON.stringify(request),
-    });
-
-    if (!response.ok) {
-      throw new Error(
-        `Circuit Breaker router error: ${response.status} ${response.statusText}`,
-      );
-    }
-
-    return response.json();
+    return this.client.restRequest<ChatCompletionResponse>(
+      "POST",
+      "/v1/chat/completions",
+      request,
+    );
   }
 
   /**
@@ -111,21 +99,10 @@ export class LLMClient {
    * List available models from the Circuit Breaker router
    */
   async listModels(): Promise<ModelInfo[]> {
-    const config = this.client.getConfig();
-
-    const response = await fetch(`${config.baseUrl}/v1/models`, {
-      headers: {
-        ...(config.apiKey && { Authorization: `Bearer ${config.apiKey}` }),
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(
-        `Failed to list models: ${response.status} ${response.statusText}`,
-      );
-    }
-
-    const modelsResponse: ModelsResponse = await response.json();
+    const modelsResponse = await this.client.restRequest<ModelsResponse>(
+      "GET",
+      "/v1/models",
+    );
     return modelsResponse.data;
   }
 
@@ -133,21 +110,7 @@ export class LLMClient {
    * Get model details
    */
   async getModel(modelId: string): Promise<ModelInfo> {
-    const config = this.client.getConfig();
-
-    const response = await fetch(`${config.baseUrl}/v1/models/${modelId}`, {
-      headers: {
-        ...(config.apiKey && { Authorization: `Bearer ${config.apiKey}` }),
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(
-        `Failed to get model: ${response.status} ${response.statusText}`,
-      );
-    }
-
-    return response.json();
+    return this.client.restRequest<ModelInfo>("GET", `/v1/models/${modelId}`);
   }
 
   /**
@@ -158,12 +121,13 @@ export class LLMClient {
     onChunk: (chunk: ChatCompletionChunk) => void,
     onError?: (error: Error) => void,
   ): Promise<void> {
+    // Stream request with callback
     const config = this.client.getConfig();
+    const restEndpoint = this.client.getEndpointUrl("rest");
 
     try {
-      // Use the helper function to stream from router
       const streamGenerator = streamChatCompletionFromRouter(
-        config.baseUrl,
+        restEndpoint,
         request,
         {
           headers: config.apiKey
@@ -211,10 +175,11 @@ export class LLMClient {
     request: ChatCompletionRequest & { stream: true },
   ): AsyncGenerator<ChatCompletionChunk, void, unknown> {
     const config = this.client.getConfig();
+    const restEndpoint = this.client.getEndpointUrl("rest");
 
-    // Use the helper function to stream from router
+    // Use the helper function to stream from router with correct endpoint
     const streamGenerator = streamChatCompletionFromRouter(
-      config.baseUrl,
+      restEndpoint,
       request,
       {
         headers: config.apiKey
@@ -264,33 +229,15 @@ export class LLMClient {
   async embeddings(
     model: string,
     input: string | string[],
-    options?: {
-      dimensions?: number;
-      encoding_format?: "float" | "base64";
-    },
   ): Promise<EmbeddingResponse> {
-    const config = this.client.getConfig();
-
-    const response = await fetch(`${config.baseUrl}/v1/embeddings`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(config.apiKey && { Authorization: `Bearer ${config.apiKey}` }),
-      },
-      body: JSON.stringify({
+    return this.client.restRequest<EmbeddingResponse>(
+      "POST",
+      "/v1/embeddings",
+      {
         model,
         input,
-        ...options,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(
-        `Circuit Breaker router error: ${response.status} ${response.statusText}`,
-      );
-    }
-
-    return response.json();
+      },
+    );
   }
 
   /**
@@ -705,27 +652,16 @@ export const COMMON_MODELS = {
 
   // Direct Provider Models
   // OpenAI models
-  GPT_3_5_TURBO: "gpt-3.5-turbo",
-  GPT_4: "gpt-4",
-  GPT_4_TURBO: "gpt-4-turbo-preview",
-  GPT_4O_MINI: "gpt-4o-mini",
+  GPT_O4_MINI: "o4-mini-2025-04-16",
 
   // Anthropic models
-  CLAUDE_3_HAIKU: "claude-3-haiku-20240307",
-  CLAUDE_3_SONNET: "claude-3-sonnet-20240229",
-  CLAUDE_3_OPUS: "claude-3-opus-20240229",
+  CLAUDE_4_SONNET: "claude-sonnet-4-20250514",
 
   // Google models
-  GEMINI_FLASH: "gemini-1.5-flash",
-  GEMINI_PRO: "gemini-1.5-pro",
+  GEMINI_PRO: "gemini-2.5-pro",
 
   // Local models (via Ollama)
-  LLAMA_2_7B: "llama2:7b",
-  LLAMA_2_13B: "llama2:13b",
-  LLAMA_3_1_8B: "llama3.1:8b",
   QWEN_CODER_3B: "qwen2.5-coder:3b",
-  QWEN_CODER_7B: "qwen2.5-coder:7b",
-  CODELLAMA_7B: "codellama:7b",
 
   // Embedding models
   NOMIC_EMBED: "nomic-embed-text:latest",

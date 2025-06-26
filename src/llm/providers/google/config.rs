@@ -84,14 +84,36 @@ pub fn get_default_config() -> ProviderConfig {
 }
 
 /// Get available Google models with their configurations
-/// Only loads the default model from environment to avoid hardcoded non-existent models
+/// Get all available Google models
 pub fn get_available_models() -> Vec<ModelInfo> {
-    let default_model =
-        std::env::var("GOOGLE_DEFAULT_MODEL").unwrap_or_else(|_| "gemini-1.5-flash".to_string());
-
-    // Create model info based on the default model from environment
-    let model_info = match default_model.as_str() {
-        "gemini-1.5-pro" => ModelInfo {
+    vec![
+        // Gemini 2.5 Pro
+        ModelInfo {
+            id: "gemini-2.5-pro".to_string(),
+            name: "Gemini 2.5 Pro".to_string(),
+            provider: LLMProviderType::Google,
+            context_window: 2097152, // 2M tokens
+            max_output_tokens: 8192,
+            supports_streaming: true,
+            supports_function_calling: true,
+            cost_per_input_token: 0.0000035,  // $3.50 per 1M tokens
+            cost_per_output_token: 0.0000105, // $10.50 per 1M tokens
+            capabilities: vec![
+                ModelCapability::TextGeneration,
+                ModelCapability::ConversationalAI,
+                ModelCapability::CodeGeneration,
+                ModelCapability::ReasoningChain,
+                ModelCapability::Translation,
+                ModelCapability::Summarization,
+                ModelCapability::FunctionCalling,
+                ModelCapability::Vision,
+                ModelCapability::Audio,
+                ModelCapability::Multimodal,
+            ],
+            parameter_restrictions: HashMap::new(),
+        },
+        // Gemini 1.5 Pro
+        ModelInfo {
             id: "gemini-1.5-pro".to_string(),
             name: "Gemini 1.5 Pro".to_string(),
             provider: LLMProviderType::Google,
@@ -115,7 +137,8 @@ pub fn get_available_models() -> Vec<ModelInfo> {
             ],
             parameter_restrictions: HashMap::new(),
         },
-        "gemini-1.5-flash" => ModelInfo {
+        // Gemini 1.5 Flash
+        ModelInfo {
             id: "gemini-1.5-flash".to_string(),
             name: "Gemini 1.5 Flash".to_string(),
             provider: LLMProviderType::Google,
@@ -139,31 +162,7 @@ pub fn get_available_models() -> Vec<ModelInfo> {
             ],
             parameter_restrictions: HashMap::new(),
         },
-        // Fallback for unknown models - use gemini-1.5-flash as safe default
-        _ => ModelInfo {
-            id: default_model.clone(),
-            name: format!("Google {}", default_model),
-            provider: LLMProviderType::Google,
-            context_window: 1048576, // 1M tokens
-            max_output_tokens: 8192,
-            supports_streaming: true,
-            supports_function_calling: true,
-            cost_per_input_token: 0.000000075, // $0.075 per 1M tokens
-            cost_per_output_token: 0.0000003,  // $0.30 per 1M tokens
-            capabilities: vec![
-                ModelCapability::TextGeneration,
-                ModelCapability::ConversationalAI,
-                ModelCapability::CodeGeneration,
-                ModelCapability::ReasoningChain,
-                ModelCapability::Translation,
-                ModelCapability::Summarization,
-                ModelCapability::FunctionCalling,
-            ],
-            parameter_restrictions: HashMap::new(),
-        },
-    };
-
-    vec![model_info]
+    ]
 }
 
 /// Check if a model has specific parameter restrictions

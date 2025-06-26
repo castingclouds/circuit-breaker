@@ -4,9 +4,9 @@
 //! showing how to create workflows, resources, agents, and more.
 
 use circuit_breaker_sdk::{
-    create_agent, create_chat, create_resource, create_workflow,
+    common_models, create_agent, create_chat, create_resource, create_workflow,
     rules::{evaluate_rule, RuleBuilderStandalone},
-    Client, PaginationOptions, Result, COMMON_MODELS,
+    Client, PaginationOptions, Result,
 };
 use serde_json::json;
 
@@ -225,9 +225,9 @@ async fn main() -> Result<()> {
             .set_description("AI agent for customer order support")
             .set_type("conversational")
             .set_llm_provider("openai")
-            .set_model(COMMON_MODELS::GPT_4O_MINI)
+            .set_model(common_models::GEMINI_PRO)
             .set_temperature(0.7)
-            .set_max_tokens(500)
+            .set_max_tokens(8192)
             .set_system_prompt(
                 "You are a helpful customer service agent for an e-commerce platform. \
                 Help customers with their orders, returns, and general inquiries. \
@@ -250,9 +250,9 @@ async fn main() -> Result<()> {
             .description(agent_definition.description.unwrap_or_default())
             .set_type("conversational")
             .set_llm_provider("openai")
-            .set_model(COMMON_MODELS::GPT_4O_MINI)
+            .set_model(common_models::GPT_O4_MINI)
             .set_temperature(0.7)
-            .set_max_tokens(500)
+            .set_max_tokens(8192)
             .set_system_prompt(
                 "You are a helpful customer service agent for an e-commerce platform.",
             )
@@ -293,9 +293,9 @@ async fn main() -> Result<()> {
         println!("\n🧪 Testing multiple providers:");
 
         let test_models = vec![
-            ("OpenAI GPT-4", COMMON_MODELS::GPT_4O_MINI),
-            ("Claude Haiku", COMMON_MODELS::CLAUDE_3_HAIKU),
-            ("Gemini Flash", COMMON_MODELS::GEMINI_FLASH),
+            ("OpenAI GPT-4", common_models::GPT_O4_MINI),
+            ("Claude Sonnet", common_models::CLAUDE_4_SONNET),
+            ("Gemini Pro", common_models::GEMINI_PRO),
         ];
 
         for (name, model) in test_models {
@@ -343,9 +343,9 @@ async fn main() -> Result<()> {
         // Cost comparison demonstration
         println!("\n💰 Provider cost comparison:");
         let cost_tests = vec![
-            ("OpenAI", COMMON_MODELS::GPT_4O_MINI, 0.003),
-            ("Anthropic", COMMON_MODELS::CLAUDE_3_HAIKU, 0.00025),
-            ("Google", COMMON_MODELS::GEMINI_FLASH, 0.0000375),
+            ("OpenAI", common_models::GPT_O4_MINI, 0.003),
+            ("Anthropic", common_models::CLAUDE_4_SONNET, 0.00025),
+            ("Google", common_models::GEMINI_PRO, 0.0000375),
         ];
 
         println!("Provider    | Model              | Est. Cost/1K tokens");
@@ -362,11 +362,11 @@ async fn main() -> Result<()> {
 
         // Using chat builder with different providers
         println!("\n🔧 Chat builder with provider selection:");
-        let chat_builder = create_chat(COMMON_MODELS::CLAUDE_3_HAIKU)
+        let chat_builder = create_chat(common_models::CLAUDE_4_SONNET)
             .set_system_prompt("You are a helpful assistant specializing in workflow automation.")
             .add_user_message("List 3 key benefits of workflow automation")
             .set_temperature(0.2)
-            .set_max_tokens(150);
+            .set_max_tokens(8192);
 
         let chat_result = chat_builder.execute(&llm_client).await?;
         if let Some(choice) = chat_result.choices.first() {
@@ -385,7 +385,7 @@ async fn main() -> Result<()> {
         {
             match llm_client
                 .chat(
-                    COMMON_MODELS::GPT_4O_MINI,
+                    common_models::GPT_O4_MINI,
                     "Explain the benefits of workflow automation in 2 sentences.",
                 )
                 .await

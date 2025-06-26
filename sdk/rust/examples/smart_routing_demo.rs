@@ -6,9 +6,9 @@
 //! consistent OpenAI-compatible interface.
 
 use circuit_breaker_sdk::{
-    create_balanced_chat, create_chat, create_cost_optimized_chat, create_fast_chat,
+    common_models, create_balanced_chat, create_chat, create_cost_optimized_chat, create_fast_chat,
     create_smart_chat, ChatCompletionRequest, ChatMessage, ChatRole, CircuitBreakerOptions, Client,
-    Result, RoutingStrategy, SmartCompletionRequest, TaskType, COMMON_MODELS,
+    Result, RoutingStrategy, SmartCompletionRequest, TaskType,
 };
 use futures::StreamExt;
 use std::env;
@@ -77,11 +77,11 @@ async fn main() -> Result<()> {
 
     // Test different virtual models
     let virtual_models = vec![
-        ("💰 Cost-Optimized", COMMON_MODELS::SMART_CHEAP),
-        ("⚡ Performance-First", COMMON_MODELS::SMART_FAST),
-        ("⚖️  Balanced", COMMON_MODELS::SMART_BALANCED),
-        ("🎨 Creative", COMMON_MODELS::SMART_CREATIVE),
-        ("💻 Coding", COMMON_MODELS::SMART_CODING),
+        ("💰 Cost-Optimized", common_models::SMART_CHEAP),
+        ("⚡ Performance-First", common_models::SMART_FAST),
+        ("⚖️  Balanced", common_models::SMART_BALANCED),
+        ("🎨 Creative", common_models::SMART_CREATIVE),
+        ("💻 Coding", common_models::SMART_CODING),
     ];
 
     for (name, virtual_model) in virtual_models {
@@ -112,7 +112,7 @@ async fn main() -> Result<()> {
     println!("   ------------------------------------------");
 
     let smart_request = SmartCompletionRequest {
-        model: COMMON_MODELS::SMART_CHEAP.to_string(),
+        model: common_models::SMART_CHEAP.to_string(),
         messages: vec![
             ChatMessage {
                 role: ChatRole::System,
@@ -126,7 +126,7 @@ async fn main() -> Result<()> {
             },
         ],
         temperature: Some(0.7),
-        max_tokens: Some(150),
+        max_tokens: Some(8192),
         stream: Some(false),
         circuit_breaker: Some(CircuitBreakerOptions {
             routing_strategy: Some(RoutingStrategy::CostOptimized),
@@ -163,7 +163,7 @@ async fn main() -> Result<()> {
     println!("   --------------------------------");
 
     // Code generation task
-    let code_request = create_smart_chat(COMMON_MODELS::SMART_CODING)
+    let code_request = create_smart_chat(common_models::SMART_CODING)
         .set_system_prompt("You are an expert programmer.")
         .add_user_message("Write a Python function to sort a list using quicksort")
         .set_task_type(TaskType::CodeGeneration)
@@ -183,7 +183,7 @@ async fn main() -> Result<()> {
     }
 
     // Creative writing task
-    let creative_request = create_smart_chat(COMMON_MODELS::SMART_CREATIVE)
+    let creative_request = create_smart_chat(common_models::SMART_CREATIVE)
         .add_user_message("Write a haiku about distributed systems")
         .set_task_type(TaskType::CreativeWriting)
         .set_temperature(0.9)
@@ -271,7 +271,7 @@ async fn main() -> Result<()> {
     println!("   ----------------------------------------");
 
     let streaming_request = ChatCompletionRequest {
-        model: COMMON_MODELS::SMART_CREATIVE.to_string(),
+        model: common_models::SMART_CREATIVE.to_string(),
         messages: vec![ChatMessage {
             role: ChatRole::User,
             content: "Write a short story about a circuit breaker in distributed systems."
@@ -279,7 +279,7 @@ async fn main() -> Result<()> {
             name: None,
         }],
         temperature: Some(0.8),
-        max_tokens: Some(300),
+        max_tokens: Some(8192),
         stream: Some(true),
         circuit_breaker: Some(CircuitBreakerOptions {
             routing_strategy: Some(RoutingStrategy::LoadBalanced),
@@ -336,7 +336,7 @@ async fn main() -> Result<()> {
 
     use circuit_breaker_sdk::BudgetConstraint;
 
-    let budget_request = create_smart_chat(COMMON_MODELS::SMART_BALANCED)
+    let budget_request = create_smart_chat(common_models::SMART_BALANCED)
         .set_system_prompt("You are a budget-conscious technical writer.")
         .add_user_message("Explain Circuit Breaker pattern benefits in 2 sentences")
         .set_circuit_breaker(CircuitBreakerOptions {
@@ -381,7 +381,7 @@ async fn main() -> Result<()> {
 
     use circuit_breaker_sdk::llm::ChatFunction;
 
-    let function_request = create_chat(COMMON_MODELS::GEMINI_FLASH)
+    let function_request = create_chat(common_models::GEMINI_FLASH)
         .add_user_message("What's the weather like in San Francisco?")
         .add_function(ChatFunction {
             name: "get_weather".to_string(),

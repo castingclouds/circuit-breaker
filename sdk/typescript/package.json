@@ -19,6 +19,7 @@
     "example:basic": "npx tsx examples/basic-usage.ts",
     "example:multi-provider": "npx tsx examples/multi-provider-demo.ts",
     "example:smart-routing": "npx tsx examples/smart-routing-demo.ts",
+    "example:gemini": "npx tsx examples/gemini-test.ts",
     "examples": "npm run example:basic"
   },
   "keywords": [

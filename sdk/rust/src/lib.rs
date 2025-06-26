@@ -59,9 +59,9 @@ pub use agents::{Agent, AgentBuilder};
 pub use analytics::{AnalyticsClient, BudgetStatus, CostAnalytics};
 pub use functions::{Function, FunctionBuilder, FunctionExecution};
 pub use llm::{
-    BudgetConstraint, ChatBuilder, ChatCompletionRequest, ChatCompletionResponse, ChatMessage,
-    ChatRole, CircuitBreakerOptions, LLMClient, RoutingStrategy, SmartCompletionRequest, TaskType,
-    COMMON_MODELS,
+    common_models, BudgetConstraint, ChatBuilder, ChatCompletionRequest, ChatCompletionResponse,
+    ChatMessage, ChatRole, CircuitBreakerOptions, LLMClient, RoutingStrategy,
+    SmartCompletionRequest, TaskType,
 };
 pub use mcp::{MCPClient, MCPServer, MCPServerStatus, MCPServerType};
 pub use nats::{HistoryEvent, NATSClient, NATSResource};

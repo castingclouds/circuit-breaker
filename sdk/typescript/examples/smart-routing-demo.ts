@@ -279,7 +279,8 @@ async function main() {
   console.log("   ----------------------------------------");
 
   try {
-    const streamBuilder = createSmartChat(COMMON_MODELS.SMART_FAST)
+    // Use a working streaming model instead of virtual model that routes to problematic Gemini
+    const streamBuilder = createSmartChat(COMMON_MODELS.GPT_O4_MINI)
       .addUserMessage(
         "Write a short story about a circuit breaker in distributed systems.",
       )
@@ -291,11 +292,11 @@ async function main() {
         task_type: "general_chat",
         require_streaming: true,
         max_latency_ms: 3000,
-        fallback_models: ["gpt-4", "claude-3-opus-20240229"],
+        fallback_models: ["claude-sonnet-4-20250514", "gpt-4"],
       });
 
     const streamingRequest = streamBuilder.build();
-    console.log("   🌊 Starting streaming response...");
+    console.log("   🌊 Starting streaming response with working model...");
 
     process.stdout.write("   📝 Story: ");
 

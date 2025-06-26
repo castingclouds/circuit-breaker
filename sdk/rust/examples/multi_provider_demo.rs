@@ -440,7 +440,7 @@ impl MultiProviderDemo {
             let chat_request = create_chat(COMMON_MODELS::GPT_4O_MINI)
                 .add_user_message(creativity_prompt)
                 .set_temperature(temp)
-                .set_max_tokens(100)
+                .set_max_tokens(8192)
                 .build();
 
             match self.client.llm().chat_completion(chat_request).await {

@@ -21,6 +21,15 @@ export interface PingResponse {
   status: string;
   version: string;
   uptime_seconds: number;
+  endpoints?: {
+    graphql: boolean;
+    rest: boolean;
+    graphqlUrl: string;
+    restUrl: string;
+  };
+  graphql?: boolean;
+  rest?: boolean;
+  models?: number;
 }
 
 export interface ServerInfo {
@@ -28,6 +37,10 @@ export interface ServerInfo {
   version: string;
   features: string[];
   providers: string[];
+  endpoints?: {
+    graphql: boolean;
+    rest: boolean;
+  };
 }
 
 // ============================================================================
@@ -52,9 +65,11 @@ export interface WorkflowDefinition {
 
 export interface ActivityDefinition {
   id: string;
-  name: string;
-  type: string;
-  config: Record<string, any>;
+  name?: string;
+  fromStates: string[];
+  toState: string;
+  conditions: string[];
+  description?: string;
 }
 
 export interface WorkflowState {
@@ -390,6 +405,24 @@ export interface ModelInfo {
 export interface ModelsResponse {
   object: string;
   data: ModelInfo[];
+}
+
+export interface EmbeddingResponse {
+  object: string;
+  data: EmbeddingData[];
+  model: string;
+  usage: EmbeddingUsage;
+}
+
+export interface EmbeddingData {
+  object: string;
+  embedding: number[];
+  index: number;
+}
+
+export interface EmbeddingUsage {
+  prompt_tokens: number;
+  total_tokens: number;
 }
 
 // ============================================================================

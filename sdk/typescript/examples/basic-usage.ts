@@ -253,7 +253,7 @@ async function main() {
         .setDescription("AI agent for customer order support")
         .setType("conversational")
         .setLLMProvider("openai")
-        .setModel(COMMON_MODELS.GPT_4O_MINI)
+        .setModel(COMMON_MODELS.GPT_O4_MINI)
         .setTemperature(0.7)
         .setMaxTokens(500)
         .setSystemPrompt(
@@ -298,9 +298,9 @@ async function main() {
       console.log("\n🧪 Testing multiple providers:");
 
       const testModels = [
-        { name: "OpenAI GPT-4", model: COMMON_MODELS.GPT_4O_MINI },
-        { name: "Claude Haiku", model: "claude-3-haiku-20240307" },
-        { name: "Gemini Flash", model: "gemini-1.5-flash" },
+        { name: "OpenAI GPT-4", model: COMMON_MODELS.GPT_O4_MINI },
+        { name: "Claude Sonnet", model: COMMON_MODELS.CLAUDE_4_SONNET },
+        { name: "Gemini Pro", model: COMMON_MODELS.GEMINI_PRO },
       ];
 
       for (const { name, model } of testModels) {
@@ -353,7 +353,7 @@ async function main() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              model: "o4-mini-2025-04-16",
+              model: COMMON_MODELS.GPT_O4_MINI,
               messages: [
                 { role: "user", content: "Write a short haiku about AI" },
               ],
@@ -403,17 +403,17 @@ async function main() {
       const costTests = [
         {
           provider: "OpenAI",
-          model: "o4-mini-2025-04-16",
+          model: COMMON_MODELS.GPT_O4_MINI,
           estimatedCost: 0.003,
         },
         {
           provider: "Anthropic",
-          model: "claude-3-haiku-20240307",
+          model: COMMON_MODELS.CLAUDE_4_SONNET,
           estimatedCost: 0.000025,
         },
         {
           provider: "Google",
-          model: "gemini-1.5-flash",
+          model: COMMON_MODELS.GEMINI_PRO,
           estimatedCost: 0.0000375,
         },
       ];
@@ -430,7 +430,7 @@ async function main() {
 
       // Using chat builder with different providers
       console.log("\n🔧 Chat builder with provider selection:");
-      const chatBuilder = createChat("claude-3-haiku-20240307")
+      const chatBuilder = createChat(COMMON_MODELS.CLAUDE_4_SONNET)
         .setSystemPrompt(
           "You are a helpful assistant specializing in workflow automation.",
         )
@@ -469,7 +469,7 @@ async function main() {
       `;
 
       const llmInput = {
-        model: COMMON_MODELS.GPT_4O_MINI,
+        model: COMMON_MODELS.GPT_O4_MINI,
         messages: [
           {
             role: "system",
@@ -512,7 +512,7 @@ async function main() {
       try {
         const llmClient = client.llm();
         const response = await llmClient.chat(
-          COMMON_MODELS.GPT_4O_MINI,
+          COMMON_MODELS.GPT_O4_MINI,
           "Explain the benefits of workflow automation in 2 sentences.",
           {
             temperature: 0.3,
