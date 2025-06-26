@@ -7,7 +7,7 @@ use crate::{Client, Result};
 use serde::{Deserialize, Serialize};
 
 /// Common LLM models used across providers
-pub mod COMMON_MODELS {
+pub mod common_models {
     // Virtual Models (Circuit Breaker Smart Routing)
     pub const SMART_FAST: &str = "cb:fastest";
     pub const SMART_CHEAP: &str = "cb:cost-optimal";
@@ -19,7 +19,7 @@ pub mod COMMON_MODELS {
     // Direct Provider Models
     pub const GPT_O4_MINI: &str = "o4-mini-2025-04-16";
     pub const CLAUDE_4_SONNET: &str = "claude-sonnet-4-20250514";
-    pub const GEMINI_FLASH: &str = "gemini-2.5-flash";
+    pub const GEMINI_PRO: &str = "gemini-2.5-pro";
 }
 
 /// Client for LLM operations through Circuit Breaker router
@@ -47,66 +47,9 @@ impl LLMClient {
         &self,
         request: ChatCompletionRequest,
     ) -> Result<ChatCompletionResponse> {
-        let url = self
-            .client
-            .base_url()
-            .join("/v1/chat/completions")
-            .map_err(|e| crate::Error::Network {
-                message: format!("Invalid URL: {}", e),
-            })?;
-
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            reqwest::header::CONTENT_TYPE,
-            reqwest::header::HeaderValue::from_static("application/json"),
-        );
-
-        // Add API key if available
-        if let Some(api_key) = self.client.api_key() {
-            headers.insert(
-                reqwest::header::AUTHORIZATION,
-                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", api_key)).map_err(
-                    |e| crate::Error::Configuration {
-                        message: format!("Invalid API key format: {}", e),
-                    },
-                )?,
-            );
-        }
-
-        let http_client = reqwest::Client::new();
-        let response = http_client
-            .post(url)
-            .headers(headers)
-            .json(&request)
-            .timeout(std::time::Duration::from_millis(self.client.timeout_ms()))
-            .send()
+        self.client
+            .rest(reqwest::Method::POST, "/v1/chat/completions", Some(request))
             .await
-            .map_err(|e| crate::Error::Network {
-                message: format!("HTTP request failed: {}", e),
-            })?;
-
-        let status = response.status();
-        let response_text = response.text().await.map_err(|e| crate::Error::Network {
-            message: format!("Failed to read response: {}", e),
-        })?;
-
-        if !status.is_success() {
-            // Try to parse error response
-            if let Ok(error_response) = serde_json::from_str::<OpenAIErrorResponse>(&response_text)
-            {
-                return Err(crate::Error::LLM {
-                    message: format!("LLM API error: {}", error_response.error.message),
-                });
-            } else {
-                return Err(crate::Error::Network {
-                    message: format!("HTTP {} - {}", status, response_text),
-                });
-            }
-        }
-
-        serde_json::from_str(&response_text).map_err(|e| crate::Error::Parse {
-            message: format!("Failed to parse response: {}", e),
-        })
     }
 
     /// Create a streaming chat completion request
@@ -117,13 +60,9 @@ impl LLMClient {
         let mut streaming_request = request;
         streaming_request.stream = Some(true);
 
-        let url = self
-            .client
-            .base_url()
-            .join("/v1/chat/completions")
-            .map_err(|e| crate::Error::Network {
-                message: format!("Invalid URL: {}", e),
-            })?;
+        // Use smart REST routing instead of direct URL construction
+        let rest_endpoint = self.client.get_endpoint_url("rest");
+        let url = format!("{}/v1/chat/completions", rest_endpoint);
 
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
@@ -147,9 +86,10 @@ impl LLMClient {
             );
         }
 
-        let http_client = reqwest::Client::new();
-        let response = http_client
-            .post(url)
+        let response = self
+            .client
+            .http_client()
+            .post(&url)
             .headers(headers)
             .json(&streaming_request)
             .timeout(std::time::Duration::from_millis(self.client.timeout_ms()))
@@ -159,8 +99,8 @@ impl LLMClient {
                 message: format!("HTTP request failed: {}", e),
             })?;
 
-        let status = response.status();
-        if !status.is_success() {
+        if !response.status().is_success() {
+            let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
             return Err(crate::Error::Network {
                 message: format!("HTTP {} - {}", status, error_text),
@@ -240,41 +180,10 @@ impl LLMClient {
 
     /// Get available models from the Circuit Breaker router
     pub async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        let url = self
+        let models_response: ModelsResponse = self
             .client
-            .base_url()
-            .join("/v1/models")
-            .map_err(|e| crate::Error::Network {
-                message: format!("Invalid URL: {}", e),
-            })?;
-
-        let mut headers = reqwest::header::HeaderMap::new();
-        if let Some(api_key) = self.client.api_key() {
-            headers.insert(
-                reqwest::header::AUTHORIZATION,
-                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", api_key)).map_err(
-                    |e| crate::Error::Configuration {
-                        message: format!("Invalid API key format: {}", e),
-                    },
-                )?,
-            );
-        }
-
-        let http_client = reqwest::Client::new();
-        let response = http_client
-            .get(url)
-            .headers(headers)
-            .timeout(std::time::Duration::from_millis(self.client.timeout_ms()))
-            .send()
-            .await
-            .map_err(|e| crate::Error::Network {
-                message: format!("HTTP request failed: {}", e),
-            })?;
-
-        let models_response: ModelsResponse =
-            response.json().await.map_err(|e| crate::Error::Parse {
-                message: format!("Failed to parse models response: {}", e),
-            })?;
+            .rest(reqwest::Method::GET, "/v1/models", None::<()>)
+            .await?;
 
         Ok(models_response.data)
     }
@@ -832,19 +741,19 @@ pub fn create_smart_chat(virtual_model: impl Into<String>) -> ChatBuilder {
 
 /// Create a cost-optimized chat request
 pub fn create_cost_optimized_chat() -> ChatBuilder {
-    ChatBuilder::new(COMMON_MODELS::SMART_CHEAP)
+    ChatBuilder::new(common_models::SMART_CHEAP)
         .set_routing_strategy(RoutingStrategy::CostOptimized)
 }
 
 /// Create a performance-optimized chat request
 pub fn create_fast_chat() -> ChatBuilder {
-    ChatBuilder::new(COMMON_MODELS::SMART_FAST)
+    ChatBuilder::new(common_models::SMART_FAST)
         .set_routing_strategy(RoutingStrategy::PerformanceFirst)
 }
 
 /// Create a balanced chat request
 pub fn create_balanced_chat() -> ChatBuilder {
-    ChatBuilder::new(COMMON_MODELS::SMART_BALANCED)
+    ChatBuilder::new(common_models::SMART_BALANCED)
         .set_routing_strategy(RoutingStrategy::LoadBalanced)
 }
 
@@ -1049,16 +958,15 @@ mod tests {
     #[test]
     fn test_model_constants() {
         // Virtual models
-        assert_eq!(COMMON_MODELS::SMART_FAST, "smart-fast");
-        assert_eq!(COMMON_MODELS::SMART_CHEAP, "smart-cheap");
-        assert_eq!(COMMON_MODELS::SMART_BALANCED, "smart-balanced");
-        assert_eq!(COMMON_MODELS::SMART_CREATIVE, "smart-creative");
+        assert_eq!(common_models::SMART_FAST, "cb:fastest");
+        assert_eq!(common_models::SMART_CHEAP, "cb:cost-optimal");
+        assert_eq!(common_models::SMART_BALANCED, "cb:smart-chat");
+        assert_eq!(common_models::SMART_CREATIVE, "cb:creative");
 
         // Direct models
-        assert_eq!(COMMON_MODELS::GPT_4, "gpt-4");
-        assert_eq!(COMMON_MODELS::GPT_4O_MINI, "gpt-4o-mini");
-        assert_eq!(COMMON_MODELS::CLAUDE_3_HAIKU, "claude-3-haiku-20240307");
-        assert_eq!(COMMON_MODELS::GEMINI_FLASH, "gemini-1.5-flash");
+        assert_eq!(common_models::GPT_O4_MINI, "o4-mini-2025-04-16");
+        assert_eq!(common_models::CLAUDE_4_SONNET, "claude-sonnet-4-20250514");
+        assert_eq!(common_models::GEMINI_PRO, "gemini-2.5-pro");
     }
 
     #[test]
@@ -1115,7 +1023,7 @@ mod tests {
     #[test]
     fn test_smart_completion_request() {
         let request = SmartCompletionRequest {
-            model: COMMON_MODELS::SMART_CHEAP.to_string(),
+            model: common_models::SMART_CHEAP.to_string(),
             messages: vec![ChatMessage {
                 role: ChatRole::User,
                 content: "Test message".to_string(),
@@ -1161,7 +1069,7 @@ mod tests {
     #[test]
     fn test_smart_chat_helpers() {
         let cost_request = smart_chat_request(
-            COMMON_MODELS::SMART_CHEAP,
+            common_models::SMART_CHEAP,
             "Hello",
             RoutingStrategy::CostOptimized,
         );

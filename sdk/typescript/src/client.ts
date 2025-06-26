@@ -48,6 +48,20 @@ interface GraphQLRequest {
   operationName?: string;
 }
 
+interface RestRequest {
+  method: string;
+  path: string;
+  body?: any;
+  headers?: Record<string, string>;
+}
+
+interface EndpointHealth {
+  graphql: boolean;
+  rest: boolean;
+  graphqlUrl: string;
+  restUrl: string;
+}
+
 // ============================================================================
 // Client Configuration
 // ============================================================================
@@ -71,10 +85,33 @@ export class Client {
   private readonly config: Required<ClientConfig>;
   private readonly baseHeaders: Record<string, string>;
   private readonly graphqlEndpoint: string;
+  private readonly restEndpoint: string;
+  private endpointHealth: EndpointHealth | null = null;
 
   constructor(config: Required<ClientConfig>) {
     this.config = config;
-    this.graphqlEndpoint = `${config.baseUrl}/graphql`;
+
+    // Smart endpoint detection - check if base URL includes port
+    const baseUrl = new URL(config.baseUrl);
+
+    if (baseUrl.port === "3000" || baseUrl.pathname.includes("v1")) {
+      // REST endpoint specified
+      this.restEndpoint = config.baseUrl;
+      this.graphqlEndpoint = `${baseUrl.protocol}//${baseUrl.hostname}:4000/graphql`;
+    } else if (
+      baseUrl.port === "4000" ||
+      baseUrl.pathname.includes("graphql")
+    ) {
+      // GraphQL endpoint specified
+      this.graphqlEndpoint = config.baseUrl.endsWith("/graphql")
+        ? config.baseUrl
+        : `${config.baseUrl}/graphql`;
+      this.restEndpoint = `${baseUrl.protocol}//${baseUrl.hostname}:3000`;
+    } else {
+      // Default ports
+      this.graphqlEndpoint = `${baseUrl.protocol}//${baseUrl.hostname}:4000/graphql`;
+      this.restEndpoint = `${baseUrl.protocol}//${baseUrl.hostname}:3000`;
+    }
 
     // Prepare base headers
     this.baseHeaders = {
@@ -104,28 +141,74 @@ export class Client {
   // ============================================================================
 
   /**
-   * Test connection to the server
+   * Test connection to both REST and GraphQL endpoints
    */
   async ping(): Promise<PingResponse> {
-    try {
-      const response = await fetch(`${this.config.baseUrl}/health`, {
-        method: "GET",
-        headers: this.baseHeaders,
-        signal: AbortSignal.timeout(this.config.timeout),
-      });
+    // First, check endpoint health
+    await this.checkEndpointHealth();
 
-      if (!response.ok) {
-        throw new NetworkError(
-          `HTTP ${response.status}: ${response.statusText}`,
-        );
+    if (!this.endpointHealth?.graphql && !this.endpointHealth?.rest) {
+      throw new NetworkError(
+        "Neither GraphQL nor REST endpoints are available",
+      );
+    }
+
+    try {
+      let healthData: any = {};
+      let status = "partial";
+
+      // Try GraphQL endpoint first
+      if (this.endpointHealth.graphql) {
+        try {
+          const graphqlResponse = await fetch(this.graphqlEndpoint, {
+            method: "POST",
+            headers: this.baseHeaders,
+            body: JSON.stringify({
+              query: `query { __schema { types { name } } }`,
+            }),
+            signal: AbortSignal.timeout(this.config.timeout),
+          });
+
+          if (graphqlResponse.ok) {
+            status = "ok";
+            healthData.graphql = true;
+          }
+        } catch (error) {
+          console.warn("GraphQL endpoint check failed:", error);
+        }
       }
 
-      const healthData = await response.json();
+      // Try REST endpoint
+      if (this.endpointHealth.rest) {
+        try {
+          const restResponse = await fetch(`${this.restEndpoint}/v1/models`, {
+            method: "GET",
+            headers: this.baseHeaders,
+            signal: AbortSignal.timeout(this.config.timeout),
+          });
+
+          if (restResponse.ok) {
+            const modelsData = await restResponse.json();
+            healthData.rest = true;
+            healthData.models = modelsData.data?.length || 0;
+            if (status === "partial") status = "ok";
+          }
+        } catch (error) {
+          console.warn("REST endpoint check failed:", error);
+        }
+      }
 
       return {
-        status: healthData.status || "ok",
-        version: healthData.version || "1.0.0",
-        uptime_seconds: healthData.timestamp || 0,
+        status,
+        version: "1.0.0",
+        uptime_seconds: Date.now() / 1000,
+        endpoints: {
+          graphql: this.endpointHealth.graphql,
+          rest: this.endpointHealth.rest,
+          graphqlUrl: this.endpointHealth.graphqlUrl,
+          restUrl: this.endpointHealth.restUrl,
+        },
+        ...healthData,
       };
     } catch (error) {
       if (error instanceof NetworkError) {
@@ -136,40 +219,140 @@ export class Client {
   }
 
   /**
-   * Get server information
+   * Check health of both endpoints
+   */
+  private async checkEndpointHealth(): Promise<EndpointHealth> {
+    if (this.endpointHealth) {
+      return this.endpointHealth;
+    }
+
+    const health: EndpointHealth = {
+      graphql: false,
+      rest: false,
+      graphqlUrl: this.graphqlEndpoint,
+      restUrl: this.restEndpoint,
+    };
+
+    // Check GraphQL endpoint
+    try {
+      const graphqlResponse = await fetch(this.graphqlEndpoint, {
+        method: "GET",
+        signal: AbortSignal.timeout(5000),
+      });
+      health.graphql =
+        graphqlResponse.status === 405 || graphqlResponse.status === 400; // GraphQL typically returns 405 for GET
+    } catch {
+      health.graphql = false;
+    }
+
+    // Check REST endpoint
+    try {
+      const restResponse = await fetch(`${this.restEndpoint}/v1/models`, {
+        method: "GET",
+        signal: AbortSignal.timeout(5000),
+      });
+      health.rest = restResponse.ok;
+    } catch {
+      health.rest = false;
+    }
+
+    this.endpointHealth = health;
+    return health;
+  }
+
+  /**
+   * Get server information from both endpoints
    */
   async info(): Promise<ServerInfo> {
-    try {
-      // Get health info
-      const healthResponse = await fetch(`${this.config.baseUrl}/health`, {
-        method: "GET",
-        headers: this.baseHeaders,
-        signal: AbortSignal.timeout(this.config.timeout),
-      });
+    await this.checkEndpointHealth();
 
-      const healthData = await healthResponse.json();
+    const info: ServerInfo = {
+      name: "Circuit Breaker AI Workflow Engine",
+      version: "1.0.0",
+      features: [],
+      providers: [],
+      endpoints: {
+        graphql: this.endpointHealth!.graphql,
+        rest: this.endpointHealth!.rest,
+      },
+    };
 
-      // Get models to determine providers
-      const modelsResponse = await fetch(`${this.config.baseUrl}/v1/models`, {
-        method: "GET",
-        headers: this.baseHeaders,
-        signal: AbortSignal.timeout(this.config.timeout),
-      });
+    // Get GraphQL schema info if available
+    if (this.endpointHealth!.graphql) {
+      try {
+        const schemaQuery = `
+          query IntrospectionQuery {
+            __schema {
+              types {
+                name
+                kind
+              }
+            }
+          }
+        `;
 
-      const modelsData = await modelsResponse.json();
-      const providers = [
-        ...new Set(modelsData.data?.map((model: any) => model.provider) || []),
-      ];
+        const schemaResult = await this.graphqlRequest<any>(schemaQuery);
+        const types = schemaResult.__schema?.types || [];
 
-      return {
-        name: "Circuit Breaker OpenAI-Compatible API Server",
-        version: healthData.version || "1.0.0",
-        features: ["llm", "smart-routing", "virtual-models", "streaming"],
-        providers: providers,
-      };
-    } catch (error) {
-      throw new NetworkError(`Server info failed: ${error}`);
+        // Determine features from schema types
+        const features = new Set<string>();
+        if (types.some((t: any) => t.name.includes("Workflow")))
+          features.add("workflows");
+        if (types.some((t: any) => t.name.includes("Agent")))
+          features.add("agents");
+        if (types.some((t: any) => t.name.includes("Rule")))
+          features.add("rules");
+        if (
+          types.some(
+            (t: any) => t.name.includes("Llm") || t.name.includes("LLM"),
+          )
+        )
+          features.add("llm");
+        if (
+          types.some(
+            (t: any) => t.name.includes("Mcp") || t.name.includes("MCP"),
+          )
+        )
+          features.add("mcp");
+        if (types.some((t: any) => t.name.includes("Analytics")))
+          features.add("analytics");
+
+        info.features.push(...Array.from(features));
+      } catch (error) {
+        console.warn("Failed to get GraphQL schema info:", error);
+      }
     }
+
+    // Get REST API info if available
+    if (this.endpointHealth!.rest) {
+      try {
+        const modelsResponse = await fetch(`${this.restEndpoint}/v1/models`, {
+          method: "GET",
+          headers: this.baseHeaders,
+          signal: AbortSignal.timeout(this.config.timeout),
+        });
+
+        if (modelsResponse.ok) {
+          const modelsData = await modelsResponse.json();
+          const providers = [
+            ...new Set(
+              modelsData.data?.map((model: any) => model.provider) || [],
+            ),
+          ];
+          info.providers = providers;
+          info.features.push(
+            "llm-routing",
+            "smart-routing",
+            "virtual-models",
+            "streaming",
+          );
+        }
+      } catch (error) {
+        console.warn("Failed to get REST API info:", error);
+      }
+    }
+
+    return info;
   }
 
   // ============================================================================
@@ -258,13 +441,20 @@ export class Client {
   // ============================================================================
 
   /**
-   * Make a GraphQL request
+   * Make a GraphQL request with automatic endpoint validation
    */
   async graphqlRequest<T>(
     query: string,
     variables?: Record<string, any>,
     operationName?: string,
   ): Promise<T> {
+    // Ensure GraphQL endpoint is available
+    await this.checkEndpointHealth();
+
+    if (!this.endpointHealth!.graphql) {
+      throw new NetworkError("GraphQL endpoint is not available");
+    }
+
     const request: GraphQLRequest = {
       query,
       variables: variables || {},
@@ -323,6 +513,83 @@ export class Client {
   }
 
   /**
+   * Make a REST API request with automatic endpoint validation
+   */
+  async restRequest<T>(
+    method: string,
+    path: string,
+    body?: any,
+    headers?: Record<string, string>,
+  ): Promise<T> {
+    // Ensure REST endpoint is available
+    await this.checkEndpointHealth();
+
+    if (!this.endpointHealth!.rest) {
+      throw new NetworkError("REST endpoint is not available");
+    }
+
+    const url = path.startsWith("/")
+      ? `${this.restEndpoint}${path}`
+      : `${this.restEndpoint}/${path}`;
+    const requestHeaders = { ...this.baseHeaders, ...headers };
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        this.config.timeout,
+      );
+
+      const requestInit: RequestInit = {
+        method,
+        headers: requestHeaders,
+        signal: controller.signal,
+      };
+
+      if (
+        body &&
+        (method === "POST" || method === "PUT" || method === "PATCH")
+      ) {
+        requestInit.body = JSON.stringify(body);
+      }
+
+      const response = await fetch(url, requestInit);
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw await this.handleHttpError(response);
+      }
+
+      // Handle streaming responses
+      if (
+        response.headers.get("content-type")?.includes("text/plain") ||
+        response.headers.get("content-type")?.includes("text/event-stream")
+      ) {
+        return response as unknown as T;
+      }
+
+      return await response.json();
+    } catch (error) {
+      if (error instanceof CircuitBreakerError) {
+        throw error;
+      }
+
+      if (error instanceof TypeError && error.message.includes("fetch")) {
+        throw new NetworkError(`Network error: ${error.message}`, error);
+      }
+
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new NetworkError("Request timeout", error);
+      }
+
+      throw new NetworkError(
+        `REST request failed: ${error}`,
+        error as Record<string, any>,
+      );
+    }
+  }
+
+  /**
    * Make a GraphQL query
    */
   async query<T>(query: string, variables?: Record<string, any>): Promise<T> {
@@ -344,28 +611,60 @@ export class Client {
   // ============================================================================
 
   /**
-   * Legacy REST request method for backward compatibility
-   * This method is maintained for existing code that might use it
+   * Smart request method that automatically routes to the appropriate endpoint
    */
   async request<T>(
-    _method: "GET" | "POST" | "PUT" | "DELETE",
-    _path: string,
-    _body?: any,
+    method: "GET" | "POST" | "PUT" | "DELETE",
+    path: string,
+    body?: any,
   ): Promise<T> {
-    // This is a fallback that converts some REST calls to GraphQL
-    // For full functionality, use the GraphQL methods directly
-
-    if (_path === "/health") {
+    // Handle special endpoints
+    if (path === "/health" || path === "health") {
       return this.ping() as Promise<T>;
     }
 
-    if (_path === "/info") {
+    if (path === "/info" || path === "info") {
       return this.info() as Promise<T>;
     }
 
-    throw new ValidationError(
-      `REST endpoint ${_method} ${_path} not supported. Use GraphQL methods instead.`,
-    );
+    // Route OpenAI-compatible endpoints to REST
+    if (path.startsWith("/v1/") || path.startsWith("v1/")) {
+      return this.restRequest<T>(method, path, body);
+    }
+
+    // Route GraphQL queries
+    if (path === "/graphql" || path === "graphql") {
+      if (method !== "POST") {
+        throw new ValidationError(
+          "GraphQL endpoint only supports POST requests",
+        );
+      }
+      return this.graphqlRequest<T>(
+        body.query,
+        body.variables,
+        body.operationName,
+      );
+    }
+
+    // Default to REST for other paths
+    return this.restRequest<T>(method, path, body);
+  }
+
+  /**
+   * Get the appropriate endpoint URL for a given operation
+   */
+  getEndpointUrl(operation: "graphql" | "rest"): string {
+    return operation === "graphql" ? this.graphqlEndpoint : this.restEndpoint;
+  }
+
+  /**
+   * Check if a specific endpoint is available
+   */
+  async isEndpointAvailable(endpoint: "graphql" | "rest"): Promise<boolean> {
+    await this.checkEndpointHealth();
+    return endpoint === "graphql"
+      ? this.endpointHealth!.graphql
+      : this.endpointHealth!.rest;
   }
 
   // ============================================================================

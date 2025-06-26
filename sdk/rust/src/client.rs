@@ -3,11 +3,12 @@
 //! This module provides the main client for communicating with the Circuit Breaker server.
 //! It handles HTTP requests, GraphQL queries, and authentication.
 
-use crate::{schema::QueryBuilder, Error, Result};
+use crate::{Error, Result};
 use reqwest::{header, Client as HttpClient, Method};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use url::Url;
 
 /// Configuration for the Circuit Breaker client
@@ -32,11 +33,23 @@ impl Default for ClientConfig {
     }
 }
 
+/// Endpoint health status
+#[derive(Debug, Clone)]
+pub struct EndpointHealth {
+    pub graphql: bool,
+    pub rest: bool,
+    pub graphql_url: String,
+    pub rest_url: String,
+}
+
 /// Main Circuit Breaker client
 #[derive(Debug, Clone)]
 pub struct Client {
     config: ClientConfig,
     http_client: Arc<HttpClient>,
+    graphql_endpoint: String,
+    rest_endpoint: String,
+    endpoint_health: Option<EndpointHealth>,
 }
 
 impl Client {
@@ -90,10 +103,65 @@ impl Client {
                 })?,
         );
 
+        // Smart endpoint detection
+        let (graphql_endpoint, rest_endpoint) = Self::determine_endpoints(&config.base_url)?;
+
         Ok(Self {
             config,
             http_client,
+            graphql_endpoint,
+            rest_endpoint,
+            endpoint_health: None,
         })
+    }
+
+    /// Determine GraphQL and REST endpoints from base URL
+    fn determine_endpoints(base_url: &Url) -> Result<(String, String)> {
+        let port = base_url.port();
+        let path = base_url.path();
+
+        let (graphql_endpoint, rest_endpoint) = match port {
+            Some(3000) | _ if path.contains("v1") => {
+                // REST endpoint specified
+                let rest = base_url.to_string();
+                let graphql = format!(
+                    "{}://{}:4000/graphql",
+                    base_url.scheme(),
+                    base_url.host_str().unwrap_or("localhost")
+                );
+                (graphql, rest)
+            }
+            Some(4000) | _ if path.contains("graphql") => {
+                // GraphQL endpoint specified
+                let graphql = if path.ends_with("graphql") {
+                    base_url.to_string()
+                } else {
+                    format!("{}/graphql", base_url.as_str().trim_end_matches('/'))
+                };
+                let rest = format!(
+                    "{}://{}:3000",
+                    base_url.scheme(),
+                    base_url.host_str().unwrap_or("localhost")
+                );
+                (graphql, rest)
+            }
+            _ => {
+                // Default ports
+                let graphql = format!(
+                    "{}://{}:4000/graphql",
+                    base_url.scheme(),
+                    base_url.host_str().unwrap_or("localhost")
+                );
+                let rest = format!(
+                    "{}://{}:3000",
+                    base_url.scheme(),
+                    base_url.host_str().unwrap_or("localhost")
+                );
+                (graphql, rest)
+            }
+        };
+
+        Ok((graphql_endpoint, rest_endpoint))
     }
 
     /// Create a client builder
@@ -101,88 +169,235 @@ impl Client {
         ClientBuilder::new()
     }
 
-    /// Test connection to the server
+    /// Test connection to both REST and GraphQL endpoints
     pub async fn ping(&self) -> Result<PingResponse> {
-        let url = self
-            .config
-            .base_url
-            .join("v1/models")
-            .map_err(|e| Error::Configuration {
-                message: format!("Failed to construct models URL: {}", e),
-            })?;
+        // Check endpoint health first
+        let health = self.check_endpoint_health().await?;
 
-        println!("DEBUG: Attempting to connect to: {}", url);
-        println!("DEBUG: Base URL from config: {}", self.config.base_url);
-
-        let response = self
-            .http_client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| Error::Network {
-                message: format!("Failed to connect to models endpoint: {}", e),
-            })?;
-
-        if !response.status().is_success() {
-            return Err(Error::Server {
-                status: response.status().as_u16(),
-                message: "Models endpoint check failed".to_string(),
+        if !health.graphql && !health.rest {
+            return Err(Error::Network {
+                message: "Neither GraphQL nor REST endpoints are available".to_string(),
             });
         }
 
-        // Try to parse models response to verify it's working
-        let _models_response: serde_json::Value =
-            response.json().await.map_err(|e| Error::Parse {
-                message: format!("Failed to parse models response: {}", e),
-            })?;
+        let mut status = "partial".to_string();
+        let mut graphql_ok = false;
+        let mut rest_ok = false;
+
+        // Test GraphQL endpoint
+        if health.graphql {
+            let introspection_query = r#"
+                query IntrospectionQuery {
+                    __schema {
+                        types {
+                            name
+                        }
+                    }
+                }
+            "#;
+
+            match self
+                .graphql_request_raw::<serde_json::Value, serde_json::Value>(
+                    introspection_query,
+                    serde_json::Value::Null,
+                )
+                .await
+            {
+                Ok(_) => {
+                    graphql_ok = true;
+                    status = "ok".to_string();
+                }
+                Err(e) => {
+                    eprintln!("GraphQL endpoint check failed: {}", e);
+                }
+            }
+        }
+
+        // Test REST endpoint
+        if health.rest {
+            let models_url = format!("{}/v1/models", self.rest_endpoint);
+            match self.http_client.get(&models_url).send().await {
+                Ok(response) if response.status().is_success() => {
+                    rest_ok = true;
+                    if status == "partial" {
+                        status = "ok".to_string();
+                    }
+                }
+                Ok(response) => {
+                    eprintln!("REST endpoint returned status: {}", response.status());
+                }
+                Err(e) => {
+                    eprintln!("REST endpoint check failed: {}", e);
+                }
+            }
+        }
 
         Ok(PingResponse {
-            status: "ok".to_string(),
-            version: "0.1.0".to_string(),
-            uptime_seconds: 0,
+            status,
+            version: "1.0.0".to_string(),
+            uptime_seconds: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            endpoints: Some(EndpointStatus {
+                graphql: graphql_ok,
+                rest: rest_ok,
+                graphql_url: health.graphql_url,
+                rest_url: health.rest_url,
+            }),
         })
     }
 
-    /// Get server information
+    /// Check health of both endpoints
+    async fn check_endpoint_health(&self) -> Result<EndpointHealth> {
+        let mut health = EndpointHealth {
+            graphql: false,
+            rest: false,
+            graphql_url: self.graphql_endpoint.clone(),
+            rest_url: self.rest_endpoint.clone(),
+        };
+
+        // Check GraphQL endpoint (GET should return method not allowed or similar)
+        let graphql_check = self
+            .http_client
+            .get(&self.graphql_endpoint)
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await;
+
+        health.graphql = match graphql_check {
+            Ok(response) => {
+                // GraphQL typically returns 405 (Method Not Allowed) or 400 for GET requests
+                response.status().as_u16() == 405 || response.status().as_u16() == 400
+            }
+            Err(_) => false,
+        };
+
+        // Check REST endpoint
+        let models_url = format!("{}/v1/models", self.rest_endpoint);
+        let rest_check = self
+            .http_client
+            .get(&models_url)
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await;
+
+        health.rest = match rest_check {
+            Ok(response) => response.status().is_success(),
+            Err(_) => false,
+        };
+
+        Ok(health)
+    }
+
+    /// Get server information from both endpoints
     pub async fn info(&self) -> Result<ServerInfo> {
-        let query = QueryBuilder::query(
-            "Info",
-            "llmProviders",
-            &["name", "healthStatus { isHealthy }"],
-        );
+        let health = self.check_endpoint_health().await?;
 
-        #[derive(Deserialize)]
-        struct Response {
-            #[serde(rename = "llmProviders")]
-            llm_providers: Vec<LlmProviderInfo>,
+        let mut info = ServerInfo {
+            name: "Circuit Breaker AI Workflow Engine".to_string(),
+            version: "1.0.0".to_string(),
+            features: Vec::new(),
+            providers: Vec::new(),
+            endpoints: Some(EndpointInfo {
+                graphql: health.graphql,
+                rest: health.rest,
+            }),
+        };
+
+        // Get GraphQL schema info if available
+        if health.graphql {
+            let introspection_query = r#"
+                query IntrospectionQuery {
+                    __schema {
+                        types {
+                            name
+                            kind
+                        }
+                    }
+                }
+            "#;
+
+            if let Ok(result) = self
+                .graphql_request_raw::<serde_json::Value, serde_json::Value>(
+                    introspection_query,
+                    serde_json::Value::Null,
+                )
+                .await
+            {
+                if let Some(types) = result
+                    .get("__schema")
+                    .and_then(|s| s.get("types"))
+                    .and_then(|t| t.as_array())
+                {
+                    let mut features = Vec::new();
+                    for type_obj in types {
+                        if let Some(name) = type_obj.get("name").and_then(|n| n.as_str()) {
+                            if name.contains("Workflow")
+                                && !features.contains(&"workflows".to_string())
+                            {
+                                features.push("workflows".to_string());
+                            }
+                            if name.contains("Agent") && !features.contains(&"agents".to_string()) {
+                                features.push("agents".to_string());
+                            }
+                            if name.contains("Rule") && !features.contains(&"rules".to_string()) {
+                                features.push("rules".to_string());
+                            }
+                            if (name.contains("Llm") || name.contains("LLM"))
+                                && !features.contains(&"llm".to_string())
+                            {
+                                features.push("llm".to_string());
+                            }
+                            if (name.contains("Mcp") || name.contains("MCP"))
+                                && !features.contains(&"mcp".to_string())
+                            {
+                                features.push("mcp".to_string());
+                            }
+                            if name.contains("Analytics")
+                                && !features.contains(&"analytics".to_string())
+                            {
+                                features.push("analytics".to_string());
+                            }
+                        }
+                    }
+                    info.features.extend(features);
+                }
+            }
         }
 
-        #[derive(Deserialize)]
-        struct LlmProviderInfo {
-            name: String,
-            #[serde(rename = "healthStatus")]
-            health_status: HealthStatus,
+        // Get REST API info if available
+        if health.rest {
+            let models_url = format!("{}/v1/models", self.rest_endpoint);
+            if let Ok(response) = self.http_client.get(&models_url).send().await {
+                if response.status().is_success() {
+                    if let Ok(models_data) = response.json::<serde_json::Value>().await {
+                        if let Some(models_array) =
+                            models_data.get("data").and_then(|d| d.as_array())
+                        {
+                            let providers: std::collections::HashSet<String> = models_array
+                                .iter()
+                                .filter_map(|model| {
+                                    model
+                                        .get("provider")
+                                        .and_then(|p| p.as_str())
+                                        .map(|s| s.to_string())
+                                })
+                                .collect();
+                            info.providers = providers.into_iter().collect();
+                            info.features.extend_from_slice(&[
+                                "llm-routing".to_string(),
+                                "smart-routing".to_string(),
+                                "virtual-models".to_string(),
+                                "streaming".to_string(),
+                            ]);
+                        }
+                    }
+                }
+            }
         }
 
-        #[derive(Deserialize)]
-        struct HealthStatus {
-            #[serde(rename = "isHealthy")]
-            is_healthy: bool,
-        }
-
-        let result: Response = self.graphql(&query, ()).await?;
-
-        let features: Vec<String> = result
-            .llm_providers
-            .iter()
-            .map(|p| format!("llm-{}", p.name.to_lowercase()))
-            .collect();
-
-        Ok(ServerInfo {
-            name: "Circuit Breaker".to_string(),
-            version: "1.0.0".to_string(), // Default version
-            features,
-        })
+        Ok(info)
     }
 
     /// Access workflows API
@@ -250,8 +465,25 @@ impl Client {
         self.config.timeout_ms
     }
 
-    /// Make a GraphQL request
+    /// Make a GraphQL request with endpoint validation
     pub async fn graphql<T, V>(&self, query: &str, variables: V) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+        V: Serialize,
+    {
+        // Ensure GraphQL endpoint is available
+        let health = self.check_endpoint_health().await?;
+        if !health.graphql {
+            return Err(Error::Network {
+                message: "GraphQL endpoint is not available".to_string(),
+            });
+        }
+
+        self.graphql_request_raw(query, variables).await
+    }
+
+    /// Make a raw GraphQL request without health checking
+    async fn graphql_request_raw<T, V>(&self, query: &str, variables: V) -> Result<T>
     where
         T: for<'de> Deserialize<'de>,
         V: Serialize,
@@ -278,15 +510,27 @@ impl Client {
             variables,
         };
 
-        let url = self.config.base_url.join("/graphql")?;
         let response = self
             .http_client
-            .post(url)
+            .post(&self.graphql_endpoint)
             .json(&request_body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| Error::Network {
+                message: format!("GraphQL request failed: {}", e),
+            })?;
 
-        let graphql_response: GraphQLResponse<T> = response.json().await?;
+        if !response.status().is_success() {
+            return Err(Error::Server {
+                status: response.status().as_u16(),
+                message: format!("GraphQL server error: {}", response.status()),
+            });
+        }
+
+        let graphql_response: GraphQLResponse<T> =
+            response.json().await.map_err(|e| Error::Parse {
+                message: format!("Failed to parse GraphQL response: {}", e),
+            })?;
 
         if let Some(errors) = graphql_response.errors {
             let error_messages: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
@@ -313,23 +557,40 @@ impl Client {
         }
     }
 
-    /// Make a REST request
+    /// Make a REST request with endpoint validation
     pub async fn rest<T, B>(&self, method: Method, path: &str, body: Option<B>) -> Result<T>
     where
         T: for<'de> Deserialize<'de>,
         B: Serialize,
     {
-        let url = self.config.base_url.join(path)?;
-        let mut request = self.http_client.request(method, url);
+        // Ensure REST endpoint is available
+        let health = self.check_endpoint_health().await?;
+        if !health.rest {
+            return Err(Error::Network {
+                message: "REST endpoint is not available".to_string(),
+            });
+        }
+
+        let url = if path.starts_with('/') {
+            format!("{}{}", self.rest_endpoint, path)
+        } else {
+            format!("{}/{}", self.rest_endpoint, path)
+        };
+
+        let mut request = self.http_client.request(method, &url);
 
         if let Some(body) = body {
             request = request.json(&body);
         }
 
-        let response = request.send().await?;
+        let response = request.send().await.map_err(|e| Error::Network {
+            message: format!("REST request failed: {}", e),
+        })?;
 
         if response.status().is_success() {
-            Ok(response.json().await?)
+            response.json().await.map_err(|e| Error::Parse {
+                message: format!("Failed to parse REST response: {}", e),
+            })
         } else {
             let status = response.status().as_u16();
             let error_text = response.text().await.unwrap_or_default();
@@ -338,6 +599,63 @@ impl Client {
                 message: error_text,
             })
         }
+    }
+
+    /// Smart request method that automatically routes to the appropriate endpoint
+    pub async fn request<T, B>(&self, method: Method, path: &str, body: Option<B>) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+        B: Serialize,
+    {
+        // Route OpenAI-compatible endpoints to REST
+        if path.starts_with("/v1/") || path.starts_with("v1/") {
+            return self.rest(method, path, body).await;
+        }
+
+        // Route GraphQL queries
+        if path == "/graphql" || path == "graphql" {
+            if method != Method::POST {
+                return Err(Error::Configuration {
+                    message: "GraphQL endpoint only supports POST requests".to_string(),
+                });
+            }
+
+            // Extract query from body if it's a GraphQL request
+            if let Some(ref graphql_body) = body {
+                let body_value = serde_json::to_value(graphql_body).map_err(|e| Error::Parse {
+                    message: format!("Failed to serialize GraphQL body: {}", e),
+                })?;
+
+                if let Some(query) = body_value.get("query").and_then(|q| q.as_str()) {
+                    let variables = body_value
+                        .get("variables")
+                        .unwrap_or(&serde_json::Value::Null);
+                    return self.graphql_request_raw(query, variables).await;
+                }
+            }
+        }
+
+        // Default to REST for other paths
+        self.rest(method, path, body).await
+    }
+
+    /// Get the appropriate endpoint URL for a given operation
+    pub fn get_endpoint_url(&self, operation: &str) -> &str {
+        match operation {
+            "graphql" => &self.graphql_endpoint,
+            "rest" => &self.rest_endpoint,
+            _ => &self.rest_endpoint,
+        }
+    }
+
+    /// Check if a specific endpoint is available
+    pub async fn is_endpoint_available(&self, endpoint: &str) -> Result<bool> {
+        let health = self.check_endpoint_health().await?;
+        Ok(match endpoint {
+            "graphql" => health.graphql,
+            "rest" => health.rest,
+            _ => false,
+        })
     }
 
     /// Get the HTTP client
@@ -401,6 +719,16 @@ pub struct PingResponse {
     pub status: String,
     pub version: String,
     pub uptime_seconds: u64,
+    pub endpoints: Option<EndpointStatus>,
+}
+
+/// Endpoint status information
+#[derive(Debug, Deserialize)]
+pub struct EndpointStatus {
+    pub graphql: bool,
+    pub rest: bool,
+    pub graphql_url: String,
+    pub rest_url: String,
 }
 
 /// Server information response
@@ -409,6 +737,15 @@ pub struct ServerInfo {
     pub name: String,
     pub version: String,
     pub features: Vec<String>,
+    pub providers: Vec<String>,
+    pub endpoints: Option<EndpointInfo>,
+}
+
+/// Endpoint information
+#[derive(Debug, Deserialize)]
+pub struct EndpointInfo {
+    pub graphql: bool,
+    pub rest: bool,
 }
 
 #[cfg(test)]

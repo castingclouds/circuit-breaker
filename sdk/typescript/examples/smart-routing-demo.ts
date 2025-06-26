@@ -108,7 +108,7 @@ async function main() {
               "Explain circuit breaker pattern in software in one sentence.",
           },
         ],
-        max_tokens: 100,
+        max_tokens: 1000,
       });
 
       const duration = Date.now() - startTime;
@@ -138,7 +138,7 @@ async function main() {
       },
     ],
     temperature: 0.7,
-    max_tokens: 150,
+    max_tokens: 1000,
     stream: false,
     circuit_breaker: {
       routing_strategy: "cost_optimized",
@@ -263,7 +263,7 @@ async function main() {
     const virtualResponse = await llm.chatCompletion({
       model: COMMON_MODELS.SMART_CREATIVE,
       messages: [{ role: "user", content: "Say 'Hello from virtual model!'" }],
-      max_tokens: 20,
+      max_tokens: 1000,
     });
     const virtualContent =
       virtualResponse.choices[0]?.message?.content || "No response";
@@ -279,7 +279,8 @@ async function main() {
   console.log("   ----------------------------------------");
 
   try {
-    const streamBuilder = createSmartChat(COMMON_MODELS.SMART_FAST)
+    // Use a working streaming model instead of virtual model that routes to problematic Gemini
+    const streamBuilder = createSmartChat(COMMON_MODELS.GPT_O4_MINI)
       .addUserMessage(
         "Write a short story about a circuit breaker in distributed systems.",
       )
@@ -291,11 +292,11 @@ async function main() {
         task_type: "general_chat",
         require_streaming: true,
         max_latency_ms: 3000,
-        fallback_models: ["gpt-4", "claude-3-opus-20240229"],
+        fallback_models: ["claude-sonnet-4-20250514", "gpt-4"],
       });
 
     const streamingRequest = streamBuilder.build();
-    console.log("   🌊 Starting streaming response...");
+    console.log("   🌊 Starting streaming response with working model...");
 
     process.stdout.write("   📝 Story: ");
 

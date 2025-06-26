@@ -2,7 +2,7 @@
 //!
 //! This module provides client interfaces for creating and managing AI agents.
 
-use crate::{schema::QueryBuilder, types::*, ChatMessage, ChatRole, Client, Result};
+use crate::{schema::QueryBuilder, Client, Result};
 use serde::{Deserialize, Serialize};
 
 /// Client for agent operations
@@ -488,70 +488,42 @@ impl Agent {
     pub async fn send_message(&self, message: impl Into<String>) -> Result<String> {
         let message = message.into();
 
-        // Use the agent's LLM configuration to send the message via llmChatCompletion
-        let mutation = QueryBuilder::mutation_with_params(
-            "LlmChatCompletion",
-            "llmChatCompletion(input: $input)",
-            &[
-                "id",
-                "model",
-                "choices { index message { role content } finishReason }",
-                "usage { promptTokens completionTokens totalTokens }",
-            ],
-            &[("input", "LlmchatCompletionInput!")],
-        );
+        // Build the messages array with system prompt and user message
+        let mut messages = vec![crate::llm::ChatMessage {
+            role: crate::llm::ChatRole::System,
+            content: self.data.prompts.system.clone(),
+            name: None,
+        }];
 
-        #[derive(Serialize)]
-        struct Variables {
-            input: LlmchatCompletionInput,
-        }
+        // Add user message
+        messages.push(crate::llm::ChatMessage {
+            role: crate::llm::ChatRole::User,
+            content: message,
+            name: None,
+        });
 
-        #[derive(Serialize)]
-        struct LlmchatCompletionInput {
-            model: String,
-            messages: Vec<ChatMessage>,
-            temperature: Option<f32>,
-            #[serde(rename = "maxTokens")]
-            max_tokens: Option<u32>,
-        }
+        // Create LLM client and make REST API call
+        let llm_client = self.client.llm();
+        let request = crate::llm::ChatCompletionRequest {
+            model: self.data.llm_provider.model.clone(),
+            messages,
+            temperature: Some(self.data.llm_config.temperature as f32),
+            max_tokens: self.data.llm_config.max_tokens.map(|t| t as u32),
+            stream: None,
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            stop: None,
+            user: None,
+            functions: None,
+            function_call: None,
+            circuit_breaker: None,
+        };
 
-        #[derive(Deserialize)]
-        struct Response {
-            #[serde(rename = "llmChatCompletion")]
-            llm_chat_completion: crate::llm::ChatCompletionResponse,
-        }
-
-        // Create messages including the agent's system prompt
-        let messages = vec![
-            ChatMessage {
-                role: ChatRole::System,
-                content: self.data.prompts.system.clone(),
-                name: None,
-            },
-            ChatMessage {
-                role: ChatRole::User,
-                content: message,
-                name: None,
-            },
-        ];
-
-        let response: Response = self
-            .client
-            .graphql(
-                &mutation,
-                Variables {
-                    input: LlmchatCompletionInput {
-                        model: self.data.llm_provider.model.clone(),
-                        messages,
-                        temperature: Some(self.data.llm_config.temperature as f32),
-                        max_tokens: self.data.llm_config.max_tokens.map(|t| t as u32),
-                    },
-                },
-            )
-            .await?;
+        let response = llm_client.chat_completion(request).await?;
 
         // Extract the assistant's response
-        if let Some(choice) = response.llm_chat_completion.choices.first() {
+        if let Some(choice) = response.choices.first() {
             Ok(choice.message.content.clone())
         } else {
             Err(crate::Error::Network {
