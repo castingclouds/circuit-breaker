@@ -108,7 +108,7 @@ async function main() {
               "Explain circuit breaker pattern in software in one sentence.",
           },
         ],
-        max_tokens: 100,
+        max_tokens: 1000,
       });
 
       const duration = Date.now() - startTime;
@@ -138,7 +138,7 @@ async function main() {
       },
     ],
     temperature: 0.7,
-    max_tokens: 150,
+    max_tokens: 1000,
     stream: false,
     circuit_breaker: {
       routing_strategy: "cost_optimized",
@@ -263,7 +263,7 @@ async function main() {
     const virtualResponse = await llm.chatCompletion({
       model: COMMON_MODELS.SMART_CREATIVE,
       messages: [{ role: "user", content: "Say 'Hello from virtual model!'" }],
-      max_tokens: 20,
+      max_tokens: 1000,
     });
     const virtualContent =
       virtualResponse.choices[0]?.message?.content || "No response";
