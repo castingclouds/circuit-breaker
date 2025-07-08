@@ -669,7 +669,7 @@ impl FunctionEngine {
                 let pattern = format!("${{event.data.{}}}", key);
                 let replacement = match value {
                     serde_json::Value::String(s) => s.clone(),
-                    _ => serde_json::to_string(value).unwrap_or_default(),
+                    _ => serde_json::to_string(&value).unwrap_or_default(),
                 };
                 result = result.replace(&pattern, &replacement);
             }

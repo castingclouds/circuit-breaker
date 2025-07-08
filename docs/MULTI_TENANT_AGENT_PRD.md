@@ -70,8 +70,8 @@ Create a standalone agent architecture with:
 - [x] **Prompt**: Replace with `context: serde_json::Value` field for generic metadata
 - [x] **Prompt**: Update `AgentExecution::new()` constructor to accept context instead of resource_id/state_id
 - [x] **Prompt**: Add helper methods for context manipulation: `get_context_value()`, `set_context_value()`
-- [ ] **Prompt**: Remove `StateAgentConfig` struct or make it optional/workflow-specific
-- [ ] **Prompt**: Update `AgentActivityConfig` to use generic context mappings
+- [x] **Prompt**: Remove `StateAgentConfig` struct or make it optional/workflow-specific
+- [x] **Prompt**: Update `AgentActivityConfig` to use generic context mappings
 - [x] **Compile Test**: Ensure `src/models/agent.rs` compiles independently
 
 #### 3.1.2 Abstract Agent Storage Interface

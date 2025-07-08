@@ -129,6 +129,10 @@ impl Default for AgentRetryConfig {
 }
 
 /// Configuration for agent execution in activities
+///
+/// NOTE: This struct is already generic and workflow-independent, using HashMap<String, String>
+/// for input/output mappings. This is the preferred approach for standalone agent architecture.
+/// The mappings can work with any context structure, not just workflow Resources.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentActivityConfig {
     pub agent_id: AgentId,
@@ -139,7 +143,23 @@ pub struct AgentActivityConfig {
     pub retry_config: Option<AgentRetryConfig>,
 }
 
+// =============================================================================
+// WORKFLOW-SPECIFIC TYPES (TO BE MOVED TO INTEGRATION LAYER)
+// =============================================================================
+//
+// The following types are tightly coupled to the Petri net workflow engine
+// and will be moved to the workflow integration bridge layer in Phase 2.
+// They are kept here temporarily to maintain compilation during refactoring.
+//
+// DEPRECATION NOTICE: These types will be moved to src/integration/workflow_bridge.rs
+// in Phase 2 of the standalone agent refactoring.
+//
+// =============================================================================
+
 /// Scheduling configuration for place agents
+///
+/// DEPRECATED: This will be moved to the workflow integration layer
+#[deprecated(note = "Will be moved to workflow integration layer in Phase 2")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateAgentSchedule {
     pub initial_delay_seconds: Option<u64>,
@@ -149,6 +169,9 @@ pub struct StateAgentSchedule {
 
 /// Configuration for running agents on tokens in specific places
 /// Configuration for agents that monitor specific states
+///
+/// DEPRECATED: This workflow-specific type will be moved to the workflow integration layer
+#[deprecated(note = "Will be moved to workflow integration layer in Phase 2")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateAgentConfig {
     pub id: Uuid,
@@ -166,6 +189,8 @@ pub struct StateAgentConfig {
     pub updated_at: DateTime<Utc>,
 }
 
+/// DEPRECATED: This impl will be moved to the workflow integration layer
+#[allow(deprecated)]
 impl StateAgentConfig {
     pub fn new(state_id: StateId, agent_id: AgentId) -> Self {
         let now = Utc::now();

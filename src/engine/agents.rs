@@ -43,9 +43,37 @@ pub trait AgentStorage: Send + Sync {
     async fn delete_agent(&self, id: &AgentId) -> Result<bool>;
 
     // State agent configurations
+    // DEPRECATED: These methods will be moved to the workflow integration layer
+    /// Store a state agent configuration
+    ///
+    /// # Deprecation Notice
+    /// This method is workflow-specific and will be moved to the workflow integration
+    /// bridge layer in Phase 2 of the standalone agent refactoring.
+    #[deprecated(note = "Will be moved to workflow integration layer in Phase 2")]
     async fn store_state_agent_config(&self, config: &StateAgentConfig) -> Result<()>;
+
+    /// Get state agent configurations for a specific state
+    ///
+    /// # Deprecation Notice
+    /// This method is workflow-specific and will be moved to the workflow integration
+    /// bridge layer in Phase 2 of the standalone agent refactoring.
+    #[deprecated(note = "Will be moved to workflow integration layer in Phase 2")]
     async fn get_state_agent_configs(&self, state_id: &StateId) -> Result<Vec<StateAgentConfig>>;
+
+    /// List all state agent configurations
+    ///
+    /// # Deprecation Notice
+    /// This method is workflow-specific and will be moved to the workflow integration
+    /// bridge layer in Phase 2 of the standalone agent refactoring.
+    #[deprecated(note = "Will be moved to workflow integration layer in Phase 2")]
     async fn list_state_agent_configs(&self) -> Result<Vec<StateAgentConfig>>;
+
+    /// Delete a state agent configuration
+    ///
+    /// # Deprecation Notice
+    /// This method is workflow-specific and will be moved to the workflow integration
+    /// bridge layer in Phase 2 of the standalone agent refactoring.
+    #[deprecated(note = "Will be moved to workflow integration layer in Phase 2")]
     async fn delete_state_agent_config(&self, id: &Uuid) -> Result<bool>;
 
     // Agent executions
@@ -60,6 +88,7 @@ pub trait AgentStorage: Send + Sync {
 #[derive(Debug, Default)]
 pub struct InMemoryAgentStorage {
     agents: RwLock<HashMap<AgentId, AgentDefinition>>,
+    #[allow(deprecated)]
     state_configs: RwLock<HashMap<Uuid, StateAgentConfig>>,
     executions: RwLock<HashMap<Uuid, AgentExecution>>,
 }
@@ -87,12 +116,14 @@ impl AgentStorage for InMemoryAgentStorage {
         Ok(agents.remove(id).is_some())
     }
 
+    #[allow(deprecated)]
     async fn store_state_agent_config(&self, config: &StateAgentConfig) -> Result<()> {
         let mut configs = self.state_configs.write().await;
         configs.insert(config.id, config.clone());
         Ok(())
     }
 
+    #[allow(deprecated)]
     async fn get_state_agent_configs(&self, state_id: &StateId) -> Result<Vec<StateAgentConfig>> {
         let configs = self.state_configs.read().await;
         let result: Vec<StateAgentConfig> = configs
@@ -103,11 +134,13 @@ impl AgentStorage for InMemoryAgentStorage {
         Ok(result)
     }
 
+    #[allow(deprecated)]
     async fn list_state_agent_configs(&self) -> Result<Vec<StateAgentConfig>> {
         let configs = self.state_configs.read().await;
         Ok(configs.values().cloned().collect())
     }
 
+    #[allow(deprecated)]
     async fn delete_state_agent_config(&self, id: &Uuid) -> Result<bool> {
         let mut configs = self.state_configs.write().await;
         Ok(configs.remove(id).is_some())
@@ -278,6 +311,7 @@ impl AgentEngine {
     }
 
     /// Check if agent should be triggered based on conditions
+    #[allow(deprecated)]
     async fn should_trigger_agent(
         &self,
         config: &StateAgentConfig,
@@ -299,6 +333,7 @@ impl AgentEngine {
     }
 
     /// Execute agent for a specific state agent configuration
+    #[allow(deprecated)]
     async fn execute_agent_for_config(
         &self,
         config: &StateAgentConfig,

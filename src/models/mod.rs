@@ -113,8 +113,8 @@ pub use function::{
 /// - LLMConfig: LLM generation parameters
 /// - AgentPrompts: System and user prompt templates
 /// - AgentActivityConfig: Agent execution in workflow activities
-/// - StateAgentConfig: Agent execution for resources in specific states
-/// - StateAgentSchedule: Scheduling configuration for state agents
+/// - StateAgentConfig: DEPRECATED - Agent execution for resources in specific states (will be moved to workflow integration layer)
+/// - StateAgentSchedule: DEPRECATED - Scheduling configuration for state agents (will be moved to workflow integration layer)
 /// - AgentRetryConfig: Retry configuration for agent failures
 /// - AgentExecution: Records of agent execution
 /// - AgentExecutionStatus: Status of agent executions
@@ -125,5 +125,9 @@ pub use function::{
 pub use agent::{
     AgentActivityConfig, AgentDefinition, AgentExecution, AgentExecutionStatus, AgentId,
     AgentPrompts, AgentRetryConfig, AgentStreamEvent, Conversation, ConversationMessage, LLMConfig,
-    LLMProvider, MessageRole, StateAgentConfig, StateAgentSchedule,
+    LLMProvider, MessageRole,
 };
+
+// Deprecated workflow-specific types (to be moved to integration layer)
+#[allow(deprecated)]
+pub use agent::{StateAgentConfig, StateAgentSchedule};
