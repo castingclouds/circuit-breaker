@@ -765,8 +765,16 @@ impl From<&AgentExecution> for AgentExecutionGQL {
         AgentExecutionGQL {
             id: execution.id.to_string(),
             agent_id: execution.agent_id.as_str().to_string(),
-            resource_id: execution.resource_id.to_string(),
-            state_id: execution.state_id.as_str().to_string(),
+            resource_id: execution
+                .get_context_value("resource_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            state_id: execution
+                .get_context_value("state_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
             status: AgentExecutionStatusGQL::from(&execution.status),
             input_data: execution.input_data.clone(),
             output_data: execution.output_data.clone(),

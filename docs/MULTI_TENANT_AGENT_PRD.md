@@ -1,690 +1,491 @@
-# Circuit Breaker Agent Execution Enhancement - PRD
+# Circuit Breaker Standalone Agent Architecture - Product Enhancement Document
 
 ## 1. Executive Summary
 
 ### 1.1 Overview
-This document outlines enhancements to the Circuit Breaker project to implement a production-ready multi-tenant agent execution system with proper LLM integration and multi-agent collaboration capabilities, following the established MCP architecture patterns.
+This document outlines the refactoring of Circuit Breaker's agent capabilities from a workflow-coupled system to a standalone, reusable agent architecture. The new design decouples agents from Petri net workflows while maintaining integration capabilities through a bridge layer.
 
-### 1.2 Current State Analysis
-**What's Already Implemented:**
-- NATS-based messaging and KV store infrastructure
-- Multi-tenant MCP server architecture with OAuth/JWT authentication
-- LLM router with virtual model resolution for 50+ providers
-- GraphQL API with real-time subscriptions and SSE streaming
-- Analytics, cost tracking, and rules engine
-- Docker function execution capabilities
-- Comprehensive Rust and TypeScript SDKs
+### 1.2 Current State Problems
+- Agents are tightly coupled to workflow `Resource` and `StateId` types
+- Agent execution requires workflow engine context
+- Cannot run agents independently for testing or external integration
+- MCP capabilities are separate from agent capabilities
+- Limited reusability across different contexts
 
-**What's Missing:**
-- Agent execution system that properly integrates with LLM router
-- Multi-agent collaboration and orchestration
-- Agent state management and persistence
-- Production-ready error handling for agent workflows
-- Agent performance monitoring and optimization
+### 1.3 Proposed Solution
+Create a standalone agent architecture with:
+- Generic context-based execution model
+- Workflow integration bridge layer
+- MCP protocol adapter
+- Multi-tenant isolation
+- Comprehensive testing framework
 
-### 1.3 Proposed Enhancements
-Building on the existing Circuit Breaker architecture:
-- **Agent Execution Engine**: Following MCP patterns for multi-tenant agent execution
-- **Multi-Agent Collaboration**: Orchestrated workflows with agent-to-agent communication
-- **Agent State Management**: Persistent state across executions using existing NATS KV patterns
-- **Enhanced Observability**: Agent-specific monitoring building on existing analytics
+## 2. Architecture Overview
 
-## 2. PHASE 1: AGENT EXECUTION SYSTEM (WEEKS 1-2)
-
-### 2.1 Agent Execution Engine Following MCP Patterns
-
-**Implementation Prompt**:
+### 2.1 High-Level Architecture
 ```
-Implement an Agent Execution Engine that follows the existing MCP server patterns in the Circuit Breaker codebase:
-
-1. **Agent Configuration Management** (following MCP server config pattern):
-   - Study `src/mcp/server/config.rs` and `src/mcp/server/types.rs` for patterns
-   - Create `src/agent/config.rs` with similar structure:
-     ```rust
-     #[derive(Debug, Clone, Serialize, Deserialize)]
-     pub struct AgentConfig {
-         pub id: String,
-         pub tenant_id: String,
-         pub name: String,
-         pub description: String,
-         pub system_prompt: String,
-         pub virtual_model: String,  // Uses existing LLM router
-         pub temperature: f32,
-         pub max_tokens: Option<u32>,
-         pub tools: Vec<String>,
-         pub capabilities: Vec<String>,
-         pub tags: Vec<String>,
-         pub created_at: DateTime<Utc>,
-         pub updated_at: DateTime<Utc>,
-         pub is_active: bool,
-     }
-     ```
-
-2. **Agent Execution Service** (following MCP server execution pattern):
-   - Study `src/mcp/server/execution.rs` for NATS message handling patterns
-   - Create `src/agent/execution.rs` with similar NATS subscription patterns
-   - Subscribe to `cb.agent.execute.{tenant_id}.{agent_id}` following MCP naming conventions
-   - Integrate with existing LLM router via `src/llm/router.rs`
-   - Use existing cost tracking from `src/analytics/cost_tracker.rs`
-
-3. **Agent State Management** (following MCP session pattern):
-   - Study `src/mcp/session/manager.rs` for state management patterns
-   - Create `src/agent/state.rs` using existing NATS KV patterns
-   - Store agent execution state in KV buckets: `cb.agent.state.{tenant_id}.{agent_id}`
-   - Implement conversation history and context preservation
-   - Handle state persistence across executions
-
-4. **Agent Tool Integration** (following MCP tools pattern):
-   - Study `src/mcp/tools/` directory for tool integration patterns
-   - Create `src/agent/tools/` with similar structure
-   - Integrate with existing MCP server tool discovery
-   - Support tool calls in agent executions with proper authentication
-   - Handle tool responses and integrate into agent conversation flow
-
-5. **Integration Requirements**:
-   - Must follow existing tenant isolation patterns from MCP implementation
-   - Should reuse existing authentication middleware
-   - Must integrate with existing LLM router without modifications
-   - Should use existing analytics and cost tracking infrastructure
-   - Must follow existing error handling patterns from MCP codebase
-   - Should support existing GraphQL subscriptions for real-time updates
-
-Implementation should mirror the MCP server architecture but for agent execution, ensuring consistency with existing codebase patterns and conventions.
+┌─────────────────────────────────────────────────────────────┐
+│                 External Interfaces                         │
+├─────────────┬─────────────┬─────────────┬─────────────────┤
+│   HTTP API  │   MCP       │  GraphQL    │   WebSocket     │
+│   Adapter   │   Adapter   │   Adapter   │   Adapter       │
+└─────────────┴─────────────┴─────────────┴─────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│                Standalone Agent Engine                      │
+├─────────────────────────────────────────────────────────────┤
+│  • Context-based execution                                  │
+│  • Generic input/output mapping                             │
+│  • LLM provider abstraction                                 │
+│  • Streaming & retry logic                                  │
+│  • Multi-tenant isolation                                   │
+└─────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│              Integration Bridge Layer                       │
+├─────────────────────────────────────────────────────────────┤
+│  • Workflow → Agent context mapping                         │
+│  • Agent → Workflow result application                      │
+│  • Petri net state management                              │
+│  • Resource lifecycle integration                           │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 Agent Execution Request/Response Handling
+### 2.2 Core Components
+- **Standalone Agent Engine**: Core execution logic independent of workflows
+- **Context Abstraction**: Generic execution context replacing Resource/State dependencies
+- **Integration Bridge**: Workflow-specific adapter layer
+- **Protocol Adapters**: MCP, HTTP, GraphQL, WebSocket interfaces
+- **Multi-Tenant Storage**: Isolated agent data and configurations
 
-**Implementation Prompt**:
-```
-Implement agent execution request/response handling following Circuit Breaker's established patterns:
+## 3. Implementation Roadmap
 
-1. **Agent Execution Request Structure** (following MCP request patterns):
-   - Study `src/mcp/protocol/request.rs` for request handling patterns
-   - Create `src/agent/protocol/request.rs` with similar structure:
-     ```rust
-     #[derive(Debug, Clone, Serialize, Deserialize)]
-     pub struct AgentExecutionRequest {
-         pub execution_id: String,
-         pub agent_id: String,
-         pub tenant_id: String,
-         pub prompt: String,
-         pub context: Option<serde_json::Value>,
-         pub stream: bool,
-         pub tools_enabled: bool,
-         pub session_id: Option<String>,
-         pub metadata: HashMap<String, serde_json::Value>,
-     }
-     ```
+### 3.1 Phase 1: Core Agent Refactoring (Weeks 1-2)
 
-2. **Agent Execution Response Handling** (following MCP response patterns):
-   - Study `src/mcp/protocol/response.rs` for response handling
-   - Create `src/agent/protocol/response.rs` with streaming support
-   - Support both streaming and non-streaming responses
-   - Include proper error handling and status tracking
-   - Integrate with existing SSE streaming infrastructure
+#### 3.1.1 Remove Workflow Dependencies from Agent Models
+**Target Files**: `src/models/agent.rs`
 
-3. **Agent Execution Context** (following MCP context patterns):
-   - Study `src/mcp/context/` for context management
-   - Create `src/agent/context.rs` for agent-specific context
-   - Maintain conversation history and session state
-   - Handle context windowing for long conversations
-   - Support context sharing between agent executions
+**Tasks**:
+- [x] **Prompt**: Remove `resource_id: Uuid` and `state_id: StateId` from `AgentExecution` struct
+- [x] **Prompt**: Replace with `context: serde_json::Value` field for generic metadata
+- [x] **Prompt**: Update `AgentExecution::new()` constructor to accept context instead of resource_id/state_id
+- [x] **Prompt**: Add helper methods for context manipulation: `get_context_value()`, `set_context_value()`
+- [ ] **Prompt**: Remove `StateAgentConfig` struct or make it optional/workflow-specific
+- [ ] **Prompt**: Update `AgentActivityConfig` to use generic context mappings
+- [x] **Compile Test**: Ensure `src/models/agent.rs` compiles independently
 
-4. **LLM Router Integration** (using existing router):
-   - Study `src/llm/router.rs` to understand current integration patterns
-   - Create `src/agent/llm_integration.rs` to bridge agent requests to LLM router
-   - Transform agent requests into LLM router requests
-   - Handle virtual model resolution through existing router
-   - Support streaming responses from LLM router
-   - Integrate tool calls with LLM provider responses
+#### 3.1.2 Abstract Agent Storage Interface
+**Target Files**: `src/engine/agents.rs` (storage trait)
 
-5. **Error Handling** (following existing error patterns):
-   - Study `src/error/` directory for error handling patterns
-   - Create agent-specific error types that integrate with existing error system
-   - Handle LLM provider errors gracefully
-   - Support error recovery and retry mechanisms
-   - Provide meaningful error messages to clients
+**Tasks**:
+- [ ] **Prompt**: Remove `StateAgentConfig` references from `AgentStorage` trait
+- [ ] **Prompt**: Update `store_execution()` and related methods to use generic context
+- [ ] **Prompt**: Add `list_executions_by_context()` method for flexible querying
+- [ ] **Prompt**: Update `InMemoryAgentStorage` implementation to match new interface
+- [ ] **Prompt**: Add context-based indexing for efficient queries
+- [ ] **Compile Test**: Ensure storage trait compiles and basic tests pass
 
-6. **Performance Optimization**:
-   - Use existing connection pooling and caching infrastructure
-   - Implement request queuing for high-throughput scenarios
-   - Support concurrent agent executions per tenant
-   - Optimize memory usage for long-running conversations
-   - Integration with existing performance monitoring
+#### 3.1.3 Refactor Agent Engine Core
+**Target Files**: `src/engine/agents.rs` (engine implementation)
 
-Must maintain compatibility with existing GraphQL API and support real-time subscriptions for agent execution updates.
-```
+**Tasks**:
+- [ ] **Prompt**: Remove `RulesEngine` dependency from `AgentEngine` constructor
+- [ ] **Prompt**: Update `execute_agent_internal()` to accept generic context instead of Resource
+- [ ] **Prompt**: Refactor `map_input_data()` to work with `serde_json::Value` context
+- [ ] **Prompt**: Update `apply_output_to_resource()` to `apply_output_to_context()`
+- [ ] **Prompt**: Remove workflow-specific validation logic
+- [ ] **Prompt**: Update streaming to use context-based metadata
+- [ ] **Compile Test**: Ensure core agent engine compiles independently
 
-### 2.3 Agent Session Management
+### 3.2 Phase 2: Create Integration Bridge Layer (Weeks 2-3)
 
-**Implementation Prompt**:
-```
-Implement agent session management following the MCP session patterns:
+#### 3.2.1 Design Workflow Integration Interface
+**Target Files**: `src/integration/workflow_bridge.rs` (new file)
 
-1. **Agent Session Structure** (following MCP session patterns):
-   - Study `src/mcp/session/types.rs` for session management patterns
-   - Create `src/agent/session/types.rs` with similar structure:
-     ```rust
-     #[derive(Debug, Clone, Serialize, Deserialize)]
-     pub struct AgentSession {
-         pub session_id: String,
-         pub agent_id: String,
-         pub tenant_id: String,
-         pub user_id: Option<String>,
-         pub created_at: DateTime<Utc>,
-         pub last_activity: DateTime<Utc>,
-         pub context: ConversationContext,
-         pub state: SessionState,
-         pub metadata: HashMap<String, serde_json::Value>,
-     }
+**Tasks**:
+- [ ] **Prompt**: Create `WorkflowAgentBridge` struct with workflow storage reference
+- [ ] **Prompt**: Implement `resource_to_context()` method for Resource → context mapping
+- [ ] **Prompt**: Implement `context_to_resource()` method for result application
+- [ ] **Prompt**: Add `execute_workflow_agent()` method that handles full workflow integration
+- [ ] **Prompt**: Include state transition logic based on agent results
+- [ ] **Prompt**: Add error handling for workflow-specific failures
+- [ ] **Compile Test**: Ensure bridge layer compiles and basic workflow tests pass
 
-     #[derive(Debug, Clone, Serialize, Deserialize)]
-     pub struct ConversationContext {
-         pub messages: Vec<Message>,
-         pub tool_calls: Vec<ToolCall>,
-         pub total_tokens: u32,
-         pub cost_accumulator: f64,
-         pub context_window_size: u32,
-     }
-     ```
+#### 3.2.2 Implement State Agent Bridge
+**Target Files**: `src/integration/state_agent_bridge.rs` (new file)
 
-2. **Session Lifecycle Management** (following MCP session lifecycle):
-   - Study `src/mcp/session/manager.rs` for lifecycle management
-   - Create `src/agent/session/manager.rs` with similar patterns
-   - Handle session creation, activation, and cleanup
-   - Implement session timeout and cleanup mechanisms
-   - Support session persistence across server restarts
+**Tasks**:
+- [ ] **Prompt**: Create `StateAgentBridge` for managing place-based agent execution
+- [ ] **Prompt**: Implement state monitoring and agent triggering logic
+- [ ] **Prompt**: Add scheduling support for periodic agent execution
+- [ ] **Prompt**: Include rule evaluation for agent trigger conditions
+- [ ] **Prompt**: Update to use context-based agent execution
+- [ ] **Compile Test**: Ensure state agent bridge works with existing workflow engine
 
-3. **Session Persistence** (using existing NATS KV patterns):
-   - Store session data in NATS KV: `cb.agent.sessions.{tenant_id}.{session_id}`
-   - Implement session state serialization/deserialization
-   - Handle session state updates with proper versioning
-   - Support session backup and recovery
+#### 3.2.3 Update Workflow Engine Integration
+**Target Files**: `src/engine/mod.rs`, workflow engine files
 
-4. **Context Window Management**:
-   - Implement intelligent context window management
-   - Support context compression for long conversations
-   - Handle context overflow with message prioritization
-   - Maintain important context across window boundaries
+**Tasks**:
+- [ ] **Prompt**: Update workflow engine to use `WorkflowAgentBridge` instead of direct agent calls
+- [ ] **Prompt**: Remove direct `AgentEngine` references from workflow code
+- [ ] **Prompt**: Update GraphQL resolvers to use bridge layer
+- [ ] **Prompt**: Modify activity execution to delegate to bridge layer
+- [ ] **Prompt**: Update NATS integration to work with new bridge
+- [ ] **Integration Test**: Ensure existing workflow functionality works with bridge layer
 
-5. **Session Security** (following MCP security patterns):
-   - Study `src/mcp/auth/` for security patterns
-   - Implement tenant isolation for sessions
-   - Support session-level access controls
-   - Handle session authentication and authorization
-   - Audit session activities for security compliance
+### 3.3 Phase 3: Standalone Agent API (Weeks 3-4)
 
-6. **Session Analytics** (integrating with existing analytics):
-   - Track session metrics and usage patterns
-   - Integrate with existing cost tracking infrastructure
-   - Monitor session performance and optimization opportunities
-   - Support session-level reporting and insights
+#### 3.3.1 Design Standalone Agent API
+**Target Files**: `src/agents/api.rs` (new file)
 
-Implementation should support both single-turn and multi-turn conversations, with proper context management and cost tracking throughout the session lifecycle.
-```
+**Tasks**:
+- [ ] **Prompt**: Create `StandaloneAgentApi` struct with agent engine reference
+- [ ] **Prompt**: Implement `execute_agent()` method with generic context input
+- [ ] **Prompt**: Add streaming support with SSE/WebSocket protocols
+- [ ] **Prompt**: Include tenant isolation in API layer
+- [ ] **Prompt**: Add comprehensive error handling and validation
+- [ ] **Prompt**: Implement rate limiting and request queuing
+- [ ] **Compile Test**: Ensure standalone API compiles and basic tests pass
 
-## 3. PHASE 2: MULTI-AGENT COLLABORATION (WEEKS 3-4)
+#### 3.3.2 HTTP REST Endpoints
+**Target Files**: `src/agents/http_handlers.rs` (new file)
 
-### 3.1 Multi-Agent Orchestration Engine
+**Tasks**:
+- [ ] **Prompt**: Create `POST /agents/{agent_id}/execute` endpoint
+- [ ] **Prompt**: Create `GET /agents/{agent_id}/executions` endpoint
+- [ ] **Prompt**: Create `GET /agents/{agent_id}/executions/{execution_id}` endpoint
+- [ ] **Prompt**: Create `GET /agents/{agent_id}/executions/{execution_id}/stream` SSE endpoint
+- [ ] **Prompt**: Add request/response validation and serialization
+- [ ] **Prompt**: Include tenant-aware routing and authentication
+- [ ] **Integration Test**: Test all HTTP endpoints with real agent execution
 
-**Implementation Prompt**:
-```
-Implement multi-agent collaboration following Circuit Breaker's workflow and messaging patterns:
+#### 3.3.3 WebSocket Streaming Support
+**Target Files**: `src/agents/websocket_handlers.rs` (new file)
 
-1. **Agent Collaboration Framework** (following existing workflow patterns):
-   - Study `src/workflow/` directory for workflow orchestration patterns
-   - Create `src/agent/collaboration/` with similar structure
-   - Design agent-to-agent communication protocols using existing NATS patterns
-   - Support sequential, parallel, and conditional agent execution flows
+**Tasks**:
+- [ ] **Prompt**: Create WebSocket handler for real-time agent streaming
+- [ ] **Prompt**: Implement connection management and authentication
+- [ ] **Prompt**: Add message routing for different execution contexts
+- [ ] **Prompt**: Include error handling and connection recovery
+- [ ] **Prompt**: Add support for multiple concurrent executions per connection
+- [ ] **Integration Test**: Test WebSocket streaming with long-running agent tasks
 
-2. **Agent Communication Protocol** (following MCP messaging patterns):
-   - Study `src/mcp/protocol/` for messaging patterns
-   - Create `src/agent/protocol/collaboration.rs`:
-     ```rust
-     #[derive(Debug, Clone, Serialize, Deserialize)]
-     pub struct AgentMessage {
-         pub message_id: String,
-         pub from_agent: String,
-         pub to_agent: String,
-         pub execution_id: String,
-         pub message_type: AgentMessageType,
-         pub content: serde_json::Value,
-         pub metadata: HashMap<String, serde_json::Value>,
-         pub timestamp: DateTime<Utc>,
-     }
+### 3.4 Phase 4: MCP Protocol Integration (Weeks 4-5)
 
-     #[derive(Debug, Clone, Serialize, Deserialize)]
-     pub enum AgentMessageType {
-         DirectMessage,
-         TaskHandoff,
-         ResultSummary,
-         ErrorReport,
-         ContextShare,
-         ToolRequest,
-     }
-     ```
+#### 3.4.1 MCP Agent Tools Adapter
+**Target Files**: `src/agents/mcp_adapter.rs` (new file)
 
-3. **Agent Workflow Orchestration** (using existing workflow engine):
-   - Study `src/workflow/engine.rs` for orchestration patterns
-   - Create `src/agent/orchestration/` to manage multi-agent workflows
-   - Support agent workflow definitions with dependencies
-   - Handle agent workflow execution with proper error handling
-   - Integrate with existing workflow state management
+**Tasks**:
+- [ ] **Prompt**: Create `MCPAgentAdapter` that exposes agents as MCP tools
+- [ ] **Prompt**: Implement tool discovery and registration
+- [ ] **Prompt**: Map agent execution to MCP tool calls
+- [ ] **Prompt**: Handle MCP-specific authentication and session management
+- [ ] **Prompt**: Add support for tool streaming and progress updates
+- [ ] **Compile Test**: Ensure MCP adapter compiles and registers tools correctly
 
-4. **Agent Handoff Mechanisms**:
-   - Implement seamless context transfer between agents
-   - Support task delegation and result aggregation
-   - Handle agent specialization and role-based routing
-   - Support dynamic agent selection based on capabilities
+#### 3.4.2 MCP Resources Integration
+**Target Files**: `src/agents/mcp_resources.rs` (new file)
 
-5. **Collaborative Tools Integration**:
-   - Study existing MCP tools patterns for tool sharing
-   - Enable agents to share tools and capabilities
-   - Support collaborative tool usage with proper permissions
-   - Handle tool conflicts and resource management
+**Tasks**:
+- [ ] **Prompt**: Expose agent executions as MCP resources
+- [ ] **Prompt**: Implement resource querying and filtering
+- [ ] **Prompt**: Add support for execution history and metadata
+- [ ] **Prompt**: Include real-time resource updates via MCP subscriptions
+- [ ] **Prompt**: Add tenant isolation for MCP resource access
+- [ ] **Integration Test**: Test MCP resource access from external MCP clients
 
-6. **Performance Optimization for Collaboration**:
-   - Implement efficient message routing between agents
-   - Support parallel agent execution where possible
-   - Optimize context sharing and memory usage
-   - Handle agent load balancing and resource allocation
+#### 3.4.3 Update Existing MCP Server
+**Target Files**: `src/api/mcp_server.rs`
 
-7. **Error Handling and Recovery**:
-   - Handle agent failures in collaborative workflows
-   - Support partial workflow recovery and continuation
-   - Implement agent fallback and substitution mechanisms
-   - Provide detailed error reporting for collaboration failures
+**Tasks**:
+- [ ] **Prompt**: Integrate `MCPAgentAdapter` into existing MCP server
+- [ ] **Prompt**: Add agent tool registration to MCP server initialization
+- [ ] **Prompt**: Update MCP server to handle agent-specific requests
+- [ ] **Prompt**: Add agent execution monitoring to MCP server
+- [ ] **Prompt**: Include agent tools in MCP server capabilities
+- [ ] **Integration Test**: Test full MCP server with agent integration
 
-Must integrate with existing GraphQL subscriptions to provide real-time updates on multi-agent workflow progress.
-```
+### 3.5 Phase 5: Multi-Tenant Architecture (Weeks 5-6)
 
-### 3.2 Agent-to-Agent Communication System
+#### 3.5.1 Tenant Isolation in Agent Engine
+**Target Files**: `src/agents/tenant_isolation.rs` (new file)
 
-**Implementation Prompt**:
-```
-Implement agent-to-agent communication following established NATS messaging patterns:
+**Tasks**:
+- [ ] **Prompt**: Create `TenantAwareAgentEngine` wrapper around standalone engine
+- [ ] **Prompt**: Implement tenant-specific agent storage and configuration
+- [ ] **Prompt**: Add tenant-based resource limits and quotas
+- [ ] **Prompt**: Include tenant-specific authentication and authorization
+- [ ] **Prompt**: Add tenant isolation for agent execution contexts
+- [ ] **Compile Test**: Ensure tenant isolation compiles and basic tests pass
 
-1. **Agent Message Bus** (following NATS patterns):
-   - Study existing NATS usage in `src/nats/` for messaging patterns
-   - Create `src/agent/messaging/` with similar structure
-   - Use NATS subjects: `cb.agent.message.{tenant_id}.{target_agent_id}`
-   - Support message queuing and delivery guarantees
-   - Handle message persistence and replay capabilities
+#### 3.5.2 Multi-Tenant Storage Layer
+**Target Files**: `src/agents/tenant_storage.rs` (new file)
 
-2. **Agent Discovery and Registration** (following MCP server discovery):
-   - Study `src/mcp/discovery/` for service discovery patterns
-   - Create `src/agent/discovery/` for agent capability discovery
-   - Support agent capability advertising and lookup
-   - Handle agent availability and health monitoring
-   - Support dynamic agent registration and deregistration
+**Tasks**:
+- [ ] **Prompt**: Create `TenantAgentStorage` implementation
+- [ ] **Prompt**: Add tenant-specific data partitioning
+- [ ] **Prompt**: Implement tenant-aware querying and filtering
+- [ ] **Prompt**: Add tenant-specific backup and recovery
+- [ ] **Prompt**: Include tenant usage analytics and monitoring
+- [ ] **Integration Test**: Test multi-tenant storage with concurrent tenants
 
-3. **Context Sharing Protocol**:
-   - Design efficient context sharing between agents
-   - Support incremental context updates
-   - Handle context versioning and conflict resolution
-   - Implement context access controls and permissions
+#### 3.5.3 Authentication and Authorization
+**Target Files**: `src/agents/auth.rs` (new file)
 
-4. **Agent Coordination Patterns**:
-   - Support common collaboration patterns:
-     - Sequential processing (agent A → agent B → agent C)
-     - Parallel processing (multiple agents working simultaneously)
-     - Conditional routing (route based on agent results)
-     - Aggregation (combine results from multiple agents)
-     - Competitive execution (best result wins)
+**Tasks**:
+- [ ] **Prompt**: Create tenant-aware authentication middleware
+- [ ] **Prompt**: Implement role-based access control for agents
+- [ ] **Prompt**: Add API key and JWT token validation
+- [ ] **Prompt**: Include tenant-specific rate limiting
+- [ ] **Prompt**: Add audit logging for tenant operations
+- [ ] **Integration Test**: Test authentication with multiple tenants and roles
 
-5. **Communication Security** (following existing security patterns):
-   - Study `src/security/` for security implementation patterns
-   - Implement secure agent-to-agent communication
-   - Support message encryption and authentication
-   - Handle authorization for agent interactions
-   - Audit agent communication for security compliance
+### 3.6 Phase 6: Advanced Features (Weeks 6-7)
 
-6. **Message Persistence and Replay**:
-   - Store agent messages in NATS KV for persistence
-   - Support message replay for debugging and analysis
-   - Handle message ordering and delivery guarantees
-   - Implement message retention policies
+#### 3.6.1 Agent Composition and Chaining
+**Target Files**: `src/agents/composition.rs` (new file)
 
-7. **Performance Monitoring**:
-   - Track communication latency between agents
-   - Monitor message queue depths and processing rates
-   - Identify communication bottlenecks and optimization opportunities
-   - Integrate with existing analytics infrastructure
+**Tasks**:
+- [ ] **Prompt**: Create `AgentComposer` for chaining multiple agents
+- [ ] **Prompt**: Implement context passing between chained agents
+- [ ] **Prompt**: Add conditional execution based on previous agent results
+- [ ] **Prompt**: Include error handling and fallback strategies
+- [ ] **Prompt**: Add parallel execution support for independent agents
+- [ ] **Compile Test**: Ensure agent composition compiles and basic tests pass
 
-Implementation should support both synchronous and asynchronous agent communication patterns, with proper error handling and recovery mechanisms.
-```
+#### 3.6.2 Performance Optimization
+**Target Files**: `src/agents/performance.rs` (new file)
 
-### 3.3 Agent Workflow Templates and Patterns
+**Tasks**:
+- [ ] **Prompt**: Implement connection pooling for LLM providers
+- [ ] **Prompt**: Add caching for frequently used agent contexts
+- [ ] **Prompt**: Include request batching and queuing optimization
+- [ ] **Prompt**: Add execution time monitoring and optimization
+- [ ] **Prompt**: Implement resource usage tracking and limits
+- [ ] **Performance Test**: Benchmark agent execution under load
 
-**Implementation Prompt**:
-```
-Implement agent workflow templates building on existing workflow infrastructure:
+#### 3.6.3 Advanced Streaming Features
+**Target Files**: `src/agents/streaming.rs` (new file)
 
-1. **Agent Workflow Template System** (following existing template patterns):
-   - Study `src/workflow/templates/` if exists, or create following workflow patterns
-   - Create `src/agent/templates/` for common multi-agent patterns
-   - Support template inheritance and customization
-   - Handle template versioning and updates
+**Tasks**:
+- [ ] **Prompt**: Implement chunked streaming for large responses
+- [ ] **Prompt**: Add progress tracking and percentage completion
+- [ ] **Prompt**: Include streaming backpressure handling
+- [ ] **Prompt**: Add support for streaming cancellation
+- [ ] **Prompt**: Implement stream multiplexing for multiple agents
+- [ ] **Integration Test**: Test streaming under various network conditions
 
-2. **Common Multi-Agent Patterns**:
-   - **Sequential Processing Pipeline**:
-     ```rust
-     pub struct SequentialAgentPipeline {
-         pub agents: Vec<AgentConfig>,
-         pub context_passing: ContextPassingConfig,
-         pub error_handling: ErrorHandlingConfig,
-     }
-     ```
-   - **Parallel Processing with Aggregation**:
-     ```rust
-     pub struct ParallelAgentExecution {
-         pub agents: Vec<AgentConfig>,
-         pub aggregation_strategy: AggregationStrategy,
-         pub timeout_config: TimeoutConfig,
-     }
-     ```
-   - **Conditional Agent Routing**:
-     ```rust
-     pub struct ConditionalAgentRouting {
-         pub routing_rules: Vec<RoutingRule>,
-         pub default_agent: String,
-         pub fallback_strategy: FallbackStrategy,
-     }
-     ```
+### 3.7 Phase 7: Testing and Documentation (Weeks 7-8)
 
-3. **Agent Workflow Builder** (following existing builder patterns):
-   - Study builder patterns in existing codebase
-   - Create `src/agent/workflow/builder.rs` for workflow construction
-   - Support fluent API for workflow definition
-   - Handle workflow validation and optimization
+#### 3.7.1 Comprehensive Unit Testing
+**Target Files**: `src/agents/tests/` (new directory)
 
-4. **Agent Capability Matching**:
-   - Implement intelligent agent selection based on capabilities
-   - Support agent skill matching for workflow optimization
-   - Handle agent load balancing and availability
-   - Support agent specialization and role-based assignment
+**Tasks**:
+- [ ] **Prompt**: Create unit tests for standalone agent engine
+- [ ] **Prompt**: Add tests for context manipulation and mapping
+- [ ] **Prompt**: Include tests for all LLM provider integrations
+- [ ] **Prompt**: Add tests for streaming and error handling
+- [ ] **Prompt**: Include tests for multi-tenant isolation
+- [ ] **Prompt**: Add performance and load testing
+- [ ] **Test Coverage**: Achieve >90% test coverage for agent modules
 
-5. **Workflow State Management** (using existing state patterns):
-   - Study `src/workflow/state/` for state management patterns
-   - Create agent-specific state management
-   - Support workflow checkpointing and recovery
-   - Handle state persistence across workflow executions
+#### 3.7.2 Integration Testing
+**Target Files**: `tests/integration/` (new directory)
 
-6. **Template Library and Marketplace**:
-   - Create library of common agent workflow templates
-   - Support template sharing and reuse
-   - Handle template validation and testing
-   - Provide template documentation and examples
+**Tasks**:
+- [ ] **Prompt**: Create integration tests for workflow bridge layer
+- [ ] **Prompt**: Add tests for MCP protocol integration
+- [ ] **Prompt**: Include tests for HTTP API endpoints
+- [ ] **Prompt**: Add tests for WebSocket streaming
+- [ ] **Prompt**: Include tests for multi-tenant scenarios
+- [ ] **Integration Test**: All integration tests pass consistently
 
-7. **Integration with Existing Systems**:
-   - Integrate with existing workflow engine
-   - Support existing GraphQL API for workflow management
-   - Use existing authentication and authorization
-   - Leverage existing analytics and monitoring
+#### 3.7.3 Documentation and Examples
+**Target Files**: `docs/agents/` (new directory)
 
-Must provide comprehensive examples for common use cases like document processing, customer support, content creation, and data analysis workflows.
+**Tasks**:
+- [ ] **Prompt**: Create standalone agent API documentation
+- [ ] **Prompt**: Add workflow integration guide
+- [ ] **Prompt**: Include MCP integration examples
+- [ ] **Prompt**: Add multi-tenant setup guide
+- [ ] **Prompt**: Include performance tuning recommendations
+- [ ] **Prompt**: Add troubleshooting guide
+- [ ] **Documentation Review**: All documentation reviewed and approved
+
+## 4. API Specifications
+
+### 4.1 Standalone Agent Execution API
+
+#### 4.1.1 Execute Agent (Non-Streaming)
+```http
+POST /agents/{agent_id}/execute
+Content-Type: application/json
+Authorization: Bearer {tenant_token}
+
+{
+  "context": {
+    "user_id": "user123",
+    "session_id": "session456",
+    "custom_data": {
+      "key": "value"
+    }
+  },
+  "input": {
+    "message": "Analyze this data...",
+    "parameters": {
+      "temperature": 0.7,
+      "max_tokens": 1000
+    }
+  },
+  "execution_config": {
+    "timeout_seconds": 300,
+    "retry_config": {
+      "max_attempts": 3,
+      "backoff_seconds": 10
+    }
+  }
+}
 ```
 
-## 4. PHASE 3: PRODUCTION ENHANCEMENTS (WEEKS 5-6)
+#### 4.1.2 Execute Agent (Streaming)
+```http
+POST /agents/{agent_id}/execute/stream
+Content-Type: application/json
+Authorization: Bearer {tenant_token}
+Accept: text/event-stream
 
-### 4.1 Advanced Agent Monitoring and Analytics
-
-**Implementation Prompt**:
-```
-Implement comprehensive agent monitoring building on existing analytics infrastructure:
-
-1. **Agent Performance Metrics** (extending existing analytics):
-   - Study `src/analytics/` for existing metrics patterns
-   - Create `src/agent/analytics/` with similar structure
-   - Track agent-specific metrics:
-     - Execution duration and success rates
-     - Token usage and cost per execution
-     - Tool usage patterns and effectiveness
-     - Context window utilization
-     - Memory and CPU usage per agent
-
-2. **Agent Execution Tracing** (extending existing tracing):
-   - Study existing tracing infrastructure
-   - Implement detailed agent execution tracing
-   - Track agent decision-making processes
-   - Monitor tool invocation and results
-   - Support distributed tracing across agent collaborations
-
-3. **Agent Performance Optimization**:
-   - Implement agent performance profiling
-   - Support A/B testing for agent configurations
-   - Provide optimization recommendations
-   - Handle performance regression detection
-   - Support automated performance tuning
-
-4. **Agent Health Monitoring**:
-   - Monitor agent availability and responsiveness
-   - Track agent error rates and failure patterns
-   - Implement agent health scoring
-   - Support predictive maintenance for agents
-   - Handle agent capacity planning
-
-5. **Multi-Agent Workflow Analytics**:
-   - Track collaboration effectiveness metrics
-   - Monitor agent interaction patterns
-   - Analyze workflow bottlenecks and optimization opportunities
-   - Support workflow performance benchmarking
-   - Handle collaboration cost analysis
-
-6. **Real-time Dashboard Integration**:
-   - Extend existing dashboard with agent metrics
-   - Support real-time agent performance monitoring
-   - Provide agent-specific alerting and notifications
-   - Handle custom metric definitions and tracking
-   - Support agent performance comparison and ranking
-
-Must integrate seamlessly with existing analytics infrastructure and provide actionable insights for agent optimization.
+{
+  "context": { ... },
+  "input": { ... },
+  "execution_config": {
+    "stream": true,
+    "stream_format": "sse"
+  }
+}
 ```
 
-### 4.2 Agent Security and Compliance
+### 4.2 Context Structure
 
-**Implementation Prompt**:
-```
-Implement agent security following existing security patterns:
-
-1. **Agent Access Control** (following existing auth patterns):
-   - Study `src/auth/` for authentication patterns
-   - Create `src/agent/security/` with similar structure
-   - Implement role-based access control for agents
-   - Support fine-grained permissions for agent operations
-   - Handle agent-specific security policies
-
-2. **Agent Execution Sandboxing**:
-   - Study existing Docker function execution patterns
-   - Implement secure agent execution environments
-   - Support resource limits and isolation
-   - Handle agent code validation and sanitization
-   - Implement execution timeout and safety mechanisms
-
-3. **Agent Communication Security**:
-   - Implement secure agent-to-agent communication
-   - Support message encryption and authentication
-   - Handle secure context sharing between agents
-   - Implement communication audit trails
-   - Support secure tool sharing and invocation
-
-4. **Agent Prompt Security**:
-   - Implement prompt injection detection and prevention
-   - Support prompt sanitization and validation
-   - Handle malicious input detection
-   - Implement prompt audit logging
-   - Support prompt compliance checking
-
-5. **Agent Data Protection**:
-   - Implement data encryption for agent context
-   - Support data residency and compliance requirements
-   - Handle sensitive data detection and masking
-   - Implement data retention and deletion policies
-   - Support GDPR and other compliance requirements
-
-6. **Agent Audit and Compliance**:
-   - Implement comprehensive agent audit logging
-   - Support compliance reporting and monitoring
-   - Handle agent activity tracking and analysis
-   - Implement compliance policy enforcement
-   - Support regulatory compliance validation
-
-Must ensure all security measures integrate with existing security infrastructure and maintain backward compatibility.
+#### 4.2.1 Generic Context Format
+```json
+{
+  "tenant_id": "tenant123",
+  "execution_id": "exec456",
+  "user_context": {
+    "user_id": "user123",
+    "session_id": "session456",
+    "preferences": {}
+  },
+  "workflow_context": {
+    "resource_id": "resource789",
+    "state_id": "state_pending",
+    "transition_id": "transition123"
+  },
+  "custom_context": {
+    "any_key": "any_value"
+  }
+}
 ```
 
-### 4.3 Agent Scaling and Performance Optimization
-
-**Implementation Prompt**:
-```
-Implement agent scaling and optimization following existing infrastructure patterns:
-
-1. **Agent Load Balancing** (following existing patterns):
-   - Study existing load balancing infrastructure
-   - Create `src/agent/scaling/` for agent-specific scaling
-   - Implement intelligent agent load distribution
-   - Support dynamic agent scaling based on demand
-   - Handle agent resource optimization
-
-2. **Agent Caching and Optimization**:
-   - Implement agent response caching
-   - Support context caching for frequently accessed data
-   - Handle tool result caching and reuse
-   - Implement intelligent cache invalidation
-   - Support cache warming and preloading
-
-3. **Agent Resource Management**:
-   - Implement resource quotas and limits per agent
-   - Support dynamic resource allocation
-   - Handle resource contention and scheduling
-   - Implement resource usage monitoring and optimization
-   - Support cost-based resource allocation
-
-4. **Agent Pool Management**:
-   - Implement agent pooling for high-throughput scenarios
-   - Support warm agent pools for low-latency execution
-   - Handle agent pool scaling and optimization
-   - Implement agent pool health monitoring
-   - Support multi-tenant agent pool isolation
-
-5. **Performance Optimization**:
-   - Implement agent execution optimization
-   - Support parallel agent execution where possible
-   - Handle agent pipeline optimization
-   - Implement intelligent agent selection
-   - Support performance-based agent routing
-
-6. **Capacity Planning**:
-   - Implement agent capacity monitoring
-   - Support predictive scaling based on usage patterns
-   - Handle capacity planning and forecasting
-   - Implement auto-scaling policies
-   - Support cost optimization for agent infrastructure
-
-Must leverage existing NATS infrastructure for efficient scaling and maintain compatibility with existing monitoring systems.
+#### 4.2.2 Workflow Bridge Context Mapping
+```rust
+// Example of how workflow bridge maps Resource to context
+impl WorkflowAgentBridge {
+    fn resource_to_context(&self, resource: &Resource) -> serde_json::Value {
+        json!({
+            "tenant_id": self.tenant_id,
+            "workflow_context": {
+                "resource_id": resource.id,
+                "state_id": resource.current_state,
+                "metadata": resource.metadata
+            },
+            "user_context": {
+                "user_id": resource.metadata.get("user_id"),
+                "session_id": resource.metadata.get("session_id")
+            }
+        })
+    }
+}
 ```
 
-## 5. INTEGRATION AND TESTING STRATEGY
+## 5. Multi-Tenant Architecture
 
-### 5.1 Testing Framework Enhancement
+### 5.1 Tenant Isolation Strategy
+- **Data Isolation**: Tenant-specific databases/schemas
+- **Execution Isolation**: Tenant-specific agent pools
+- **Resource Isolation**: Per-tenant quotas and limits
+- **Configuration Isolation**: Tenant-specific agent configurations
 
-**Implementation Prompt**:
-```
-Enhance existing testing framework for agent functionality:
+### 5.2 Authentication and Authorization
+- **Tenant Tokens**: JWT tokens with tenant claims
+- **Role-Based Access**: Admin, user, readonly roles per tenant
+- **API Key Support**: Alternative authentication method
+- **Audit Logging**: All tenant operations logged
 
-1. **Agent Unit Testing** (following existing test patterns):
-   - Study existing test patterns in `tests/` directory
-   - Create comprehensive unit tests for agent functionality
-   - Test agent execution logic and state management
-   - Test agent communication and collaboration
-   - Test agent security and error handling
+## 6. Error Handling and Observability
 
-2. **Agent Integration Testing**:
-   - Test agent integration with existing LLM router
-   - Test agent integration with MCP tools
-   - Test multi-agent collaboration workflows
-   - Test agent scaling and performance
-   - Test agent security and compliance
+### 6.1 Error Handling Strategy
+- **Structured Errors**: Consistent error format across all APIs
+- **Error Recovery**: Automatic retry with exponential backoff
+- **Graceful Degradation**: Fallback to simpler models on failure
+- **Error Aggregation**: Collect and report error patterns
 
-3. **Agent Load Testing**:
-   - Test agent performance under high load
-   - Test multi-agent workflow scalability
-   - Test agent resource utilization
-   - Test agent failover and recovery
-   - Test agent cost optimization
+### 6.2 Logging and Monitoring
+- **Structured Logging**: JSON format with correlation IDs
+- **Metrics Collection**: Execution times, success rates, resource usage
+- **Distributed Tracing**: Request flow across all components
+- **Alerting**: Automated alerts for failures and performance issues
 
-4. **Agent E2E Testing**:
-   - Test complete agent workflows from end to end
-   - Test agent integration with existing GraphQL API
-   - Test agent real-time subscriptions and streaming
-   - Test agent analytics and monitoring
-   - Test agent security and compliance
+## 7. Success Metrics
 
-Must maintain high test coverage and integrate with existing CI/CD pipeline.
-```
+### 7.1 Technical Metrics
+- **Compilation Success**: All phases compile successfully
+- **Test Coverage**: >90% unit test coverage
+- **Performance**: <100ms API response time for simple executions
+- **Reliability**: >99.9% uptime for agent execution
 
-### 5.2 Documentation and Examples
+### 7.2 Business Metrics
+- **Developer Adoption**: Standalone API usage metrics
+- **Integration Success**: Successful workflow and MCP integrations
+- **Multi-Tenant Usage**: Number of active tenants
+- **Error Rates**: <1% execution failure rate
 
-**Implementation Prompt**:
-```
-Create comprehensive documentation following existing documentation patterns:
+## 8. Migration Strategy
 
-1. **Agent API Documentation**:
-   - Document agent execution APIs
-   - Document multi-agent collaboration APIs
-   - Document agent management and configuration
-   - Document agent security and compliance
-   - Document agent monitoring and analytics
+### 8.1 Backward Compatibility
+- **Bridge Layer**: Existing workflow integration continues to work
+- **Gradual Migration**: Phase-by-phase rollout with rollback capability
+- **Feature Flags**: Toggle between old and new implementations
+- **Deprecation Timeline**: 6-month deprecation period for old APIs
 
-2. **Agent Examples and Tutorials**:
-   - Create basic agent execution examples
-   - Create multi-agent collaboration examples
-   - Create agent workflow templates
-   - Create agent performance optimization examples
-   - Create agent security implementation examples
+### 8.2 Data Migration
+- **Context Mapping**: Automatic migration of existing agent executions
+- **Configuration Update**: Migrate existing agent configurations
+- **Storage Migration**: Migrate to new multi-tenant storage format
+- **Validation**: Extensive testing during migration
 
-3. **Agent Migration Guide**:
-   - Document how to migrate from existing workflow patterns
-   - Provide migration tools and utilities
-   - Document best practices for agent implementation
-   - Provide troubleshooting guides
-   - Document performance optimization techniques
+## 9. Security Considerations
 
-Must maintain consistency with existing documentation style and provide comprehensive examples for all new functionality.
-```
+### 9.1 Data Protection
+- **Encryption**: All data encrypted at rest and in transit
+- **PII Handling**: Proper handling of personally identifiable information
+- **Data Retention**: Configurable retention policies per tenant
+- **Access Controls**: Fine-grained access control for sensitive operations
 
-## 6. SUCCESS METRICS AND VALIDATION
+### 9.2 Rate Limiting and Abuse Prevention
+- **Per-Tenant Limits**: Configurable rate limits per tenant
+- **Resource Quotas**: CPU, memory, and execution time limits
+- **Abuse Detection**: Automated detection and blocking of abusive patterns
+- **Circuit Breakers**: Automatic fallback on system overload
 
-### 6.1 Technical Success Metrics
-- Agent execution success rate > 99.5%
-- Multi-agent collaboration completion rate > 95%
-- Average agent response time < 3 seconds
-- Agent scaling efficiency > 90%
-- Zero security incidents in agent execution
-- Integration with existing systems with zero downtime
+## 10. Conclusion
 
-### 6.2 Business Success Metrics
-- Reduced development time for AI workflows by 60%
-- Improved agent performance through collaboration by 40%
-- Cost optimization through intelligent agent routing by 25%
-- Enhanced security compliance for agent operations
-- Increased developer productivity with agent templates
+This refactoring transforms Circuit Breaker's agent capabilities from a workflow-coupled system to a standalone, reusable architecture. The detailed implementation plan with checkboxes ensures systematic progress while maintaining the ability to compile and test at each stage. The new architecture provides:
 
-### 6.3 Performance Benchmarks
-- Support 10,000+ concurrent agent executions
-- Handle 100+ agents in collaborative workflows
-- Maintain <100ms latency for agent-to-agent communication
-- Support 1M+ agent executions per day
-- Achieve 99.9% uptime for agent services
+- **Flexibility**: Agents can be used in any context
+- **Testability**: Comprehensive testing without workflow dependencies
+- **Scalability**: Multi-tenant architecture with proper isolation
+- **Maintainability**: Clear separation of concerns and modular design
+- **Integration**: Seamless integration with existing workflow engine through bridge layer
 
-## 7. CONCLUSION
-
-This PRD provides a comprehensive enhancement plan for Circuit Breaker's agent execution capabilities, building on the existing solid foundation of NATS messaging, MCP architecture, and LLM routing. The implementation follows established patterns from the codebase while adding sophisticated agent collaboration and orchestration capabilities.
-
-The key benefits of this enhancement include:
-- **Seamless Integration**: Builds on existing architecture without disrupting current functionality
-- **Production Ready**: Includes comprehensive monitoring, security, and scaling capabilities
-- **Developer Friendly**: Provides clear APIs and examples following established patterns
-- **Performant**: Leverages existing infrastructure for optimal performance
-- **Secure**: Implements comprehensive security following existing patterns
-
-By following this PRD, Circuit Breaker will evolve into a comprehensive AI agent orchestration platform while maintaining its current strengths in workflow management and LLM integration.
+The phased approach ensures minimal disruption while providing maximum benefit for future development and third-party integrations.

@@ -203,8 +203,7 @@ pub enum AgentExecutionStatus {
 pub struct AgentExecution {
     pub id: Uuid,
     pub agent_id: AgentId,
-    pub resource_id: Uuid,
-    pub state_id: StateId,
+    pub context: serde_json::Value,
     pub config_id: Option<Uuid>,
     pub status: AgentExecutionStatus,
     pub input_data: serde_json::Value,
@@ -219,15 +218,13 @@ pub struct AgentExecution {
 impl AgentExecution {
     pub fn new(
         agent_id: AgentId,
-        resource_id: Uuid,
-        state_id: StateId,
+        context: serde_json::Value,
         input_data: serde_json::Value,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
             agent_id,
-            resource_id,
-            state_id,
+            context,
             config_id: None,
             status: AgentExecutionStatus::Pending,
             input_data,
@@ -259,6 +256,69 @@ impl AgentExecution {
         let now = Utc::now();
         self.completed_at = Some(now);
         self.duration_ms = Some((now - self.started_at).num_milliseconds() as u64);
+    }
+
+    /// Get a value from the execution context
+    pub fn get_context_value(&self, key: &str) -> Option<&serde_json::Value> {
+        self.context.get(key)
+    }
+
+    /// Set a value in the execution context
+    pub fn set_context_value(&mut self, key: String, value: serde_json::Value) {
+        if let serde_json::Value::Object(ref mut map) = self.context {
+            map.insert(key, value);
+        }
+    }
+
+    /// Get a nested value from the execution context using dot notation
+    pub fn get_nested_context_value(&self, path: &str) -> Option<&serde_json::Value> {
+        let keys: Vec<&str> = path.split('.').collect();
+        let mut current = &self.context;
+
+        for key in keys {
+            current = current.get(key)?;
+        }
+
+        Some(current)
+    }
+
+    /// Set a nested value in the execution context using dot notation
+    pub fn set_nested_context_value(&mut self, path: &str, value: serde_json::Value) {
+        let keys: Vec<&str> = path.split('.').collect();
+        if keys.is_empty() {
+            return;
+        }
+
+        // Ensure context is an object
+        if !self.context.is_object() {
+            self.context = serde_json::json!({});
+        }
+
+        let mut current = &mut self.context;
+        let last_key = keys.last().unwrap();
+
+        // Navigate to the parent of the final key
+        for key in keys.iter().take(keys.len() - 1) {
+            if let serde_json::Value::Object(ref mut map) = current {
+                let entry = map
+                    .entry(key.to_string())
+                    .or_insert_with(|| serde_json::json!({}));
+                if !entry.is_object() {
+                    *entry = serde_json::json!({});
+                }
+                current = entry;
+            }
+        }
+
+        // Set the final value
+        if let serde_json::Value::Object(ref mut map) = current {
+            map.insert(last_key.to_string(), value);
+        }
+    }
+
+    /// Create a new execution with a default empty context
+    pub fn new_with_empty_context(agent_id: AgentId, input_data: serde_json::Value) -> Self {
+        Self::new(agent_id, serde_json::json!({}), input_data)
     }
 }
 
@@ -323,4 +383,151 @@ pub enum MessageRole {
     User,
     Assistant,
     Tool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_agent_execution_context_creation() {
+        let agent_id = AgentId::from("test-agent");
+        let context = json!({
+            "resource_id": "123",
+            "state_id": "pending",
+            "user_id": "user123"
+        });
+        let input_data = json!({"message": "test input"});
+
+        let execution = AgentExecution::new(agent_id, context.clone(), input_data.clone());
+
+        assert_eq!(execution.agent_id.as_str(), "test-agent");
+        assert_eq!(execution.context, context);
+        assert_eq!(execution.input_data, input_data);
+        assert_eq!(execution.status, AgentExecutionStatus::Pending);
+    }
+
+    #[test]
+    fn test_context_value_operations() {
+        let agent_id = AgentId::from("test-agent");
+        let context = json!({
+            "resource_id": "123",
+            "state_id": "pending"
+        });
+        let input_data = json!({});
+
+        let mut execution = AgentExecution::new(agent_id, context, input_data);
+
+        // Test getting existing values
+        assert_eq!(
+            execution.get_context_value("resource_id"),
+            Some(&json!("123"))
+        );
+        assert_eq!(
+            execution.get_context_value("state_id"),
+            Some(&json!("pending"))
+        );
+        assert_eq!(execution.get_context_value("nonexistent"), None);
+
+        // Test setting new values
+        execution.set_context_value("user_id".to_string(), json!("user456"));
+        assert_eq!(
+            execution.get_context_value("user_id"),
+            Some(&json!("user456"))
+        );
+    }
+
+    #[test]
+    fn test_nested_context_operations() {
+        let agent_id = AgentId::from("test-agent");
+        let context = json!({
+            "workflow": {
+                "resource_id": "123",
+                "state_id": "pending"
+            }
+        });
+        let input_data = json!({});
+
+        let mut execution = AgentExecution::new(agent_id, context, input_data);
+
+        // Test getting nested values
+        assert_eq!(
+            execution.get_nested_context_value("workflow.resource_id"),
+            Some(&json!("123"))
+        );
+        assert_eq!(
+            execution.get_nested_context_value("workflow.state_id"),
+            Some(&json!("pending"))
+        );
+        assert_eq!(
+            execution.get_nested_context_value("workflow.nonexistent"),
+            None
+        );
+
+        // Test setting nested values
+        execution.set_nested_context_value("workflow.user_id", json!("user789"));
+        assert_eq!(
+            execution.get_nested_context_value("workflow.user_id"),
+            Some(&json!("user789"))
+        );
+
+        // Test creating deep nested structure
+        execution.set_nested_context_value("deep.nested.value", json!("deep_value"));
+        assert_eq!(
+            execution.get_nested_context_value("deep.nested.value"),
+            Some(&json!("deep_value"))
+        );
+    }
+
+    #[test]
+    fn test_new_with_empty_context() {
+        let agent_id = AgentId::from("test-agent");
+        let input_data = json!({"message": "test"});
+
+        let execution = AgentExecution::new_with_empty_context(agent_id, input_data.clone());
+
+        assert_eq!(execution.agent_id.as_str(), "test-agent");
+        assert_eq!(execution.context, json!({}));
+        assert_eq!(execution.input_data, input_data);
+        assert_eq!(execution.status, AgentExecutionStatus::Pending);
+    }
+
+    #[test]
+    fn test_execution_status_transitions() {
+        let agent_id = AgentId::from("test-agent");
+        let context = json!({});
+        let input_data = json!({});
+
+        let mut execution = AgentExecution::new(agent_id, context, input_data);
+
+        // Test starting execution
+        execution.start();
+        assert_eq!(execution.status, AgentExecutionStatus::Running);
+
+        // Test completing execution
+        let output = json!({"result": "success"});
+        execution.complete(output.clone());
+        assert_eq!(execution.status, AgentExecutionStatus::Completed);
+        assert_eq!(execution.output_data, Some(output));
+        assert!(execution.completed_at.is_some());
+        assert!(execution.duration_ms.is_some());
+    }
+
+    #[test]
+    fn test_execution_failure() {
+        let agent_id = AgentId::from("test-agent");
+        let context = json!({});
+        let input_data = json!({});
+
+        let mut execution = AgentExecution::new(agent_id, context, input_data);
+
+        execution.start();
+        execution.fail("Test error".to_string());
+
+        assert_eq!(execution.status, AgentExecutionStatus::Failed);
+        assert_eq!(execution.error_message, Some("Test error".to_string()));
+        assert!(execution.completed_at.is_some());
+        assert!(execution.duration_ms.is_some());
+    }
 }

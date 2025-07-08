@@ -131,7 +131,12 @@ impl AgentStorage for InMemoryAgentStorage {
         let executions = self.executions.read().await;
         Ok(executions
             .values()
-            .filter(|exec| exec.resource_id == *resource_id)
+            .filter(|exec| {
+                exec.get_context_value("resource_id")
+                    .and_then(|v| v.as_str())
+                    .map(|id| id == resource_id.to_string())
+                    .unwrap_or(false)
+            })
             .cloned()
             .collect())
     }
@@ -250,12 +255,16 @@ impl AgentEngine {
             })?;
 
         let input_data = self.map_input_data(&config.input_mapping, resource)?;
-        let mut execution = AgentExecution::new(
-            config.agent_id.clone(),
-            resource.id,
-            StateId::from(resource.current_state()),
-            input_data,
-        );
+        let context = serde_json::json!({
+            "resource_id": resource.id,
+            "state_id": resource.current_state(),
+            "workflow_context": {
+                "resource_id": resource.id,
+                "state_id": resource.current_state()
+            }
+        });
+
+        let mut execution = AgentExecution::new(config.agent_id.clone(), context, input_data);
 
         self.execute_agent_internal(
             &agent,
@@ -304,12 +313,16 @@ impl AgentEngine {
             })?;
 
         let input_data = self.map_input_data(&config.input_mapping, resource)?;
-        let mut execution = AgentExecution::new(
-            config.agent_id.clone(),
-            resource.id,
-            StateId::from(resource.current_state()),
-            input_data,
-        );
+        let context = serde_json::json!({
+            "resource_id": resource.id,
+            "state_id": resource.current_state(),
+            "workflow_context": {
+                "resource_id": resource.id,
+                "state_id": resource.current_state()
+            }
+        });
+
+        let mut execution = AgentExecution::new(config.agent_id.clone(), context, input_data);
         execution.config_id = Some(config.id);
 
         self.execute_agent_internal(
