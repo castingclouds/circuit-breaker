@@ -222,12 +222,12 @@ Create a standalone agent architecture with:
 **Target Files**: `src/agents/tenant_storage.rs` (new file)
 
 **Tasks**:
-- [ ] **Prompt**: Create `TenantAgentStorage` implementation
-- [ ] **Prompt**: Add tenant-specific data partitioning
-- [ ] **Prompt**: Implement tenant-aware querying and filtering
-- [ ] **Prompt**: Add tenant-specific backup and recovery
-- [ ] **Prompt**: Include tenant usage analytics and monitoring
-- [ ] **Integration Test**: Test multi-tenant storage with concurrent tenants
+- [x] **Prompt**: Create `TenantAgentStorage` implementation
+- [x] **Prompt**: Add tenant-specific data partitioning
+- [x] **Prompt**: Implement tenant-aware querying and filtering
+- [x] **Prompt**: Add tenant-specific backup and recovery
+- [x] **Prompt**: Include tenant usage analytics and monitoring
+- [x] **Integration Test**: Test multi-tenant storage with concurrent tenants
 
 #### 3.5.3 Authentication and Authorization
 **Target Files**: `src/agents/auth.rs` (new file)

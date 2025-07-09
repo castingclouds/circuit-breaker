@@ -3,7 +3,9 @@
 
 pub mod http_handlers;
 pub mod middleware;
+pub mod nats_storage;
 pub mod tenant_isolation;
+pub mod tenant_storage;
 pub mod websocket_handlers;
 
 use axum::{
@@ -689,6 +691,9 @@ mod websocket_tests;
 #[cfg(test)]
 mod tenant_isolation_tests;
 
+#[cfg(test)]
+mod nats_storage_tests;
+
 // Re-export HTTP handlers for convenience
 pub use http_handlers::{
     execute_agent as execute_agent_http, get_execution_details, list_agent_executions,
@@ -702,3 +707,12 @@ pub use websocket_handlers::{routes as websocket_routes, ws_handler, WebSocketSt
 pub use tenant_isolation::{
     RateLimits, ResourceQuotas, TenantAwareAgentEngine, TenantAwareAgentEngineFactory, TenantConfig,
 };
+
+// Re-export tenant storage for convenience
+pub use tenant_storage::{
+    BackupManager, BackupType, MetricsCollector, PartitionStrategy, TenantAgentStorage, TenantId,
+    TenantStorageConfig, TenantStorageMetrics,
+};
+
+// Re-export NATS storage for convenience
+pub use nats_storage::{create_tenant_aware_nats_storage, NatsAgentStorage, NatsStorageConfig};
