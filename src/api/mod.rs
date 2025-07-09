@@ -3,6 +3,7 @@
 // - OpenAI-compatible REST API
 // - MCP (Model Context Protocol) server
 
+pub mod agents;
 pub mod handlers;
 pub mod mcp_auth;
 pub mod mcp_oauth_setup;

@@ -26,7 +26,6 @@ use tokio::time::sleep;
 
 use uuid::Uuid;
 
-use crate::engine::rules::RulesEngine;
 use crate::models::{
     AgentActivityConfig, AgentDefinition, AgentExecution, AgentExecutionStatus, AgentId,
     AgentStreamEvent, LLMConfig, LLMProvider, Resource,
@@ -75,14 +74,7 @@ pub trait AgentStorage: Send + Sync {
 
     // Convenience methods for common query patterns
 
-    /// Get executions for a resource (backward compatibility helper)
-    async fn list_executions_for_resource(
-        &self,
-        resource_id: &Uuid,
-    ) -> Result<Vec<AgentExecution>> {
-        self.list_executions_by_context("resource_id", &resource_id.to_string())
-            .await
-    }
+    // Removed resource-specific method - use list_executions_by_context instead
 
     /// Get executions by status
     async fn list_executions_by_status(
@@ -276,6 +268,7 @@ mod storage_tests {
     use super::*;
     use crate::models::{AgentExecutionStatus, AgentPrompts};
     use serde_json::json;
+    use std::collections::HashMap;
     use tokio;
 
     async fn create_test_storage_with_executions() -> InMemoryAgentStorage {
@@ -527,13 +520,13 @@ mod storage_tests {
     }
 
     #[tokio::test]
-    async fn test_list_executions_for_resource_backward_compatibility() {
+    async fn test_list_executions_by_resource_id_context() {
         let storage = create_test_storage_with_executions().await;
 
-        // Test backward compatibility method
-        let resource_id = uuid::Uuid::new_v4();
+        // Test with random UUID that shouldn't match anything
+        let resource_id = Uuid::new_v4();
         let no_executions = storage
-            .list_executions_for_resource(&resource_id)
+            .list_executions_by_context("resource_id", &resource_id.to_string())
             .await
             .unwrap();
         assert_eq!(no_executions.len(), 0);
@@ -550,10 +543,188 @@ mod storage_tests {
         storage.store_execution(&execution).await.unwrap();
 
         let found_executions = storage
-            .list_executions_for_resource(&resource_id)
+            .list_executions_by_context("resource_id", &resource_id.to_string())
             .await
             .unwrap();
         assert_eq!(found_executions.len(), 1);
+    }
+
+    // Add tests for context-based Agent Engine methods
+    #[cfg(test)]
+    mod agent_engine_tests {
+        use super::*;
+
+        use serde_json::json;
+        use std::collections::HashMap;
+
+        fn create_test_agent_engine() -> AgentEngine {
+            let storage = Arc::new(InMemoryAgentStorage::default());
+            AgentEngine::new(storage, AgentEngineConfig::default())
+        }
+
+        #[test]
+        fn test_extract_value_from_context() {
+            let engine = create_test_agent_engine();
+
+            // Create a test context with nested structure
+            let context = json!({
+                "resource_id": "res-123",
+                "state_id": "state-pending",
+                "metadata": {
+                    "priority": "high",
+                    "tags": ["important", "urgent"]
+                },
+                "workflow": {
+                    "id": "workflow-abc",
+                    "version": "1.0.2",
+                    "settings": {
+                        "timeout": 3600,
+                        "retry": true
+                    }
+                }
+            });
+
+            // Test basic extraction
+            assert_eq!(
+                engine
+                    .extract_value_from_context(&context, "resource_id")
+                    .unwrap(),
+                json!("res-123")
+            );
+
+            // Test nested extraction
+            assert_eq!(
+                engine
+                    .extract_value_from_context(&context, "metadata.priority")
+                    .unwrap(),
+                json!("high")
+            );
+
+            // Test deeply nested extraction
+            assert_eq!(
+                engine
+                    .extract_value_from_context(&context, "workflow.settings.timeout")
+                    .unwrap(),
+                json!(3600)
+            );
+
+            // Test non-existent path
+            assert_eq!(
+                engine
+                    .extract_value_from_context(&context, "nonexistent.path")
+                    .unwrap(),
+                json!(null)
+            );
+        }
+
+        #[test]
+        fn test_map_input_data() {
+            let engine = create_test_agent_engine();
+
+            // Create a test context
+            let context = json!({
+                "resource_id": "res-123",
+                "user": {
+                    "id": "user-456",
+                    "name": "Test User",
+                    "preferences": {
+                        "theme": "dark"
+                    }
+                },
+                "data": {
+                    "title": "Test Document",
+                    "content": "Lorem ipsum dolor sit amet"
+                }
+            });
+
+            // Create mappings
+            let mut mappings = HashMap::new();
+            mappings.insert("document_id".to_string(), "resource_id".to_string());
+            mappings.insert("user_name".to_string(), "user.name".to_string());
+            mappings.insert("document_title".to_string(), "data.title".to_string());
+            mappings.insert("theme".to_string(), "user.preferences.theme".to_string());
+
+            // Test mapping
+            let result = engine.map_input_data(&mappings, &context).unwrap();
+
+            assert_eq!(result["document_id"], json!("res-123"));
+            assert_eq!(result["user_name"], json!("Test User"));
+            assert_eq!(result["document_title"], json!("Test Document"));
+            assert_eq!(result["theme"], json!("dark"));
+        }
+
+        #[test]
+        fn test_set_value_in_context() {
+            let engine = create_test_agent_engine();
+
+            // Create a mutable context
+            let mut context = json!({
+                "resource_id": "res-123",
+                "metadata": {
+                    "tags": ["draft"]
+                }
+            });
+
+            // Test setting a top-level value
+            engine
+                .set_value_in_context(&mut context, "status", json!("approved"))
+                .unwrap();
+            assert_eq!(context["status"], json!("approved"));
+
+            // Test setting a nested value
+            engine
+                .set_value_in_context(&mut context, "metadata.priority", json!("high"))
+                .unwrap();
+            assert_eq!(context["metadata"]["priority"], json!("high"));
+
+            // Test setting a value in a path that doesn't exist yet (should create intermediate objects)
+            engine
+                .set_value_in_context(&mut context, "review.comments.main", json!("Looks good!"))
+                .unwrap();
+            assert_eq!(context["review"]["comments"]["main"], json!("Looks good!"));
+        }
+
+        #[test]
+        fn test_apply_output_to_context() {
+            let engine = create_test_agent_engine();
+
+            // Create a mutable context
+            let mut context = json!({
+                "resource_id": "res-123",
+                "data": {
+                    "status": "pending"
+                }
+            });
+
+            // Create output
+            let output = json!({
+                "approved": true,
+                "review_score": 95,
+                "reviewer": {
+                    "name": "John Doe",
+                    "department": "Quality Assurance"
+                }
+            });
+
+            // Create mappings
+            let mut mappings = HashMap::new();
+            mappings.insert("data.status".to_string(), "approved".to_string());
+            mappings.insert("metadata.score".to_string(), "review_score".to_string());
+            mappings.insert(
+                "metadata.reviewer_name".to_string(),
+                "reviewer.name".to_string(),
+            );
+
+            // Apply output
+            engine
+                .apply_output_to_context(&mut context, &output, &mappings)
+                .unwrap();
+
+            // Verify results
+            assert_eq!(context["data"]["status"], json!(true));
+            assert_eq!(context["metadata"]["score"], json!(95));
+            assert_eq!(context["metadata"]["reviewer_name"], json!("John Doe"));
+        }
     }
 }
 
@@ -582,22 +753,16 @@ impl Default for AgentEngineConfig {
 /// Main agent execution engine
 pub struct AgentEngine {
     storage: Arc<dyn AgentStorage>,
-    rules_engine: Arc<RulesEngine>,
     config: AgentEngineConfig,
     stream_sender: broadcast::Sender<AgentStreamEvent>,
 }
 
 impl AgentEngine {
-    pub fn new(
-        storage: Arc<dyn AgentStorage>,
-        rules_engine: Arc<RulesEngine>,
-        config: AgentEngineConfig,
-    ) -> Self {
+    pub fn new(storage: Arc<dyn AgentStorage>, config: AgentEngineConfig) -> Self {
         let (stream_sender, _) = broadcast::channel(config.stream_buffer_size);
 
         Self {
             storage,
-            rules_engine,
             config,
             stream_sender,
         }
@@ -608,11 +773,11 @@ impl AgentEngine {
         self.stream_sender.subscribe()
     }
 
-    /// Execute agent for an activity
-    pub async fn execute_activity_agent(
+    /// Execute agent with a generic context
+    pub async fn execute_agent(
         &self,
         config: &AgentActivityConfig,
-        resource: &Resource,
+        context: serde_json::Value,
     ) -> Result<AgentExecution> {
         let agent = self
             .storage
@@ -622,15 +787,8 @@ impl AgentEngine {
                 CircuitBreakerError::NotFound(format!("Agent {}", config.agent_id.as_str()))
             })?;
 
-        let input_data = self.map_input_data(&config.input_mapping, resource)?;
-        let context = serde_json::json!({
-            "resource_id": resource.id,
-            "state_id": resource.current_state(),
-            "workflow_context": {
-                "resource_id": resource.id,
-                "state_id": resource.current_state()
-            }
-        });
+        // Map input using context
+        let input_data = self.map_input_data(&config.input_mapping, &context)?;
 
         let mut execution = AgentExecution::new(config.agent_id.clone(), context, input_data);
 
@@ -643,6 +801,30 @@ impl AgentEngine {
         .await?;
 
         Ok(execution)
+    }
+
+    /// Execute agent for an activity (deprecated - use execute_agent instead)
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use execute_agent with a custom context instead"
+    )]
+    pub async fn execute_activity_agent(
+        &self,
+        config: &AgentActivityConfig,
+        resource: &Resource,
+    ) -> Result<AgentExecution> {
+        // Create context from resource
+        let context = serde_json::json!({
+            "resource_id": resource.id,
+            "state_id": resource.current_state(),
+            "metadata": resource.metadata,
+            "workflow_context": {
+                "resource_id": resource.id,
+                "state_id": resource.current_state()
+            }
+        });
+
+        self.execute_agent(config, context).await
     }
 
     /// Internal agent execution logic
@@ -660,6 +842,7 @@ impl AgentEngine {
         let _ = self.stream_sender.send(AgentStreamEvent::ThinkingStatus {
             execution_id: execution.id,
             status: "Starting agent execution".to_string(),
+            context: Some(execution.context.clone()),
         });
 
         // Execute the LLM call (this would integrate with actual LLM providers)
@@ -679,6 +862,7 @@ impl AgentEngine {
                     execution_id: execution.id,
                     final_response: response,
                     usage: None,
+                    context: Some(execution.context.clone()),
                 });
             }
             Err(e) => {
@@ -688,6 +872,7 @@ impl AgentEngine {
                 let _ = self.stream_sender.send(AgentStreamEvent::Failed {
                     execution_id: execution.id,
                     error: e.to_string(),
+                    context: Some(execution.context.clone()),
                 });
             }
         }
@@ -696,37 +881,32 @@ impl AgentEngine {
         Ok(())
     }
 
-    /// Map resource data to agent input using the provided mapping
-    fn map_input_data(
-        &self,
-        mapping: &HashMap<String, String>,
-        resource: &Resource,
-    ) -> Result<Value> {
+    /// Map context data to agent input using the provided mapping
+    fn map_input_data(&self, mapping: &HashMap<String, String>, context: &Value) -> Result<Value> {
         let mut input = json!({});
 
-        for (input_key, resource_path) in mapping {
-            let value = self.extract_value_from_resource(resource, resource_path)?;
+        for (input_key, context_path) in mapping {
+            let value = self.extract_value_from_context(context, context_path)?;
             input[input_key] = value;
         }
 
         Ok(input)
     }
 
-    /// Extract value from resource using a path like "data.content" or "metadata.type"
-    fn extract_value_from_resource(&self, resource: &Resource, path: &str) -> Result<Value> {
+    /// Extract value from context using a dot-notation path like "workflow.id" or "metadata.type"
+    fn extract_value_from_context(&self, context: &Value, path: &str) -> Result<Value> {
         let parts: Vec<&str> = path.split('.').collect();
+        let mut current = context;
 
-        match parts.as_slice() {
-            ["data", field] => Ok(resource.data.get(field).cloned().unwrap_or(Value::Null)),
-            ["metadata", field] => Ok(resource
-                .metadata
-                .get(*field)
-                .cloned()
-                .unwrap_or(Value::Null)),
-            ["id"] => Ok(json!(resource.id)),
-            ["state"] => Ok(json!(resource.current_state())),
-            _ => Ok(Value::Null),
+        for part in parts {
+            if let Some(value) = current.get(part) {
+                current = value;
+            } else {
+                return Ok(Value::Null);
+            }
         }
+
+        Ok(current.clone())
     }
 
     /// Call the configured LLM provider (placeholder implementation)
@@ -796,44 +976,74 @@ impl AgentEngine {
         }
     }
 
-    /// Apply agent output to resource using output mapping
-    pub fn apply_output_to_resource(
+    /// Apply agent output to context using output mapping
+    pub fn apply_output_to_context(
         &self,
-        resource: &mut Resource,
+        context: &mut Value,
         output: &Value,
         mapping: &HashMap<String, String>,
     ) -> Result<()> {
-        for (resource_path, output_key) in mapping {
+        for (context_path, output_key) in mapping {
             if let Some(value) = output.get(output_key) {
-                self.set_value_in_resource(resource, resource_path, value.clone())?;
+                self.set_value_in_context(context, context_path, value.clone())?;
             }
         }
         Ok(())
     }
 
-    /// Set value in resource using a path like "data.review_result" or "metadata.reviewer"
-    fn set_value_in_resource(
-        &self,
-        resource: &mut Resource,
-        path: &str,
-        value: Value,
-    ) -> Result<()> {
+    /// Set value in context using a dot-notation path
+    fn set_value_in_context(&self, context: &mut Value, path: &str, value: Value) -> Result<()> {
         let parts: Vec<&str> = path.split('.').collect();
+        if parts.is_empty() {
+            return Err(CircuitBreakerError::InvalidInput(
+                "Empty context path".to_string(),
+            ));
+        }
 
-        match parts.as_slice() {
-            ["data", field] => {
-                if let Value::Object(ref mut map) = &mut resource.data {
-                    map.insert(field.to_string(), value);
+        // Handle single-level path
+        if parts.len() == 1 {
+            if let Value::Object(ref mut map) = context {
+                map.insert(parts[0].to_string(), value);
+                return Ok(());
+            } else {
+                return Err(CircuitBreakerError::InvalidInput(
+                    "Context is not an object".to_string(),
+                ));
+            }
+        }
+
+        // Handle multi-level path
+        let mut current = context;
+        for (i, part) in parts.iter().enumerate() {
+            if i == parts.len() - 1 {
+                // Last part - set the value
+                if let Value::Object(ref mut map) = current {
+                    map.insert(part.to_string(), value);
+                    return Ok(());
+                } else {
+                    return Err(CircuitBreakerError::InvalidInput(format!(
+                        "Cannot set value at path '{}': parent is not an object",
+                        path
+                    )));
                 }
-            }
-            ["metadata", field] => {
-                resource.metadata.insert(field.to_string(), value);
-            }
-            _ => {
-                return Err(CircuitBreakerError::InvalidInput(format!(
-                    "Invalid resource path: {}",
-                    path
-                )));
+            } else {
+                // Navigate to next level, creating objects as needed
+                if let Value::Object(ref mut map) = current {
+                    if !map.contains_key(*part) {
+                        map.insert(part.to_string(), json!({}));
+                    }
+
+                    let next = map.get_mut(*part).unwrap();
+                    if !next.is_object() {
+                        *next = json!({});
+                    }
+                    current = next;
+                } else {
+                    return Err(CircuitBreakerError::InvalidInput(format!(
+                        "Cannot navigate to path '{}': parent is not an object",
+                        path
+                    )));
+                }
             }
         }
 

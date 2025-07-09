@@ -354,29 +354,35 @@ pub enum AgentStreamEvent {
         execution_id: Uuid,
         chunk: String,
         sequence: u32,
+        context: Option<serde_json::Value>,
     },
     ThinkingStatus {
         execution_id: Uuid,
         status: String,
+        context: Option<serde_json::Value>,
     },
     ToolCall {
         execution_id: Uuid,
         tool_name: String,
         arguments: serde_json::Value,
+        context: Option<serde_json::Value>,
     },
     ToolResult {
         execution_id: Uuid,
         tool_name: String,
         result: serde_json::Value,
+        context: Option<serde_json::Value>,
     },
     Completed {
         execution_id: Uuid,
         final_response: serde_json::Value,
         usage: Option<serde_json::Value>,
+        context: Option<serde_json::Value>,
     },
     Failed {
         execution_id: Uuid,
         error: String,
+        context: Option<serde_json::Value>,
     },
 }
 

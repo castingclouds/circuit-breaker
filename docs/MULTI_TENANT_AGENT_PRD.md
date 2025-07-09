@@ -89,13 +89,13 @@ Create a standalone agent architecture with:
 **Target Files**: `src/engine/agents.rs` (engine implementation)
 
 **Tasks**:
-- [ ] **Prompt**: Remove `RulesEngine` dependency from `AgentEngine` constructor
-- [ ] **Prompt**: Update `execute_agent_internal()` to accept generic context instead of Resource
-- [ ] **Prompt**: Refactor `map_input_data()` to work with `serde_json::Value` context
-- [ ] **Prompt**: Update `apply_output_to_resource()` to `apply_output_to_context()`
-- [ ] **Prompt**: Remove workflow-specific validation logic
-- [ ] **Prompt**: Update streaming to use context-based metadata
-- [ ] **Compile Test**: Ensure core agent engine compiles independently
+- [x] **Prompt**: Remove `RulesEngine` dependency from `AgentEngine` constructor
+- [x] **Prompt**: Update `execute_agent_internal()` to accept generic context instead of Resource
+- [x] **Prompt**: Refactor `map_input_data()` to work with `serde_json::Value` context
+- [x] **Prompt**: Update `apply_output_to_resource()` to `apply_output_to_context()`
+- [x] **Prompt**: Remove workflow-specific validation logic
+- [x] **Prompt**: Update streaming to use context-based metadata
+- [x] **Compile Test**: Ensure core agent engine compiles independently
 
 ### 3.2 Phase 2: Create Integration Bridge Layer (Weeks 2-3)
 
@@ -139,13 +139,13 @@ Create a standalone agent architecture with:
 **Target Files**: `src/agents/api.rs` (new file)
 
 **Tasks**:
-- [ ] **Prompt**: Create `StandaloneAgentApi` struct with agent engine reference
-- [ ] **Prompt**: Implement `execute_agent()` method with generic context input
-- [ ] **Prompt**: Add streaming support with SSE/WebSocket protocols
-- [ ] **Prompt**: Include tenant isolation in API layer
-- [ ] **Prompt**: Add comprehensive error handling and validation
-- [ ] **Prompt**: Implement rate limiting and request queuing
-- [ ] **Compile Test**: Ensure standalone API compiles and basic tests pass
+- [x] **Prompt**: Create `StandaloneAgentApi` struct with agent engine reference
+- [x] **Prompt**: Implement `execute_agent()` method with generic context input
+- [x] **Prompt**: Add streaming support with SSE/WebSocket protocols
+- [x] **Prompt**: Include tenant isolation in API layer
+- [x] **Prompt**: Add comprehensive error handling and validation
+- [x] **Prompt**: Implement rate limiting and request queuing
+- [x] **Compile Test**: Ensure standalone API compiles and basic tests pass
 
 #### 3.3.2 HTTP REST Endpoints
 **Target Files**: `src/agents/http_handlers.rs` (new file)

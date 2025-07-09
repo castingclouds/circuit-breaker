@@ -23,7 +23,6 @@ use crate::engine::{
         Subscription,
     },
     nats_storage::{NATSStorage, NATSStorageConfig, NATSStorageWrapper},
-    rules::RulesEngine,
     storage::{InMemoryStorage, WorkflowStorage},
 };
 use crate::models::{ActivityDefinition, ActivityId, StateId, WorkflowDefinition};
@@ -81,14 +80,9 @@ impl GraphQLServer {
     pub fn with_agents(mut self) -> Self {
         // Create a single shared agent storage instance
         let agent_storage = std::sync::Arc::new(InMemoryAgentStorage::default());
-        let rules_engine = std::sync::Arc::new(RulesEngine::new());
 
         // Create agent engine with shared storage
-        let agent_engine = AgentEngine::new(
-            agent_storage.clone(),
-            rules_engine,
-            AgentEngineConfig::default(),
-        );
+        let agent_engine = AgentEngine::new(agent_storage.clone(), AgentEngineConfig::default());
 
         // Clone the shared Arc<dyn AgentStorage> and assign it to self.agent_storage
         // This ensures the storage is shared across the application
