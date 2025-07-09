@@ -3,6 +3,7 @@
 
 pub mod http_handlers;
 pub mod middleware;
+pub mod websocket_handlers;
 
 use axum::{
     extract::{Path, Query, State, WebSocketUpgrade},
@@ -681,8 +682,14 @@ mod tests;
 #[cfg(test)]
 mod http_handlers_tests;
 
+#[cfg(test)]
+mod websocket_tests;
+
 // Re-export HTTP handlers for convenience
 pub use http_handlers::{
     execute_agent as execute_agent_http, get_execution_details, list_agent_executions,
     routes as http_routes, stream_execution_events,
 };
+
+// Re-export WebSocket handlers for convenience
+pub use websocket_handlers::{routes as websocket_routes, ws_handler, WebSocketState};

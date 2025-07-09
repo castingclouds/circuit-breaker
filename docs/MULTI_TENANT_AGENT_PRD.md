@@ -151,24 +151,24 @@ Create a standalone agent architecture with:
 **Target Files**: `src/agents/http_handlers.rs` (new file)
 
 **Tasks**:
-- [ ] **Prompt**: Create `POST /agents/{agent_id}/execute` endpoint
-- [ ] **Prompt**: Create `GET /agents/{agent_id}/executions` endpoint
-- [ ] **Prompt**: Create `GET /agents/{agent_id}/executions/{execution_id}` endpoint
-- [ ] **Prompt**: Create `GET /agents/{agent_id}/executions/{execution_id}/stream` SSE endpoint
-- [ ] **Prompt**: Add request/response validation and serialization
-- [ ] **Prompt**: Include tenant-aware routing and authentication
-- [ ] **Integration Test**: Test all HTTP endpoints with real agent execution
+- [x] **Prompt**: Create `POST /agents/{agent_id}/execute` endpoint
+- [x] **Prompt**: Create `GET /agents/{agent_id}/executions` endpoint
+- [x] **Prompt**: Create `GET /agents/{agent_id}/executions/{execution_id}` endpoint
+- [x] **Prompt**: Create `GET /agents/{agent_id}/executions/{execution_id}/stream` SSE endpoint
+- [x] **Prompt**: Add request/response validation and serialization
+- [x] **Prompt**: Include tenant-aware routing and authentication
+- [x] **Integration Test**: Test all HTTP endpoints with real agent execution
 
 #### 3.3.3 WebSocket Streaming Support
 **Target Files**: `src/agents/websocket_handlers.rs` (new file)
 
 **Tasks**:
-- [ ] **Prompt**: Create WebSocket handler for real-time agent streaming
-- [ ] **Prompt**: Implement connection management and authentication
-- [ ] **Prompt**: Add message routing for different execution contexts
-- [ ] **Prompt**: Include error handling and connection recovery
-- [ ] **Prompt**: Add support for multiple concurrent executions per connection
-- [ ] **Integration Test**: Test WebSocket streaming with long-running agent tasks
+- [x] **Prompt**: Create WebSocket handler for real-time agent streaming
+- [x] **Prompt**: Implement connection management and authentication
+- [x] **Prompt**: Add message routing for different execution contexts
+- [x] **Prompt**: Include error handling and connection recovery
+- [x] **Prompt**: Add support for multiple concurrent executions per connection
+- [x] **Integration Test**: Test WebSocket streaming with long-running agent tasks
 
 ### 3.4 Phase 4: MCP Protocol Integration (Weeks 4-5)
 
