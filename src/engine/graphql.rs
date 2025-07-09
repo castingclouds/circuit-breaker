@@ -1221,21 +1221,17 @@ impl Query {
     }
 
     /// Get state agent configurations for a specific state
+    /// TEMPORARILY DISABLED: StateAgentConfig methods removed from AgentStorage trait
+    /// Will be moved to workflow integration layer in Phase 2
     async fn state_agent_configs(
         &self,
-        ctx: &Context<'_>,
-        state_id: String,
+        _ctx: &Context<'_>,
+        _state_id: String,
     ) -> async_graphql::Result<Vec<StateAgentConfigGQL>> {
-        let agent_storage = ctx.data::<std::sync::Arc<dyn AgentStorage>>()?;
-        let state = StateId::from(state_id);
-
-        match agent_storage.get_state_agent_configs(&state).await {
-            Ok(configs) => Ok(configs.iter().map(StateAgentConfigGQL::from).collect()),
-            Err(e) => Err(async_graphql::Error::new(format!(
-                "Failed to get state agent configs: {}",
-                e
-            ))),
-        }
+        // TODO: Re-implement in workflow integration layer
+        Err(async_graphql::Error::new(
+            "StateAgentConfig functionality temporarily disabled during standalone agent refactoring"
+        ))
     }
 
     /// Get agent execution by ID
@@ -1919,133 +1915,31 @@ impl Mutation {
     }
 
     /// Create state agent configuration
+    /// TEMPORARILY DISABLED: StateAgentConfig methods removed from AgentStorage trait
+    /// Will be moved to workflow integration layer in Phase 2
     async fn create_state_agent_config(
         &self,
-        ctx: &Context<'_>,
-        input: StateAgentConfigInput,
+        _ctx: &Context<'_>,
+        _input: StateAgentConfigInput,
     ) -> async_graphql::Result<StateAgentConfigGQL> {
-        let agent_storage = ctx.data::<std::sync::Arc<dyn AgentStorage>>()?;
-
-        // Verify agent exists
-        let agent_id = AgentId::from(input.agent_id);
-        agent_storage
-            .get_agent(&agent_id)
-            .await?
-            .ok_or_else(|| async_graphql::Error::new("Agent not found"))?;
-
-        let state_id = StateId::from(input.state_id);
-
-        // Convert input mappings from JSON
-        let input_mapping: std::collections::HashMap<String, String> =
-            serde_json::from_value(input.input_mapping)
-                .map_err(|e| async_graphql::Error::new(format!("Invalid input mapping: {}", e)))?;
-
-        let output_mapping: std::collections::HashMap<String, String> =
-            serde_json::from_value(input.output_mapping)
-                .map_err(|e| async_graphql::Error::new(format!("Invalid output mapping: {}", e)))?;
-
-        let llm_config = input.llm_config.map(|config| LLMConfig {
-            temperature: config.temperature as f32,
-            max_tokens: config.max_tokens.map(|t| t as u32),
-            top_p: config.top_p.map(|p| p as f32),
-            frequency_penalty: config.frequency_penalty.map(|p| p as f32),
-            presence_penalty: config.presence_penalty.map(|p| p as f32),
-            stop_sequences: config.stop_sequences,
-        });
-
-        let schedule = input.schedule.map(|sched| StateAgentSchedule {
-            initial_delay_seconds: sched.initial_delay_seconds.map(|d| d as u64),
-            interval_seconds: sched.interval_seconds.map(|i| i as u64),
-            max_executions: sched.max_executions.map(|e| e as u32),
-        });
-
-        let retry_config = input.retry_config.map(|retry| AgentRetryConfig {
-            max_attempts: retry.max_attempts as u32,
-            backoff_seconds: retry.backoff_seconds as u64,
-            retry_on_errors: retry.retry_on_errors,
-        });
-
-        let now = chrono::Utc::now();
-        let config = StateAgentConfig {
-            id: Uuid::new_v4(),
-            state_id,
-            agent_id,
-            llm_config,
-            trigger_conditions: vec![], // TODO: Add trigger conditions input
-            input_mapping,
-            output_mapping,
-            auto_activity: input.auto_activity.map(ActivityId::from),
-            schedule,
-            retry_config,
-            enabled: input.enabled,
-            created_at: now,
-            updated_at: now,
-        };
-
-        agent_storage
-            .store_state_agent_config(&config)
-            .await
-            .map_err(|e| {
-                async_graphql::Error::new(format!("Failed to store state agent config: {}", e))
-            })?;
-
-        Ok(StateAgentConfigGQL::from(&config))
+        // TODO: Re-implement in workflow integration layer
+        Err(async_graphql::Error::new(
+            "StateAgentConfig functionality temporarily disabled during standalone agent refactoring"
+        ))
     }
 
     /// Trigger state agents for a resource
+    /// TEMPORARILY DISABLED: execute_state_agents method removed from AgentEngine
+    /// Will be moved to workflow integration layer in Phase 2
     async fn trigger_state_agents(
         &self,
-        ctx: &Context<'_>,
-        input: TriggerStateAgentsInput,
+        _ctx: &Context<'_>,
+        _input: TriggerStateAgentsInput,
     ) -> async_graphql::Result<Vec<AgentExecutionGQL>> {
-        let workflow_storage = ctx.data::<Box<dyn WorkflowStorage>>()?;
-        let agent_engine = ctx.data::<AgentEngine>()?;
-
-        let resource_id = input
-            .resource_id
-            .parse::<Uuid>()
-            .map_err(|_| async_graphql::Error::new("Invalid resource ID format"))?;
-
-        // Get the resource with retry logic for timing issues
-        let mut resource = None;
-        for attempt in 0..3 {
-            if attempt > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(100 * (2_u64.pow(attempt))))
-                    .await;
-            }
-
-            match workflow_storage.get_resource(&resource_id).await {
-                Ok(Some(found_resource)) => {
-                    resource = Some(found_resource);
-                    break;
-                }
-                Ok(None) => {
-                    if attempt == 2 {
-                        return Err(async_graphql::Error::new(
-                            "Resource not found after retries",
-                        ));
-                    }
-                    continue;
-                }
-                Err(e) => {
-                    return Err(async_graphql::Error::new(format!(
-                        "Failed to get resource: {}",
-                        e
-                    )));
-                }
-            }
-        }
-
-        let resource = resource.unwrap();
-
-        let executions = agent_engine
-            .execute_state_agents(&resource)
-            .await
-            .map_err(|e| {
-                async_graphql::Error::new(format!("Failed to execute state agents: {}", e))
-            })?;
-
-        Ok(executions.iter().map(AgentExecutionGQL::from).collect())
+        // TODO: Re-implement in workflow integration layer
+        Err(async_graphql::Error::new(
+            "State agent triggering temporarily disabled during standalone agent refactoring",
+        ))
     }
 
     /// NATS-specific mutations for enhanced token operations

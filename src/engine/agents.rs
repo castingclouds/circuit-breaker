@@ -23,13 +23,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, RwLock};
 use tokio::time::sleep;
-use tracing::error;
+
 use uuid::Uuid;
 
 use crate::engine::rules::RulesEngine;
 use crate::models::{
     AgentActivityConfig, AgentDefinition, AgentExecution, AgentExecutionStatus, AgentId,
-    AgentStreamEvent, LLMConfig, LLMProvider, Resource, StateAgentConfig, StateId,
+    AgentStreamEvent, LLMConfig, LLMProvider, Resource,
 };
 use crate::{CircuitBreakerError, Result};
 
@@ -42,54 +42,70 @@ pub trait AgentStorage: Send + Sync {
     async fn list_agents(&self) -> Result<Vec<AgentDefinition>>;
     async fn delete_agent(&self, id: &AgentId) -> Result<bool>;
 
-    // State agent configurations
-    // DEPRECATED: These methods will be moved to the workflow integration layer
-    /// Store a state agent configuration
-    ///
-    /// # Deprecation Notice
-    /// This method is workflow-specific and will be moved to the workflow integration
-    /// bridge layer in Phase 2 of the standalone agent refactoring.
-    #[deprecated(note = "Will be moved to workflow integration layer in Phase 2")]
-    async fn store_state_agent_config(&self, config: &StateAgentConfig) -> Result<()>;
-
-    /// Get state agent configurations for a specific state
-    ///
-    /// # Deprecation Notice
-    /// This method is workflow-specific and will be moved to the workflow integration
-    /// bridge layer in Phase 2 of the standalone agent refactoring.
-    #[deprecated(note = "Will be moved to workflow integration layer in Phase 2")]
-    async fn get_state_agent_configs(&self, state_id: &StateId) -> Result<Vec<StateAgentConfig>>;
-
-    /// List all state agent configurations
-    ///
-    /// # Deprecation Notice
-    /// This method is workflow-specific and will be moved to the workflow integration
-    /// bridge layer in Phase 2 of the standalone agent refactoring.
-    #[deprecated(note = "Will be moved to workflow integration layer in Phase 2")]
-    async fn list_state_agent_configs(&self) -> Result<Vec<StateAgentConfig>>;
-
-    /// Delete a state agent configuration
-    ///
-    /// # Deprecation Notice
-    /// This method is workflow-specific and will be moved to the workflow integration
-    /// bridge layer in Phase 2 of the standalone agent refactoring.
-    #[deprecated(note = "Will be moved to workflow integration layer in Phase 2")]
-    async fn delete_state_agent_config(&self, id: &Uuid) -> Result<bool>;
-
     // Agent executions
     async fn store_execution(&self, execution: &AgentExecution) -> Result<()>;
     async fn get_execution(&self, id: &Uuid) -> Result<Option<AgentExecution>>;
-    async fn list_executions_for_resource(&self, resource_id: &Uuid)
-        -> Result<Vec<AgentExecution>>;
+    async fn list_executions_by_context(
+        &self,
+        context_key: &str,
+        context_value: &str,
+    ) -> Result<Vec<AgentExecution>>;
+
+    /// List executions matching multiple context criteria (AND logic)
+    async fn list_executions_by_context_filters(
+        &self,
+        filters: &[(&str, &str)],
+    ) -> Result<Vec<AgentExecution>>;
+
+    /// List executions by nested context path (e.g., "workflow.resource_id")
+    async fn list_executions_by_nested_context(
+        &self,
+        context_path: &str,
+        context_value: &str,
+    ) -> Result<Vec<AgentExecution>>;
+
+    /// Count executions matching context criteria
+    async fn count_executions_by_context(
+        &self,
+        context_key: &str,
+        context_value: &str,
+    ) -> Result<usize>;
+
     async fn list_executions_for_agent(&self, agent_id: &AgentId) -> Result<Vec<AgentExecution>>;
+
+    // Convenience methods for common query patterns
+
+    /// Get executions for a resource (backward compatibility helper)
+    async fn list_executions_for_resource(
+        &self,
+        resource_id: &Uuid,
+    ) -> Result<Vec<AgentExecution>> {
+        self.list_executions_by_context("resource_id", &resource_id.to_string())
+            .await
+    }
+
+    /// Get executions by status
+    async fn list_executions_by_status(
+        &self,
+        status: &AgentExecutionStatus,
+    ) -> Result<Vec<AgentExecution>>;
+
+    /// Get recent executions (limited count)
+    async fn list_recent_executions(&self, limit: usize) -> Result<Vec<AgentExecution>>;
+
+    /// Get executions for an agent with specific context
+    async fn list_executions_for_agent_with_context(
+        &self,
+        agent_id: &AgentId,
+        context_key: &str,
+        context_value: &str,
+    ) -> Result<Vec<AgentExecution>>;
 }
 
 /// In-memory implementation of AgentStorage for development/testing
 #[derive(Debug, Default)]
 pub struct InMemoryAgentStorage {
     agents: RwLock<HashMap<AgentId, AgentDefinition>>,
-    #[allow(deprecated)]
-    state_configs: RwLock<HashMap<Uuid, StateAgentConfig>>,
     executions: RwLock<HashMap<Uuid, AgentExecution>>,
 }
 
@@ -116,36 +132,6 @@ impl AgentStorage for InMemoryAgentStorage {
         Ok(agents.remove(id).is_some())
     }
 
-    #[allow(deprecated)]
-    async fn store_state_agent_config(&self, config: &StateAgentConfig) -> Result<()> {
-        let mut configs = self.state_configs.write().await;
-        configs.insert(config.id, config.clone());
-        Ok(())
-    }
-
-    #[allow(deprecated)]
-    async fn get_state_agent_configs(&self, state_id: &StateId) -> Result<Vec<StateAgentConfig>> {
-        let configs = self.state_configs.read().await;
-        let result: Vec<StateAgentConfig> = configs
-            .values()
-            .filter(|config| &config.state_id == state_id)
-            .cloned()
-            .collect();
-        Ok(result)
-    }
-
-    #[allow(deprecated)]
-    async fn list_state_agent_configs(&self) -> Result<Vec<StateAgentConfig>> {
-        let configs = self.state_configs.read().await;
-        Ok(configs.values().cloned().collect())
-    }
-
-    #[allow(deprecated)]
-    async fn delete_state_agent_config(&self, id: &Uuid) -> Result<bool> {
-        let mut configs = self.state_configs.write().await;
-        Ok(configs.remove(id).is_some())
-    }
-
     async fn store_execution(&self, execution: &AgentExecution) -> Result<()> {
         let mut executions = self.executions.write().await;
         executions.insert(execution.id, execution.clone());
@@ -157,21 +143,76 @@ impl AgentStorage for InMemoryAgentStorage {
         Ok(executions.get(id).cloned())
     }
 
-    async fn list_executions_for_resource(
+    async fn list_executions_by_context(
         &self,
-        resource_id: &Uuid,
+        context_key: &str,
+        context_value: &str,
     ) -> Result<Vec<AgentExecution>> {
         let executions = self.executions.read().await;
         Ok(executions
             .values()
             .filter(|exec| {
-                exec.get_context_value("resource_id")
+                exec.get_context_value(context_key)
                     .and_then(|v| v.as_str())
-                    .map(|id| id == resource_id.to_string())
+                    .map(|value| value == context_value)
                     .unwrap_or(false)
             })
             .cloned()
             .collect())
+    }
+
+    async fn list_executions_by_context_filters(
+        &self,
+        filters: &[(&str, &str)],
+    ) -> Result<Vec<AgentExecution>> {
+        let executions = self.executions.read().await;
+        Ok(executions
+            .values()
+            .filter(|exec| {
+                filters.iter().all(|(key, expected_value)| {
+                    exec.get_context_value(key)
+                        .and_then(|v| v.as_str())
+                        .map(|value| value == *expected_value)
+                        .unwrap_or(false)
+                })
+            })
+            .cloned()
+            .collect())
+    }
+
+    async fn list_executions_by_nested_context(
+        &self,
+        context_path: &str,
+        context_value: &str,
+    ) -> Result<Vec<AgentExecution>> {
+        let executions = self.executions.read().await;
+        Ok(executions
+            .values()
+            .filter(|exec| {
+                exec.get_nested_context_value(context_path)
+                    .and_then(|v| v.as_str())
+                    .map(|value| value == context_value)
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect())
+    }
+
+    async fn count_executions_by_context(
+        &self,
+        context_key: &str,
+        context_value: &str,
+    ) -> Result<usize> {
+        let executions = self.executions.read().await;
+        Ok(executions
+            .values()
+            .filter(|exec| {
+                exec.get_context_value(context_key)
+                    .and_then(|v| v.as_str())
+                    .map(|value| value == context_value)
+                    .unwrap_or(false)
+            })
+            .count())
     }
 
     async fn list_executions_for_agent(&self, agent_id: &AgentId) -> Result<Vec<AgentExecution>> {
@@ -181,6 +222,338 @@ impl AgentStorage for InMemoryAgentStorage {
             .filter(|exec| &exec.agent_id == agent_id)
             .cloned()
             .collect())
+    }
+
+    async fn list_executions_by_status(
+        &self,
+        status: &AgentExecutionStatus,
+    ) -> Result<Vec<AgentExecution>> {
+        let executions = self.executions.read().await;
+        Ok(executions
+            .values()
+            .filter(|exec| &exec.status == status)
+            .cloned()
+            .collect())
+    }
+
+    async fn list_recent_executions(&self, limit: usize) -> Result<Vec<AgentExecution>> {
+        let executions = self.executions.read().await;
+        let mut sorted_executions: Vec<_> = executions.values().cloned().collect();
+
+        // Sort by started_at in descending order (most recent first)
+        sorted_executions.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+
+        // Take only the requested number
+        sorted_executions.truncate(limit);
+
+        Ok(sorted_executions)
+    }
+
+    async fn list_executions_for_agent_with_context(
+        &self,
+        agent_id: &AgentId,
+        context_key: &str,
+        context_value: &str,
+    ) -> Result<Vec<AgentExecution>> {
+        let executions = self.executions.read().await;
+        Ok(executions
+            .values()
+            .filter(|exec| {
+                &exec.agent_id == agent_id
+                    && exec
+                        .get_context_value(context_key)
+                        .and_then(|v| v.as_str())
+                        .map(|value| value == context_value)
+                        .unwrap_or(false)
+            })
+            .cloned()
+            .collect())
+    }
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+    use crate::models::{AgentExecutionStatus, AgentPrompts};
+    use serde_json::json;
+    use tokio;
+
+    async fn create_test_storage_with_executions() -> InMemoryAgentStorage {
+        let storage = InMemoryAgentStorage::default();
+
+        // Create test agent
+        let agent = AgentDefinition {
+            id: AgentId::from("test-agent"),
+            name: "Test Agent".to_string(),
+            description: "Test agent for storage tests".to_string(),
+            llm_provider: LLMProvider::OpenAI {
+                api_key: "test-key".to_string(),
+                model: "gpt-4".to_string(),
+                base_url: None,
+            },
+            llm_config: LLMConfig::default(),
+            prompts: AgentPrompts {
+                system: "You are a test agent".to_string(),
+                user_template: "Test: {input}".to_string(),
+                context_instructions: None,
+            },
+            capabilities: vec!["test".to_string()],
+            tools: vec![],
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        storage.store_agent(&agent).await.unwrap();
+
+        // Create test executions with different contexts
+        let executions = vec![
+            AgentExecution::new(
+                AgentId::from("test-agent"),
+                json!({
+                    "resource_id": "resource-1",
+                    "state_id": "pending",
+                    "workflow": {
+                        "id": "workflow-1",
+                        "version": "v1.0"
+                    }
+                }),
+                json!({"message": "test 1"}),
+            ),
+            AgentExecution::new(
+                AgentId::from("test-agent"),
+                json!({
+                    "resource_id": "resource-2",
+                    "state_id": "completed",
+                    "workflow": {
+                        "id": "workflow-1",
+                        "version": "v1.1"
+                    }
+                }),
+                json!({"message": "test 2"}),
+            ),
+            AgentExecution::new(
+                AgentId::from("test-agent"),
+                json!({
+                    "resource_id": "resource-1",
+                    "state_id": "failed",
+                    "workflow": {
+                        "id": "workflow-2",
+                        "version": "v1.0"
+                    }
+                }),
+                json!({"message": "test 3"}),
+            ),
+        ];
+
+        for execution in executions {
+            storage.store_execution(&execution).await.unwrap();
+        }
+
+        storage
+    }
+
+    #[tokio::test]
+    async fn test_list_executions_by_context() {
+        let storage = create_test_storage_with_executions().await;
+
+        // Test filtering by resource_id
+        let resource_1_executions = storage
+            .list_executions_by_context("resource_id", "resource-1")
+            .await
+            .unwrap();
+        assert_eq!(resource_1_executions.len(), 2);
+
+        let resource_2_executions = storage
+            .list_executions_by_context("resource_id", "resource-2")
+            .await
+            .unwrap();
+        assert_eq!(resource_2_executions.len(), 1);
+
+        // Test filtering by state_id
+        let pending_executions = storage
+            .list_executions_by_context("state_id", "pending")
+            .await
+            .unwrap();
+        assert_eq!(pending_executions.len(), 1);
+
+        // Test non-existent context
+        let nonexistent = storage
+            .list_executions_by_context("nonexistent_key", "value")
+            .await
+            .unwrap();
+        assert_eq!(nonexistent.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_executions_by_context_filters() {
+        let storage = create_test_storage_with_executions().await;
+
+        // Test multiple filters (AND logic)
+        let filtered = storage
+            .list_executions_by_context_filters(&[
+                ("resource_id", "resource-1"),
+                ("state_id", "pending"),
+            ])
+            .await
+            .unwrap();
+        assert_eq!(filtered.len(), 1);
+
+        // Test filters that match no executions
+        let no_match = storage
+            .list_executions_by_context_filters(&[
+                ("resource_id", "resource-1"),
+                ("state_id", "nonexistent"),
+            ])
+            .await
+            .unwrap();
+        assert_eq!(no_match.len(), 0);
+
+        // Test empty filters (should return all)
+        let all = storage
+            .list_executions_by_context_filters(&[])
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_list_executions_by_nested_context() {
+        let storage = create_test_storage_with_executions().await;
+
+        // Test nested context access
+        let workflow_1_executions = storage
+            .list_executions_by_nested_context("workflow.id", "workflow-1")
+            .await
+            .unwrap();
+        assert_eq!(workflow_1_executions.len(), 2);
+
+        let version_v10_executions = storage
+            .list_executions_by_nested_context("workflow.version", "v1.0")
+            .await
+            .unwrap();
+        assert_eq!(version_v10_executions.len(), 2);
+
+        // Test non-existent nested path
+        let nonexistent = storage
+            .list_executions_by_nested_context("workflow.nonexistent", "value")
+            .await
+            .unwrap();
+        assert_eq!(nonexistent.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_count_executions_by_context() {
+        let storage = create_test_storage_with_executions().await;
+
+        let resource_1_count = storage
+            .count_executions_by_context("resource_id", "resource-1")
+            .await
+            .unwrap();
+        assert_eq!(resource_1_count, 2);
+
+        let pending_count = storage
+            .count_executions_by_context("state_id", "pending")
+            .await
+            .unwrap();
+        assert_eq!(pending_count, 1);
+
+        let nonexistent_count = storage
+            .count_executions_by_context("nonexistent", "value")
+            .await
+            .unwrap();
+        assert_eq!(nonexistent_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_executions_by_status() {
+        let storage = create_test_storage_with_executions().await;
+
+        // All executions start as Pending
+        let pending_executions = storage
+            .list_executions_by_status(&AgentExecutionStatus::Pending)
+            .await
+            .unwrap();
+        assert_eq!(pending_executions.len(), 3);
+
+        // Test with different statuses
+        let completed_executions = storage
+            .list_executions_by_status(&AgentExecutionStatus::Completed)
+            .await
+            .unwrap();
+        assert_eq!(completed_executions.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_recent_executions() {
+        let storage = create_test_storage_with_executions().await;
+
+        // Test limiting results
+        let recent_2 = storage.list_recent_executions(2).await.unwrap();
+        assert_eq!(recent_2.len(), 2);
+
+        let recent_5 = storage.list_recent_executions(5).await.unwrap();
+        assert_eq!(recent_5.len(), 3); // Only 3 total executions
+
+        let recent_0 = storage.list_recent_executions(0).await.unwrap();
+        assert_eq!(recent_0.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_executions_for_agent_with_context() {
+        let storage = create_test_storage_with_executions().await;
+
+        let agent_id = AgentId::from("test-agent");
+
+        // Test agent + context filtering
+        let agent_resource_1 = storage
+            .list_executions_for_agent_with_context(&agent_id, "resource_id", "resource-1")
+            .await
+            .unwrap();
+        assert_eq!(agent_resource_1.len(), 2);
+
+        let agent_pending = storage
+            .list_executions_for_agent_with_context(&agent_id, "state_id", "pending")
+            .await
+            .unwrap();
+        assert_eq!(agent_pending.len(), 1);
+
+        // Test with non-existent agent
+        let nonexistent_agent = AgentId::from("nonexistent");
+        let no_executions = storage
+            .list_executions_for_agent_with_context(&nonexistent_agent, "resource_id", "resource-1")
+            .await
+            .unwrap();
+        assert_eq!(no_executions.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_executions_for_resource_backward_compatibility() {
+        let storage = create_test_storage_with_executions().await;
+
+        // Test backward compatibility method
+        let resource_id = uuid::Uuid::new_v4();
+        let no_executions = storage
+            .list_executions_for_resource(&resource_id)
+            .await
+            .unwrap();
+        assert_eq!(no_executions.len(), 0);
+
+        // Create execution with UUID resource_id for testing
+        let execution = AgentExecution::new(
+            AgentId::from("test-agent"),
+            json!({
+                "resource_id": resource_id.to_string(),
+                "state_id": "test"
+            }),
+            json!({"message": "uuid test"}),
+        );
+        storage.store_execution(&execution).await.unwrap();
+
+        let found_executions = storage
+            .list_executions_for_resource(&resource_id)
+            .await
+            .unwrap();
+        assert_eq!(found_executions.len(), 1);
     }
 }
 
@@ -235,44 +608,6 @@ impl AgentEngine {
         self.stream_sender.subscribe()
     }
 
-    /// Execute agents for a resource that entered or exists in a state
-    pub async fn execute_state_agents(&self, resource: &Resource) -> Result<Vec<AgentExecution>> {
-        let configs = self
-            .storage
-            .get_state_agent_configs(&StateId::from(resource.current_state()))
-            .await?;
-        let mut executions = Vec::new();
-
-        for config in configs {
-            // Check trigger conditions
-            if !self.should_trigger_agent(&config, resource).await? {
-                continue;
-            }
-
-            // Apply scheduling constraints
-            if let Some(schedule) = &config.schedule {
-                if let Some(delay) = schedule.initial_delay_seconds {
-                    sleep(Duration::from_secs(delay)).await;
-                }
-            }
-
-            // Execute the agent
-            match self.execute_agent_for_config(&config, resource).await {
-                Ok(execution) => executions.push(execution),
-                Err(e) => {
-                    error!(
-                        "Failed to execute agent {} for resource {}: {}",
-                        config.agent_id.as_str(),
-                        resource.id,
-                        e
-                    );
-                }
-            }
-        }
-
-        Ok(executions)
-    }
-
     /// Execute agent for an activity
     pub async fn execute_activity_agent(
         &self,
@@ -298,67 +633,6 @@ impl AgentEngine {
         });
 
         let mut execution = AgentExecution::new(config.agent_id.clone(), context, input_data);
-
-        self.execute_agent_internal(
-            &agent,
-            &mut execution,
-            &config.input_mapping,
-            &config.output_mapping,
-        )
-        .await?;
-
-        Ok(execution)
-    }
-
-    /// Check if agent should be triggered based on conditions
-    #[allow(deprecated)]
-    async fn should_trigger_agent(
-        &self,
-        config: &StateAgentConfig,
-        _resource: &Resource,
-    ) -> Result<bool> {
-        if config.trigger_conditions.is_empty() {
-            return Ok(true);
-        }
-
-        for _rule in &config.trigger_conditions {
-            // TODO: Implement rule evaluation once RulesEngine API is available
-            // let result = self.rules_engine.evaluate_rule(rule, token);
-            // if !result.passed {
-            //     return Ok(false);
-            // }
-        }
-
-        Ok(true)
-    }
-
-    /// Execute agent for a specific state agent configuration
-    #[allow(deprecated)]
-    async fn execute_agent_for_config(
-        &self,
-        config: &StateAgentConfig,
-        resource: &Resource,
-    ) -> Result<AgentExecution> {
-        let agent = self
-            .storage
-            .get_agent(&config.agent_id)
-            .await?
-            .ok_or_else(|| {
-                CircuitBreakerError::NotFound(format!("Agent {}", config.agent_id.as_str()))
-            })?;
-
-        let input_data = self.map_input_data(&config.input_mapping, resource)?;
-        let context = serde_json::json!({
-            "resource_id": resource.id,
-            "state_id": resource.current_state(),
-            "workflow_context": {
-                "resource_id": resource.id,
-                "state_id": resource.current_state()
-            }
-        });
-
-        let mut execution = AgentExecution::new(config.agent_id.clone(), context, input_data);
-        execution.config_id = Some(config.id);
 
         self.execute_agent_internal(
             &agent,

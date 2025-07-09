@@ -78,12 +78,12 @@ Create a standalone agent architecture with:
 **Target Files**: `src/engine/agents.rs` (storage trait)
 
 **Tasks**:
-- [ ] **Prompt**: Remove `StateAgentConfig` references from `AgentStorage` trait
-- [ ] **Prompt**: Update `store_execution()` and related methods to use generic context
-- [ ] **Prompt**: Add `list_executions_by_context()` method for flexible querying
-- [ ] **Prompt**: Update `InMemoryAgentStorage` implementation to match new interface
-- [ ] **Prompt**: Add context-based indexing for efficient queries
-- [ ] **Compile Test**: Ensure storage trait compiles and basic tests pass
+- [x] **Prompt**: Remove `StateAgentConfig` references from `AgentStorage` trait
+- [x] **Prompt**: Update `store_execution()` and related methods to use generic context
+- [x] **Prompt**: Add `list_executions_by_context()` method for flexible querying
+- [x] **Prompt**: Update `InMemoryAgentStorage` implementation to match new interface
+- [x] **Prompt**: Add context-based indexing for efficient queries
+- [x] **Compile Test**: Ensure storage trait compiles and basic tests pass
 
 #### 3.1.3 Refactor Agent Engine Core
 **Target Files**: `src/engine/agents.rs` (engine implementation)
