@@ -211,12 +211,12 @@ Create a standalone agent architecture with:
 **Target Files**: `src/agents/tenant_isolation.rs` (new file)
 
 **Tasks**:
-- [ ] **Prompt**: Create `TenantAwareAgentEngine` wrapper around standalone engine
-- [ ] **Prompt**: Implement tenant-specific agent storage and configuration
-- [ ] **Prompt**: Add tenant-based resource limits and quotas
-- [ ] **Prompt**: Include tenant-specific authentication and authorization
-- [ ] **Prompt**: Add tenant isolation for agent execution contexts
-- [ ] **Compile Test**: Ensure tenant isolation compiles and basic tests pass
+- [x] **Prompt**: Create `TenantAwareAgentEngine` wrapper around standalone engine
+- [x] **Prompt**: Implement tenant-specific agent storage and configuration
+- [x] **Prompt**: Add tenant-based resource limits and quotas
+- [x] **Prompt**: Include tenant-specific authentication and authorization
+- [x] **Prompt**: Add tenant isolation for agent execution contexts
+- [x] **Compile Test**: Ensure tenant isolation compiles and basic tests pass
 
 #### 3.5.2 Multi-Tenant Storage Layer
 **Target Files**: `src/agents/tenant_storage.rs` (new file)

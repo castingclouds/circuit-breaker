@@ -3,6 +3,7 @@
 
 pub mod http_handlers;
 pub mod middleware;
+pub mod tenant_isolation;
 pub mod websocket_handlers;
 
 use axum::{
@@ -685,6 +686,9 @@ mod http_handlers_tests;
 #[cfg(test)]
 mod websocket_tests;
 
+#[cfg(test)]
+mod tenant_isolation_tests;
+
 // Re-export HTTP handlers for convenience
 pub use http_handlers::{
     execute_agent as execute_agent_http, get_execution_details, list_agent_executions,
@@ -693,3 +697,8 @@ pub use http_handlers::{
 
 // Re-export WebSocket handlers for convenience
 pub use websocket_handlers::{routes as websocket_routes, ws_handler, WebSocketState};
+
+// Re-export tenant isolation for convenience
+pub use tenant_isolation::{
+    RateLimits, ResourceQuotas, TenantAwareAgentEngine, TenantAwareAgentEngineFactory, TenantConfig,
+};
