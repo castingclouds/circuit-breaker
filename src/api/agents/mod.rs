@@ -1,6 +1,7 @@
 // Agent API endpoints for standalone agent execution
 // This module provides REST API endpoints for executing agents without workflow dependencies
 
+pub mod http_handlers;
 pub mod middleware;
 
 use axum::{
@@ -676,3 +677,12 @@ pub fn add_routes_with_rate_limiting(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod http_handlers_tests;
+
+// Re-export HTTP handlers for convenience
+pub use http_handlers::{
+    execute_agent as execute_agent_http, get_execution_details, list_agent_executions,
+    routes as http_routes, stream_execution_events,
+};
