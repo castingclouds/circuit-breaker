@@ -3,7 +3,7 @@
 
 pub mod http_handlers;
 pub mod middleware;
-// pub mod nats_storage; // Temporarily disabled due to compilation errors
+pub mod nats_storage;
 pub mod tenant_isolation;
 pub mod tenant_storage;
 pub mod websocket_handlers;
@@ -710,4 +710,4 @@ pub use tenant_storage::{
 };
 
 // Re-export NATS storage for convenience
-// pub use nats_storage::{create_tenant_aware_nats_storage, NatsAgentStorage, NatsStorageConfig}; // Temporarily disabled
+pub use nats_storage::{create_tenant_aware_nats_storage, NatsAgentStorage, NatsStorageConfig};

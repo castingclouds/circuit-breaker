@@ -379,11 +379,12 @@ impl AgentStorage for NatsAgentStorage {
 
         let agents_kv = self.agents_kv.lock().await;
         match agents_kv.get(&key).await {
-            Ok(entry) => {
+            Ok(Some(bytes)) => {
                 debug!("Found agent {} with key {}", id, key);
-                Ok(Some(Self::deserialize(&entry)?))
+                Ok(Some(Self::deserialize(bytes.as_ref())?))
             }
-            Err(async_nats::Error::KeyNotFound { .. }) => {
+            Ok(None) => Ok(None),
+            Err(_) => {
                 // Try to find the agent with any tenant prefix
                 // In a production system with many tenants, this would be inefficient
                 // and you would need to know the tenant ID in advance
@@ -395,10 +396,11 @@ impl AgentStorage for NatsAgentStorage {
                 for agent_key in all_keys {
                     if agent_key.ends_with(&format!("{}{}", KEY_SEPARATOR, id.as_str())) {
                         match agents_kv.get(&agent_key).await {
-                            Ok(entry) => {
+                            Ok(Some(bytes)) => {
                                 debug!("Found agent {} with tenant key {}", id, agent_key);
-                                return Ok(Some(Self::deserialize(&entry)?));
+                                return Ok(Some(Self::deserialize(bytes.as_ref())?));
                             }
+                            Ok(None) => continue,
                             Err(_) => continue,
                         }
                     }
@@ -454,7 +456,7 @@ impl AgentStorage for NatsAgentStorage {
                 debug!("Deleted agent {} with key {}", id, key);
                 Ok(true)
             }
-            Err(async_nats::Error::KeyNotFound { .. }) => {
+            Err(_) => {
                 // Try to find and delete with any tenant prefix
                 let tenant_prefix = format!("{}{}", TENANT_PREFIX, KEY_SEPARATOR);
                 let all_keys = self
@@ -519,11 +521,12 @@ impl AgentStorage for NatsAgentStorage {
 
         let executions_kv = self.executions_kv.lock().await;
         match executions_kv.get(&key).await {
-            Ok(entry) => {
+            Ok(Some(bytes)) => {
                 debug!("Found execution {} with key {}", id, key);
-                Ok(Some(Self::deserialize(&entry)?))
+                Ok(Some(Self::deserialize(bytes.as_ref())?))
             }
-            Err(async_nats::Error::KeyNotFound { .. }) => {
+            Ok(None) => Ok(None),
+            Err(_) => {
                 // Try to find the execution with any tenant prefix
                 let tenant_prefix = format!("{}{}", TENANT_PREFIX, KEY_SEPARATOR);
                 let all_keys = self
@@ -533,10 +536,11 @@ impl AgentStorage for NatsAgentStorage {
                 for exec_key in all_keys {
                     if exec_key.ends_with(&format!("{}{}", KEY_SEPARATOR, id.to_string())) {
                         match executions_kv.get(&exec_key).await {
-                            Ok(entry) => {
+                            Ok(Some(bytes)) => {
                                 debug!("Found execution {} with tenant key {}", id, exec_key);
-                                return Ok(Some(Self::deserialize(&entry)?));
+                                return Ok(Some(Self::deserialize(bytes.as_ref())?));
                             }
+                            Ok(None) => continue,
                             Err(_) => continue,
                         }
                     }
@@ -580,10 +584,13 @@ impl AgentStorage for NatsAgentStorage {
             let mut executions = Vec::with_capacity(all_keys.len());
             for key in all_keys {
                 match executions_kv.get(&key).await {
-                    Ok(entry) => match Self::deserialize::<AgentExecution>(&entry) {
+                    Ok(Some(bytes)) => match Self::deserialize::<AgentExecution>(bytes.as_ref()) {
                         Ok(execution) => executions.push(execution),
                         Err(e) => warn!("Failed to deserialize execution from key {}: {}", key, e),
                     },
+                    Ok(None) => {
+                        // Key exists but no value, skip
+                    }
                     Err(e) => warn!("Failed to get execution for key {}: {}", key, e),
                 }
             }
@@ -607,7 +614,7 @@ impl AgentStorage for NatsAgentStorage {
 
         let mut executions = Vec::new();
         while let Some(Ok(entry)) = entries.next().await {
-            match Self::deserialize::<AgentExecution>(&entry) {
+            match Self::deserialize::<AgentExecution>(&entry.value) {
                 Ok(execution) => {
                     // Check if context matches
                     if let Some(value) = execution.context.get(context_key) {
@@ -900,7 +907,7 @@ impl AgentStorage for NatsAgentStorage {
 
         let mut executions = Vec::new();
         while let Some(Ok(entry)) = entries.next().await {
-            match Self::deserialize::<AgentExecution>(&entry) {
+            match Self::deserialize::<AgentExecution>(&entry.value) {
                 Ok(execution) => {
                     // Check for resource_id in various context locations
                     if execution
