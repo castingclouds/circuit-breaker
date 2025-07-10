@@ -197,8 +197,13 @@ where
     type Rejection = (StatusCode, &'static str);
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        // Try to extract from header
-        if let Some(tenant_id) = parts.headers.get("x-tenant-id") {
+        // Try to extract from header (case-insensitive)
+        if let Some(tenant_id) = parts
+            .headers
+            .get("x-tenant-id")
+            .or_else(|| parts.headers.get("X-Tenant-ID"))
+            .or_else(|| parts.headers.get("X-TENANT-ID"))
+        {
             if let Ok(tenant_id) = tenant_id.to_str() {
                 return Ok(TenantId(tenant_id.to_string()));
             }

@@ -114,6 +114,8 @@ enum ServerMessage {
 struct Connection {
     tenant_id: String,
     subscriptions: HashSet<Uuid>,
+    started_executions: HashSet<Uuid>,
+    is_executing: bool,
     last_activity: Instant,
     tx: mpsc::Sender<ServerMessage>,
 }
@@ -123,6 +125,8 @@ impl Connection {
         Self {
             tenant_id,
             subscriptions: HashSet::new(),
+            started_executions: HashSet::new(),
+            is_executing: false,
             last_activity: Instant::now(),
             tx,
         }
@@ -145,13 +149,13 @@ impl Connection {
 
 /// Manages all active WebSocket connections
 #[derive(Clone)]
-struct ConnectionManager {
+pub struct ConnectionManager {
     connections: Arc<TokioRwLock<HashMap<Uuid, Connection>>>,
     timeout: Duration,
 }
 
 impl ConnectionManager {
-    fn new(timeout: Duration) -> Self {
+    pub fn new(timeout: Duration) -> Self {
         Self {
             connections: Arc::new(TokioRwLock::new(HashMap::new())),
             timeout,
@@ -230,6 +234,48 @@ impl ConnectionManager {
             connection.subscriptions.contains(execution_id)
         } else {
             false
+        }
+    }
+
+    async fn mark_execution_started(&self, connection_id: &Uuid, execution_id: Uuid) -> Result<()> {
+        let mut connections = self.connections.write().await;
+
+        if let Some(connection) = connections.get_mut(connection_id) {
+            connection.started_executions.insert(execution_id);
+            Ok(())
+        } else {
+            Err(CircuitBreakerError::NotFound(format!(
+                "Connection {} not found",
+                connection_id
+            )))
+        }
+    }
+
+    async fn is_execution_started_by_connection(
+        &self,
+        connection_id: &Uuid,
+        execution_id: &Uuid,
+    ) -> bool {
+        let connections = self.connections.read().await;
+
+        if let Some(connection) = connections.get(connection_id) {
+            connection.started_executions.contains(execution_id) || connection.is_executing
+        } else {
+            false
+        }
+    }
+
+    async fn set_connection_executing(&self, connection_id: &Uuid, executing: bool) -> Result<()> {
+        let mut connections = self.connections.write().await;
+
+        if let Some(connection) = connections.get_mut(connection_id) {
+            connection.is_executing = executing;
+            Ok(())
+        } else {
+            Err(CircuitBreakerError::NotFound(format!(
+                "Connection {} not found",
+                connection_id
+            )))
         }
     }
 
@@ -333,6 +379,9 @@ async fn handle_socket(
         .await;
     info!("New WebSocket connection established: {}", connection_id);
 
+    // Subscribe to the agent stream immediately to avoid missing events
+    let stream = engine.subscribe_to_stream();
+
     // Send initial auth success message
     let auth_message = ServerMessage::AuthSuccess {
         tenant_id: tenant_id.clone(),
@@ -345,6 +394,133 @@ async fn handle_socket(
         error!("Failed to send auth message: {}", e);
         return;
     }
+
+    // Spawn a task to forward events from the agent stream to subscribers
+    let cm = connection_manager.clone();
+    let conn_id = connection_id;
+    let mut stream_task = tokio::spawn(async move {
+        let mut stream = BroadcastStream::new(stream);
+        info!(
+            "🔄 WebSocket stream forwarding task started for connection: {}",
+            conn_id
+        );
+
+        while let Some(Ok(event)) = stream.next().await {
+            debug!("🔍 WebSocket received stream event: {:?}", event);
+            match event {
+                AgentStreamEvent::ThinkingStatus {
+                    execution_id,
+                    status,
+                    context,
+                } => {
+                    // Check if this connection started this execution
+                    let is_started = cm
+                        .is_execution_started_by_connection(&conn_id, &execution_id)
+                        .await;
+                    debug!(
+                        "🔍 ThinkingStatus event for execution {}: started by connection? {}",
+                        execution_id, is_started
+                    );
+
+                    if !is_started {
+                        continue;
+                    }
+
+                    // Forward to the client
+                    let message = ServerMessage::Thinking {
+                        execution_id: execution_id.to_string(),
+                        status,
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                    };
+
+                    debug!(
+                        "📤 Sending ThinkingStatus message to connection {}",
+                        conn_id
+                    );
+                    let _ = cm.send_to_connection(&conn_id, message).await;
+                }
+                AgentStreamEvent::ContentChunk {
+                    execution_id,
+                    chunk,
+                    sequence,
+                    context,
+                } => {
+                    let is_started = cm
+                        .is_execution_started_by_connection(&conn_id, &execution_id)
+                        .await;
+                    debug!(
+                        "🔍 ContentChunk event for execution {}: started by connection? {}",
+                        execution_id, is_started
+                    );
+
+                    if !is_started {
+                        continue;
+                    }
+
+                    let message = ServerMessage::ContentChunk {
+                        execution_id: execution_id.to_string(),
+                        chunk,
+                        sequence,
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                    };
+
+                    debug!("📤 Sending ContentChunk message to connection {}", conn_id);
+                    let _ = cm.send_to_connection(&conn_id, message).await;
+                }
+                AgentStreamEvent::Completed {
+                    execution_id,
+                    final_response,
+                    usage,
+                    context,
+                } => {
+                    let is_started = cm
+                        .is_execution_started_by_connection(&conn_id, &execution_id)
+                        .await;
+                    debug!(
+                        "🔍 Completed event for execution {}: started by connection? {}",
+                        execution_id, is_started
+                    );
+
+                    if !is_started {
+                        continue;
+                    }
+
+                    let message = ServerMessage::Complete {
+                        execution_id: execution_id.to_string(),
+                        response: final_response,
+                        usage,
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                    };
+
+                    debug!("📤 Sending Completed message to connection {}", conn_id);
+                    let _ = cm.send_to_connection(&conn_id, message).await;
+                }
+                AgentStreamEvent::Failed {
+                    execution_id,
+                    error,
+                    context,
+                } => {
+                    if !cm
+                        .is_execution_started_by_connection(&conn_id, &execution_id)
+                        .await
+                    {
+                        continue;
+                    }
+
+                    let message = ServerMessage::Error {
+                        execution_id: Some(execution_id.to_string()),
+                        error,
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                    };
+
+                    let _ = cm.send_to_connection(&conn_id, message).await;
+                }
+                _ => {
+                    // Ignore other event types for now
+                }
+            }
+        }
+    });
 
     // Spawn a task to forward messages from the channel to the WebSocket
     let mut send_task = tokio::spawn(async move {
@@ -361,97 +537,7 @@ async fn handle_socket(
         }
     });
 
-    // Subscribe to the agent stream
-    let mut stream = engine.subscribe_to_stream();
-
-    // Spawn a task to forward events from the agent stream to subscribers
-    let cm = connection_manager.clone();
-    let conn_id = connection_id;
-    let mut stream_task = tokio::spawn(async move {
-        let mut stream = BroadcastStream::new(stream);
-
-        while let Some(Ok(event)) = stream.next().await {
-            match event {
-                AgentStreamEvent::ThinkingStatus {
-                    execution_id,
-                    status,
-                    context,
-                } => {
-                    // Check if this connection is subscribed to this execution
-                    if !cm.is_subscribed(&conn_id, &execution_id).await {
-                        continue;
-                    }
-
-                    // Forward to the client
-                    let message = ServerMessage::Thinking {
-                        execution_id: execution_id.to_string(),
-                        status,
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                    };
-
-                    let _ = cm.send_to_connection(&conn_id, message).await;
-                }
-                AgentStreamEvent::ContentChunk {
-                    execution_id,
-                    chunk,
-                    sequence,
-                    context,
-                } => {
-                    if !cm.is_subscribed(&conn_id, &execution_id).await {
-                        continue;
-                    }
-
-                    let message = ServerMessage::ContentChunk {
-                        execution_id: execution_id.to_string(),
-                        chunk,
-                        sequence,
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                    };
-
-                    let _ = cm.send_to_connection(&conn_id, message).await;
-                }
-                AgentStreamEvent::Completed {
-                    execution_id,
-                    final_response,
-                    usage,
-                    context,
-                } => {
-                    if !cm.is_subscribed(&conn_id, &execution_id).await {
-                        continue;
-                    }
-
-                    let message = ServerMessage::Complete {
-                        execution_id: execution_id.to_string(),
-                        response: final_response,
-                        usage,
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                    };
-
-                    let _ = cm.send_to_connection(&conn_id, message).await;
-                }
-                AgentStreamEvent::Failed {
-                    execution_id,
-                    error,
-                    context,
-                } => {
-                    if !cm.is_subscribed(&conn_id, &execution_id).await {
-                        continue;
-                    }
-
-                    let message = ServerMessage::Error {
-                        execution_id: Some(execution_id.to_string()),
-                        error,
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                    };
-
-                    let _ = cm.send_to_connection(&conn_id, message).await;
-                }
-                _ => {
-                    // Ignore other event types
-                }
-            }
-        }
-    });
+    // Stream task is now started above, right after connection establishment
 
     // Process incoming WebSocket messages
     while let Some(Ok(ws_message)) = ws_receiver.next().await {
@@ -656,19 +742,36 @@ async fn process_client_message(
                 retry_config: None,
             };
 
-            // Execute the agent
+            // Subscribe to global stream before starting execution (like SSE handler)
+            let stream = engine.subscribe_to_stream();
             let conn_id = *connection_id;
             let cm = connection_manager.clone();
             let engine_clone = engine.clone();
 
+            // Mark connection as executing immediately
+            if let Err(e) = cm.set_connection_executing(&conn_id, true).await {
+                error!("Failed to mark connection as executing: {}", e);
+            }
+
+            // Start execution in spawned task
             tokio::spawn(async move {
+                // Start the agent execution
                 match engine_clone.execute_agent(&config, context).await {
                     Ok(execution) => {
                         let execution_id = execution.id;
 
-                        // Auto-subscribe to this execution
-                        if let Err(e) = cm.subscribe(&conn_id, execution_id).await {
-                            error!("Failed to auto-subscribe to execution: {}", e);
+                        // Mark this execution as started by this connection
+                        debug!(
+                            "🔖 Marking execution {} as started by connection {}",
+                            execution_id, conn_id
+                        );
+                        if let Err(e) = cm.mark_execution_started(&conn_id, execution_id).await {
+                            error!("Failed to mark execution as started: {}", e);
+                        } else {
+                            debug!(
+                                "✅ Successfully marked execution {} as started by connection {}",
+                                execution_id, conn_id
+                            );
                         }
 
                         // Send execution started event
@@ -690,6 +793,11 @@ async fn process_client_message(
 
                         let _ = cm.send_to_connection(&conn_id, error).await;
                     }
+                }
+
+                // Mark connection as no longer executing
+                if let Err(e) = cm.set_connection_executing(&conn_id, false).await {
+                    error!("Failed to clear connection executing status: {}", e);
                 }
             });
         }

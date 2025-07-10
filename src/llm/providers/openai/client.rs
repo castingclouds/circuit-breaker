@@ -4,25 +4,23 @@
 use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::{header::HeaderMap, header::HeaderValue, header::CONTENT_TYPE, Client};
+#[cfg(test)]
 use std::collections::HashMap;
-use tracing::{debug, error};
 use std::time::Duration;
+use tracing::{debug, error};
 
 use crate::llm::{
-    LLMError, LLMRequest, LLMResponse, LLMResult, StreamingChunk,
-    Choice, LLMProviderType, RoutingInfo, RoutingStrategy,
-    EmbeddingsRequest, EmbeddingsResponse,
-    sse::{response_to_sse_stream, openai::openai_event_to_chunk}
+    sse::{openai::openai_event_to_chunk, response_to_sse_stream},
+    Choice, EmbeddingsRequest, EmbeddingsResponse, LLMError, LLMProviderType, LLMRequest,
+    LLMResponse, LLMResult, RoutingInfo, RoutingStrategy, StreamingChunk,
 };
 
 use crate::llm::traits::{
-    LLMProviderClient, ModelInfo, ProviderConfigRequirements, CostCalculator, CostBreakdown
+    CostBreakdown, CostCalculator, LLMProviderClient, ModelInfo, ProviderConfigRequirements,
 };
 
-use super::types::{
-    OpenAIRequest, OpenAIResponse, OpenAIUsage, OpenAIChatMessage, OpenAIError
-};
-use super::config::{OpenAIConfig, get_config_requirements, get_available_models, is_o4_model};
+use super::config::{get_available_models, get_config_requirements, is_o4_model, OpenAIConfig};
+use super::types::{OpenAIChatMessage, OpenAIError, OpenAIRequest, OpenAIResponse, OpenAIUsage};
 
 /// OpenAI provider client
 pub struct OpenAIClient {
@@ -53,15 +51,16 @@ impl OpenAIClient {
         headers.insert(
             "Authorization",
             HeaderValue::from_str(&format!("Bearer {}", self.config.api_key))
-                .map_err(|e| LLMError::Internal(format!("Invalid API key format: {}", e)))?
+                .map_err(|e| LLMError::Internal(format!("Invalid API key format: {}", e)))?,
         );
 
         // Add organization header if provided
         if let Some(org) = &self.config.organization {
             headers.insert(
                 "OpenAI-Organization",
-                HeaderValue::from_str(org)
-                    .map_err(|e| LLMError::Internal(format!("Invalid organization format: {}", e)))?
+                HeaderValue::from_str(org).map_err(|e| {
+                    LLMError::Internal(format!("Invalid organization format: {}", e))
+                })?,
             );
         }
 
@@ -70,7 +69,7 @@ impl OpenAIClient {
             headers.insert(
                 "OpenAI-Project",
                 HeaderValue::from_str(project)
-                    .map_err(|e| LLMError::Internal(format!("Invalid project format: {}", e)))?
+                    .map_err(|e| LLMError::Internal(format!("Invalid project format: {}", e)))?,
             );
         }
 
@@ -81,7 +80,7 @@ impl OpenAIClient {
             headers.insert(
                 header_name,
                 HeaderValue::from_str(value)
-                    .map_err(|e| LLMError::Internal(format!("Invalid header value: {}", e)))?
+                    .map_err(|e| LLMError::Internal(format!("Invalid header value: {}", e)))?,
             );
         }
 
@@ -90,9 +89,8 @@ impl OpenAIClient {
 
     /// Convert our internal request format to OpenAI's format
     fn convert_request(&self, request: &LLMRequest) -> LLMResult<OpenAIRequest> {
-        let messages: Vec<OpenAIChatMessage> = request.messages.iter()
-            .map(|msg| msg.into())
-            .collect();
+        let messages: Vec<OpenAIChatMessage> =
+            request.messages.iter().map(|msg| msg.into()).collect();
 
         // Handle model-specific parameter requirements
         let (max_tokens_field, temperature) = if is_o4_model(&request.model) {
@@ -112,7 +110,12 @@ impl OpenAIClient {
             top_p: request.top_p,
             frequency_penalty: request.frequency_penalty,
             presence_penalty: request.presence_penalty,
-            stop: request.stop.clone(),
+            stop: if is_o4_model(&request.model) {
+                // o1 models don't support the 'stop' parameter
+                None
+            } else {
+                request.stop.clone()
+            },
             stream: Some(false), // Force non-streaming for regular chat_completion
             user: request.user.clone(),
             response_format: None,
@@ -132,7 +135,9 @@ impl OpenAIClient {
 
     /// Convert OpenAI response to our internal format
     fn convert_response(&self, response: OpenAIResponse) -> LLMResult<LLMResponse> {
-        let choices: Vec<Choice> = response.choices.into_iter()
+        let choices: Vec<Choice> = response
+            .choices
+            .into_iter()
             .map(|choice| Choice {
                 index: choice.index,
                 message: choice.message,
@@ -171,7 +176,8 @@ impl OpenAIClient {
     /// Calculate cost for OpenAI usage
     fn calculate_cost(&self, usage: &OpenAIUsage, model: &str) -> f64 {
         if let Some((input_cost, output_cost)) = super::config::get_model_cost_info(model) {
-            (usage.prompt_tokens as f64 * input_cost) + (usage.completion_tokens as f64 * output_cost)
+            (usage.prompt_tokens as f64 * input_cost)
+                + (usage.completion_tokens as f64 * output_cost)
         } else {
             // Fallback to GPT-4 pricing if model not found
             (usage.prompt_tokens as f64 * 0.00003) + (usage.completion_tokens as f64 * 0.00006)
@@ -197,10 +203,7 @@ impl OpenAIClient {
                 401 => LLMError::AuthenticationFailed(error_text.to_string()),
                 429 => LLMError::RateLimitExceeded(error_text.to_string()),
                 400 => LLMError::InvalidRequest(error_text.to_string()),
-                _ => LLMError::Internal(format!(
-                    "HTTP {}: {}",
-                    status_code, error_text
-                )),
+                _ => LLMError::Internal(format!("HTTP {}: {}", status_code, error_text)),
             }
         }
     }
@@ -220,11 +223,15 @@ impl LLMProviderClient for OpenAIClient {
         let openai_request = temp_client.convert_request(request)?;
 
         let request_url = format!("{}/chat/completions", temp_client.config.base_url);
-        
-        debug!("OpenAI API Request: URL={}, Model={}", request_url, request.model);
+
+        debug!(
+            "OpenAI API Request: URL={}, Model={}",
+            request_url, request.model
+        );
         debug!("API key: {}...", &api_key[..8.min(api_key.len())]);
 
-        let response = temp_client.client
+        let response = temp_client
+            .client
             .post(&request_url)
             .headers(headers)
             .json(&openai_request)
@@ -266,15 +273,14 @@ impl LLMProviderClient for OpenAIClient {
 
         let headers = temp_client.build_headers()?;
         let mut openai_request = temp_client.convert_request(&request)?;
-        
+
         // Enable streaming for this request
         openai_request.stream = Some(true);
 
         let request_url = format!("{}/chat/completions", temp_client.config.base_url);
-        
 
-
-        let response = temp_client.client
+        let response = temp_client
+            .client
             .post(&request_url)
             .headers(headers)
             .json(&openai_request)
@@ -289,7 +295,6 @@ impl LLMProviderClient for OpenAIClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-
 
             return Err(temp_client.handle_error_response(status.as_u16(), &error_text));
         }
@@ -324,7 +329,8 @@ impl LLMProviderClient for OpenAIClient {
         let headers = temp_client.build_headers()?;
         let request_url = format!("{}/models", temp_client.config.base_url);
 
-        let response = temp_client.client
+        let response = temp_client
+            .client
             .get(&request_url)
             .headers(headers)
             .timeout(Duration::from_secs(10)) // Shorter timeout for health checks
@@ -352,16 +358,23 @@ impl LLMProviderClient for OpenAIClient {
         self
     }
 
-    async fn embeddings(&self, _request: &EmbeddingsRequest, _api_key: &str) -> LLMResult<EmbeddingsResponse> {
+    async fn embeddings(
+        &self,
+        _request: &EmbeddingsRequest,
+        _api_key: &str,
+    ) -> LLMResult<EmbeddingsResponse> {
         // TODO: Implement OpenAI embeddings support
-        Err(LLMError::Provider("Embeddings not yet implemented for OpenAI provider".to_string()))
+        Err(LLMError::Provider(
+            "Embeddings not yet implemented for OpenAI provider".to_string(),
+        ))
     }
 }
 
 impl CostCalculator for OpenAIClient {
     fn calculate_cost(&self, usage: &crate::llm::TokenUsage, model: &str) -> f64 {
         if let Some((input_cost, output_cost)) = super::config::get_model_cost_info(model) {
-            (usage.prompt_tokens as f64 * input_cost) + (usage.completion_tokens as f64 * output_cost)
+            (usage.prompt_tokens as f64 * input_cost)
+                + (usage.completion_tokens as f64 * output_cost)
         } else {
             // Fallback to GPT-4 pricing
             (usage.prompt_tokens as f64 * 0.00003) + (usage.completion_tokens as f64 * 0.00006)
@@ -381,7 +394,7 @@ impl CostCalculator for OpenAIClient {
         if let Some((input_cost, output_cost)) = super::config::get_model_cost_info(model) {
             let input_cost_total = usage.prompt_tokens as f64 * input_cost;
             let output_cost_total = usage.completion_tokens as f64 * output_cost;
-            
+
             CostBreakdown {
                 input_cost: input_cost_total,
                 output_cost: output_cost_total,
@@ -392,7 +405,7 @@ impl CostCalculator for OpenAIClient {
             // Fallback to GPT-4 pricing
             let input_cost_total = usage.prompt_tokens as f64 * 0.00003;
             let output_cost_total = usage.completion_tokens as f64 * 0.00006;
-            
+
             CostBreakdown {
                 input_cost: input_cost_total,
                 output_cost: output_cost_total,
@@ -485,5 +498,62 @@ mod tests {
         assert!(client.supports_model("gpt-4"));
         assert!(client.supports_model("o4-mini-2025-04-16"));
         assert!(!client.supports_model("claude-3"));
+    }
+
+    #[test]
+    fn test_stop_parameter_handling() {
+        let client = OpenAIClient::with_api_key("test-key".to_string());
+
+        // Test regular model - should include stop parameter
+        let regular_request = LLMRequest {
+            id: uuid::Uuid::new_v4(),
+            model: "gpt-4".to_string(),
+            messages: vec![ChatMessage {
+                role: MessageRole::User,
+                content: "Hello".to_string(),
+                name: None,
+                function_call: None,
+            }],
+            temperature: Some(0.7),
+            max_tokens: Some(100),
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            stop: Some(vec!["stop".to_string()]),
+            stream: Some(false),
+            user: None,
+            functions: None,
+            function_call: None,
+            metadata: HashMap::new(),
+        };
+
+        let regular_openai_request = client.convert_request(&regular_request).unwrap();
+        assert_eq!(regular_openai_request.stop, Some(vec!["stop".to_string()]));
+
+        // Test o1 model - should exclude stop parameter
+        let o1_request = LLMRequest {
+            id: uuid::Uuid::new_v4(),
+            model: "o4-mini-2025-04-16".to_string(),
+            messages: vec![ChatMessage {
+                role: MessageRole::User,
+                content: "Hello".to_string(),
+                name: None,
+                function_call: None,
+            }],
+            temperature: Some(0.7),
+            max_tokens: Some(100),
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            stop: Some(vec!["stop".to_string()]),
+            stream: Some(false),
+            user: None,
+            functions: None,
+            function_call: None,
+            metadata: HashMap::new(),
+        };
+
+        let o1_openai_request = client.convert_request(&o1_request).unwrap();
+        assert_eq!(o1_openai_request.stop, None);
     }
 }

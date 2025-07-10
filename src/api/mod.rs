@@ -70,6 +70,7 @@ pub struct CircuitBreakerApiServer {
     openai_state: OpenAIApiState,
     mcp_manager: MCPServerManager,
     agent_engine: Arc<AgentEngine>,
+    websocket_state: agents::websocket_handlers::WebSocketState,
 }
 
 /// OpenAI API Server (for backward compatibility)
@@ -89,13 +90,17 @@ impl CircuitBreakerApiServer {
             futures::executor::block_on(crate::llm::LLMRouter::new_for_testing())
                 .unwrap_or_else(|_| panic!("Failed to create LLM router for testing")),
         );
+
+        let agent_config = AgentEngineConfig::default();
         let agent_engine = Arc::new(AgentEngine::new(storage, agent_config, llm_router));
+        let websocket_state = agents::websocket_handlers::WebSocketState::new(agent_engine.clone());
 
         Self {
             config,
             openai_state,
             mcp_manager,
             agent_engine,
+            websocket_state,
         }
     }
 
@@ -138,12 +143,14 @@ impl CircuitBreakerApiServer {
             agent_config,
             llm_router,
         ));
+        let websocket_state = agents::websocket_handlers::WebSocketState::new(agent_engine.clone());
 
         Ok(Self {
             config,
             openai_state,
             mcp_manager,
             agent_engine,
+            websocket_state,
         })
     }
 
@@ -214,7 +221,7 @@ impl CircuitBreakerApiServer {
             // Remote MCP functionality is built into the main MCP router
         }
 
-        // Add agent execution routes
+        // Add agent execution routes (includes WebSocket routes)
         let agent_router = agents::http_handlers::routes(self.agent_engine.clone());
         app = app.merge(agent_router);
 
@@ -266,10 +273,10 @@ impl CircuitBreakerApiServer {
             addr
         );
         info!(
-            "     GET  http://{}/agents/{{agent_id}}/executions/{{execution_id}}/events",
+            "     GET  http://{}/agents/{{agent_id}}/executions/{{execution_id}}/stream",
             addr
         );
-        info!("     WS   http://{}/agents/{{agent_id}}/execute/ws", addr);
+        info!("     WS   http://{}/agents/ws", addr);
 
         info!("📋 Configuration:");
         info!("   CORS enabled: {}", self.config.cors_enabled);
@@ -380,11 +387,14 @@ impl CircuitBreakerApiServerBuilder {
             // Use provided agent engine
             let openai_state = OpenAIApiState::new();
             let mcp_manager = MCPServerManager::new();
+            let websocket_state =
+                agents::websocket_handlers::WebSocketState::new(agent_engine.clone());
             CircuitBreakerApiServer {
                 config: self.config,
                 openai_state,
                 mcp_manager,
                 agent_engine,
+                websocket_state,
             }
         } else if let Some(nats_url) = self.nats_url {
             CircuitBreakerApiServer::with_nats_storage(self.config, &nats_url)
@@ -412,11 +422,14 @@ impl CircuitBreakerApiServerBuilder {
             // Use provided agent engine
             let openai_state = OpenAIApiState::new();
             let mcp_manager = MCPServerManager::new();
+            let websocket_state =
+                agents::websocket_handlers::WebSocketState::new(agent_engine.clone());
             CircuitBreakerApiServer {
                 config: self.config,
                 openai_state,
                 mcp_manager,
                 agent_engine,
+                websocket_state,
             }
         } else if self.nats_url.is_some() {
             panic!("Cannot use NATS storage with synchronous build - use build_async() instead");

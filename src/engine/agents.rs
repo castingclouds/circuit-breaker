@@ -16,6 +16,7 @@
 //! - **Input/Output Mapping**: Map token data to agent inputs and outputs
 //! - **Scheduling**: Support for delayed and periodic agent execution
 
+use futures::StreamExt;
 use reqwest;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -974,13 +975,15 @@ impl AgentEngine {
         );
 
         let llm_start = std::time::Instant::now();
-        info!("🎯 Calling call_llm_provider()...");
+        info!("🎯 Calling call_llm_provider_streaming()...");
 
+        // Use streaming LLM call to emit ContentChunk events
         match self
-            .call_llm_provider(
+            .call_llm_provider_streaming(
                 &agent.llm_provider,
                 &agent.llm_config,
                 &execution.input_data,
+                execution.id,
             )
             .await
         {
@@ -1003,10 +1006,9 @@ impl AgentEngine {
                 let _ = self.stream_sender.send(AgentStreamEvent::Completed {
                     execution_id: execution.id,
                     final_response: response,
-                    usage: None,
+                    usage: None, // TODO: Extract usage information if available
                     context: Some(execution.context.clone()),
                 });
-                info!("📡 Completed event sent");
             }
             Err(e) => {
                 let llm_duration = llm_start.elapsed();
@@ -1060,7 +1062,110 @@ impl AgentEngine {
         Ok(current.clone())
     }
 
-    /// Route virtual models through Circuit Breaker's intelligent routing
+    /// Route virtual models through Circuit Breaker's intelligent routing (streaming version)
+    async fn route_virtual_model_streaming(
+        &self,
+        virtual_model: &str,
+        config: &LLMConfig,
+        input: &Value,
+        execution_id: uuid::Uuid,
+    ) -> Result<Value> {
+        info!("🌟 Routing virtual model: {}", virtual_model);
+
+        // Map virtual models to actual providers based on routing strategy
+        let (actual_provider, actual_model, routing_reason) = match virtual_model {
+            "cb:fastest" => {
+                info!("🚀 cb:fastest -> routing to fastest available model");
+                ("openai", "o4-mini-2025-04-16", "Optimized for speed")
+            }
+            "cb:cost-optimal" => {
+                info!("💰 cb:cost-optimal -> routing to most cost-effective model");
+                ("openai", "o4-mini-2025-04-16", "Optimized for cost")
+            }
+            "cb:smart-chat" => {
+                info!("⚖️ cb:smart-chat -> routing to balanced model");
+                (
+                    "anthropic",
+                    "claude-sonnet-4-20250514",
+                    "Balanced performance and cost",
+                )
+            }
+            "cb:creative" => {
+                info!("🎨 cb:creative -> routing to creative model");
+                (
+                    "anthropic",
+                    "claude-sonnet-4-20250514",
+                    "Optimized for creativity",
+                )
+            }
+            "cb:coding" => {
+                info!("💻 cb:coding -> routing to coding-optimized model");
+                (
+                    "anthropic",
+                    "claude-sonnet-4-20250514",
+                    "Optimized for code generation",
+                )
+            }
+            _ => {
+                return Err(CircuitBreakerError::NotFound(format!(
+                    "Unknown virtual model: {}",
+                    virtual_model
+                )));
+            }
+        };
+
+        info!(
+            "🎯 Virtual model {} routed to {} {} ({})",
+            virtual_model, actual_provider, actual_model, routing_reason
+        );
+
+        // Create routed provider
+        let routed_provider = match actual_provider {
+            "openai" => LLMProvider::OpenAI {
+                model: actual_model.to_string(),
+                api_key: String::new(), // Will be populated from config
+                base_url: None,
+            },
+            "anthropic" => LLMProvider::Anthropic {
+                model: actual_model.to_string(),
+                api_key: String::new(),
+                base_url: None,
+            },
+            "google" => LLMProvider::Google {
+                model: actual_model.to_string(),
+                api_key: String::new(),
+            },
+            "ollama" => LLMProvider::Ollama {
+                base_url: "http://localhost:11434".to_string(),
+                model: actual_model.to_string(),
+            },
+            _ => {
+                return Err(CircuitBreakerError::NotFound(format!(
+                    "Unknown provider: {}",
+                    actual_provider
+                )));
+            }
+        };
+
+        info!("🔄 Recursively calling LLM provider with streaming configuration");
+
+        // Use streaming call instead of non-streaming
+        let mut result = self
+            .call_llm_provider_streaming(&routed_provider, config, input, execution_id)
+            .await?;
+
+        // Add virtual model metadata to response
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("virtual_model".to_string(), json!(virtual_model));
+            obj.insert("routed_provider".to_string(), json!(actual_provider));
+            obj.insert("routed_model".to_string(), json!(actual_model));
+            obj.insert("routing_reason".to_string(), json!(routing_reason));
+        }
+
+        info!("✅ Virtual model routing completed for: {}", virtual_model);
+        Ok(result)
+    }
+
     async fn route_virtual_model(
         &self,
         virtual_model: &str,
@@ -1229,7 +1334,147 @@ impl AgentEngine {
         Ok(())
     }
 
-    /// Call the configured LLM provider (placeholder implementation)
+    /// Call the configured LLM provider with streaming support
+    fn call_llm_provider_streaming<'a>(
+        &'a self,
+        provider: &'a LLMProvider,
+        config: &'a LLMConfig,
+        input: &'a Value,
+        execution_id: uuid::Uuid,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            info!("🤖 call_llm_provider_streaming() starting");
+            debug!("🤖 Provider: {:?}", provider);
+            debug!("🤖 Config: {:?}", config);
+            debug!(
+                "🤖 Input: {}",
+                serde_json::to_string(input).unwrap_or_else(|_| "Invalid JSON".to_string())
+            );
+
+            // Check if this is a virtual model that needs Circuit Breaker routing
+            let model_name = match provider {
+                LLMProvider::OpenAI { model, .. } => model,
+                LLMProvider::Anthropic { model, .. } => model,
+                LLMProvider::Google { model, .. } => model,
+                LLMProvider::Ollama { model, .. } => model,
+                LLMProvider::Custom { model, .. } => model,
+            };
+
+            info!("🎯 Model requested: {}", model_name);
+
+            // Check for virtual model routing
+            if model_name.starts_with("cb:") {
+                info!(
+                    "🌟 Virtual model detected: {} - routing through Circuit Breaker",
+                    model_name
+                );
+                return self
+                    .route_virtual_model_streaming(model_name, config, input, execution_id)
+                    .await;
+            }
+
+            info!("🔧 Using direct provider routing for model: {}", model_name);
+
+            // Create LLM request
+            let request = crate::llm::LLMRequest {
+                id: uuid::Uuid::new_v4(),
+                model: model_name.clone(),
+                messages: vec![crate::llm::ChatMessage {
+                    role: crate::llm::MessageRole::User,
+                    content: input
+                        .get("message")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("No message provided")
+                        .to_string(),
+                    name: None,
+                    function_call: None,
+                }],
+                temperature: Some(config.temperature.into()),
+                max_tokens: config.max_tokens,
+                top_p: config.top_p.map(|p| p.into()),
+                frequency_penalty: config.frequency_penalty.map(|f| f.into()),
+                presence_penalty: config.presence_penalty.map(|p| p.into()),
+                stop: if config.stop_sequences.is_empty() {
+                    debug!("🚫 Stop sequences empty, setting stop to None");
+                    None
+                } else {
+                    debug!(
+                        "🛑 Stop sequences not empty: {:?}, setting stop to Some",
+                        config.stop_sequences
+                    );
+                    Some(config.stop_sequences.clone())
+                },
+                stream: Some(true),
+                function_call: None,
+                functions: None,
+                user: None,
+                metadata: std::collections::HashMap::new(),
+            };
+
+            // Use streaming API
+            debug!(
+                "🎯 About to call stream_chat_completion with stop: {:?}",
+                request.stop
+            );
+            match self.llm_router.stream_chat_completion(request).await {
+                Ok(mut stream) => {
+                    let mut full_response = String::new();
+                    let mut sequence = 0u32;
+
+                    // Process streaming chunks
+                    while let Some(chunk_result) = stream.next().await {
+                        match chunk_result {
+                            Ok(chunk) => {
+                                if let Some(choice) = chunk.choices.first() {
+                                    if !choice.delta.content.is_empty() {
+                                        let content = &choice.delta.content;
+                                        full_response.push_str(content);
+                                        sequence += 1;
+
+                                        // Emit ContentChunk event
+                                        let _ = self.stream_sender.send(
+                                            AgentStreamEvent::ContentChunk {
+                                                execution_id,
+                                                chunk: content.clone(),
+                                                sequence,
+                                                context: None,
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("❌ Streaming chunk error: {}", e);
+                                return Err(crate::CircuitBreakerError::Internal(format!(
+                                    "Streaming error: {}",
+                                    e
+                                )));
+                            }
+                        }
+                    }
+
+                    // Return full response for completion
+                    let response_json = serde_json::json!({
+                        "response": full_response,
+                        "model": model_name,
+                        "provider": "streaming",
+                        "input_processed": input
+                    });
+
+                    Ok(response_json)
+                }
+                Err(e) => {
+                    error!("❌ Streaming API call failed: {}", e);
+                    Err(crate::CircuitBreakerError::Internal(format!(
+                        "Streaming failed: {}",
+                        e
+                    )))
+                }
+            }
+        })
+    }
+
+    /// Call the configured LLM provider (non-streaming version)
     fn call_llm_provider<'a>(
         &'a self,
         provider: &'a LLMProvider,

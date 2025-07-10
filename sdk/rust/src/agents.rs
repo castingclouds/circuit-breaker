@@ -7,7 +7,7 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures::{SinkExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::pin::Pin;
+use std::{collections::HashMap, pin::Pin};
 use tokio_tungstenite::{connect_async, tungstenite::Message, WebSocketStream};
 
 /// Client for agent operations
@@ -203,18 +203,42 @@ impl AgentClient {
         agent_id: &str,
         request: AgentExecutionRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<AgentStreamEvent>> + Send>>> {
-        // First execute the agent to get an execution_id
-        let execution_response = self.execute(agent_id, request).await?;
-        let execution_id = execution_response.execution_id;
+        #[derive(Serialize)]
+        struct BackendRequest {
+            context: serde_json::Value,
+            input_mapping: Option<std::collections::HashMap<String, String>>,
+            output_mapping: Option<std::collections::HashMap<String, String>>,
+        }
 
-        // Then establish SSE stream for the execution
-        let url = format!("/agents/{}/executions/{}/stream", agent_id, execution_id);
-        let req_builder = self
+        let backend_request = BackendRequest {
+            context: request.context,
+            input_mapping: request.mapping.as_ref().and_then(|m| {
+                m.as_object().map(|obj| {
+                    obj.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect()
+                })
+            }),
+            output_mapping: None,
+        };
+
+        // Use the streaming execution endpoint
+        let url = format!("agents/{}/execute/stream", agent_id);
+        let full_url = format!("{}{}", self.client.get_endpoint_url("rest"), url);
+        println!("🔍 SDK DEBUG: Streaming execution URL: {}", full_url);
+
+        let mut req_builder = self
             .client
             .http_client()
-            .get(&format!("{}{}", self.client.base_url(), url))
+            .post(&full_url)
+            .json(&backend_request)
             .header("Accept", "text/event-stream")
             .header("Cache-Control", "no-cache");
+
+        // Add tenant_id header if provided
+        if let Some(tenant_id) = &request.tenant_id {
+            req_builder = req_builder.header("X-Tenant-ID", tenant_id);
+        }
 
         let response = req_builder.send().await?;
 
@@ -242,27 +266,32 @@ impl AgentClient {
                     // Simple SSE parsing - look for data: lines
                     for line in chunk_str.lines() {
                         if let Some(data) = line.strip_prefix("data: ") {
-                            if data == "[DONE]" {
-                                // Stream completed
+                            if data == "[DONE]" || data == "keep-alive" {
+                                // Stream completed or keep-alive
                                 continue;
                             }
 
+                            // Try to parse as structured SSE event
                             match serde_json::from_str::<serde_json::Value>(data) {
                                 Ok(json_data) => {
                                     return Ok(AgentStreamEvent {
                                         event_type: json_data
-                                            .get("event_type")
+                                            .get("event")
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("data")
                                             .to_string(),
-                                        execution_id: execution_id.clone(),
+                                        execution_id: "streaming".to_string(), // We don't have execution_id yet
                                         data: json_data,
                                         timestamp: chrono::Utc::now(),
                                     });
                                 }
-                                Err(e) => {
-                                    return Err(crate::Error::Parse {
-                                        message: format!("Failed to parse SSE data: {}", e),
+                                Err(_) => {
+                                    // If not JSON, treat as plain text event
+                                    return Ok(AgentStreamEvent {
+                                        event_type: "data".to_string(),
+                                        execution_id: "streaming".to_string(),
+                                        data: serde_json::json!({"content": data}),
+                                        timestamp: chrono::Utc::now(),
                                     });
                                 }
                             }
@@ -272,7 +301,7 @@ impl AgentClient {
                     // If no valid data found, create a heartbeat event
                     Ok(AgentStreamEvent {
                         event_type: "heartbeat".to_string(),
-                        execution_id: execution_id.clone(),
+                        execution_id: "streaming".to_string(),
                         data: serde_json::json!({}),
                         timestamp: chrono::Utc::now(),
                     })
@@ -291,11 +320,16 @@ impl AgentClient {
         // Convert HTTP URL to WebSocket URL
         let ws_url = self
             .client
-            .base_url()
+            .get_endpoint_url("rest")
             .to_string()
             .replace("http://", "ws://")
             .replace("https://", "wss://");
-        let ws_url = format!("{}/ws", ws_url);
+        let ws_url = if let Some(tenant_id) = &request.tenant_id {
+            format!("{}agents/ws?tenant_id={}", ws_url, tenant_id)
+        } else {
+            format!("{}agents/ws", ws_url)
+        };
+        println!("🔍 SDK DEBUG: WebSocket URL: {}", ws_url);
 
         // Connect to WebSocket
         let (ws_stream, _) = connect_async(&ws_url)
@@ -1246,63 +1280,66 @@ pub struct ListExecutionsResponse {
 
 /// WebSocket message types for agent communication (matches backend ServerMessage)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum AgentWebSocketServerMessage {
-    AuthSuccess {
-        tenant_id: String,
-    },
-    AuthFailure {
-        error: String,
-    },
+    #[serde(rename = "auth_success")]
+    AuthSuccess { tenant_id: String },
+    #[serde(rename = "auth_failure")]
+    AuthFailure { error: String },
+    #[serde(rename = "execution_started")]
     ExecutionStarted {
         execution_id: String,
         agent_id: String,
-        timestamp: DateTime<Utc>,
+        timestamp: String,
     },
+    #[serde(rename = "thinking")]
     Thinking {
         execution_id: String,
         status: String,
-        timestamp: DateTime<Utc>,
+        timestamp: String,
     },
+    #[serde(rename = "chunk")]
     ContentChunk {
         execution_id: String,
         chunk: String,
         sequence: u32,
-        timestamp: DateTime<Utc>,
+        timestamp: String,
     },
+    #[serde(rename = "complete")]
     Complete {
         execution_id: String,
-        response: String,
+        response: serde_json::Value,
         usage: Option<serde_json::Value>,
-        timestamp: DateTime<Utc>,
+        timestamp: String,
     },
+    #[serde(rename = "error")]
     Error {
         execution_id: Option<String>,
         error: String,
-        timestamp: DateTime<Utc>,
+        timestamp: String,
     },
-    Pong {
-        timestamp: DateTime<Utc>,
-    },
+    #[serde(rename = "pong")]
+    Pong { timestamp: String },
 }
 
 /// WebSocket client message types (matches backend ClientMessage)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum AgentWebSocketClientMessage {
-    Authenticate {
-        token: String,
-    },
-    Subscribe {
-        execution_id: String,
-    },
-    Unsubscribe {
-        execution_id: String,
-    },
+    #[serde(rename = "auth")]
+    Authenticate { token: String },
+    #[serde(rename = "subscribe")]
+    Subscribe { execution_id: String },
+    #[serde(rename = "unsubscribe")]
+    Unsubscribe { execution_id: String },
+    #[serde(rename = "execute")]
     ExecuteAgent {
         agent_id: String,
         context: serde_json::Value,
-        input_mapping: Option<serde_json::Value>,
-        output_mapping: Option<serde_json::Value>,
+        input_mapping: Option<HashMap<String, String>>,
+        output_mapping: Option<HashMap<String, String>>,
     },
+    #[serde(rename = "ping")]
     Ping,
 }
 
@@ -1358,7 +1395,13 @@ impl AgentWebSocketStream {
         let execute_msg = AgentWebSocketClientMessage::ExecuteAgent {
             agent_id: agent_id.to_string(),
             context: request.context,
-            input_mapping: request.mapping.clone(),
+            input_mapping: request.mapping.as_ref().and_then(|m| {
+                m.as_object().map(|obj| {
+                    obj.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect()
+                })
+            }),
             output_mapping: None, // TODO: Extract from mapping if needed
         };
 

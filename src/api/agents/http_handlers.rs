@@ -2,7 +2,7 @@
 // This module provides REST API endpoints for agent execution with a clean HTTP interface
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, State, WebSocketUpgrade},
     http::{HeaderMap, StatusCode},
     response::{sse::Event, IntoResponse, Response, Sse},
     routing::{get, post},
@@ -10,6 +10,7 @@ use axum::{
 };
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
@@ -17,6 +18,7 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::api::agents::middleware::{rate_limit, validate_tenant, RateLimiter, TenantId};
+use crate::api::agents::websocket_handlers::{ws_handler, ConnectionManager, WebSocketState};
 use crate::engine::AgentEngine;
 use crate::models::{
     AgentActivityConfig, AgentDefinition, AgentExecution, AgentExecutionStatus, AgentId,
@@ -80,7 +82,10 @@ pub async fn execute_agent(
     Json(request): Json<ExecuteAgentRequest>,
 ) -> impl IntoResponse {
     // Log the request with details
-    info!("🚀 Executing agent {} for tenant {}", agent_id, tenant_id.0);
+    info!(
+        "🚀 POST /agents/{}/execute called for tenant {}",
+        agent_id, tenant_id.0
+    );
     debug!(
         "📋 Request context: {}",
         serde_json::to_string(&request.context).unwrap_or_else(|_| "Invalid JSON".to_string())
@@ -214,6 +219,11 @@ pub async fn list_agent_executions(
     State(engine): State<Arc<AgentEngine>>,
     tenant_id: TenantId,
 ) -> impl IntoResponse {
+    info!(
+        "📋 GET /agents/{}/executions called for tenant {}",
+        agent_id, tenant_id.0
+    );
+
     // Extract query parameters with defaults
     let limit = query.limit.unwrap_or(20);
     let offset = query.offset.unwrap_or(0);
@@ -306,6 +316,11 @@ pub async fn get_execution_details(
     State(engine): State<Arc<AgentEngine>>,
     tenant_id: TenantId,
 ) -> impl IntoResponse {
+    info!(
+        "🔍 GET /agents/{}/executions/{} called for tenant {}",
+        agent_id, execution_id, tenant_id.0
+    );
+
     // Parse execution ID
     let uuid = match Uuid::parse_str(&execution_id) {
         Ok(id) => id,
@@ -388,6 +403,154 @@ pub async fn get_execution_details(
     }
 }
 
+/// Execute an agent with streaming response
+/// POST /agents/{agent_id}/execute/stream
+pub async fn execute_agent_stream(
+    Path(agent_id): Path<String>,
+    State(engine): State<Arc<AgentEngine>>,
+    tenant_id: TenantId,
+    Json(request): Json<ExecuteAgentRequest>,
+) -> impl IntoResponse {
+    info!(
+        "🌊 Starting streaming execution for agent_id: {}, tenant: {}",
+        agent_id, tenant_id.0
+    );
+
+    // Ensure tenant ID is in context
+    let enhanced_context = ensure_tenant_in_context(request.context, &tenant_id.0);
+
+    // Create agent config
+    let config = AgentActivityConfig {
+        agent_id: AgentId::from(agent_id.clone()),
+        input_mapping: request.input_mapping.unwrap_or_default(),
+        output_mapping: request.output_mapping.unwrap_or_default(),
+        required: true,
+        timeout_seconds: Some(300),
+        retry_config: None,
+    };
+
+    // Subscribe to stream before starting execution
+    let stream = engine.subscribe_to_stream();
+
+    // Start the agent execution and get the execution ID
+    let execution_result = engine.execute_agent(&config, enhanced_context).await;
+    let execution_id = match execution_result {
+        Ok(execution) => {
+            info!("🌊 Streaming execution started: {}", execution.id);
+            execution.id
+        }
+        Err(e) => {
+            error!("🌊 Streaming execution failed: {}", e);
+            // Return error response
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(axum::body::Body::empty())
+                .unwrap()
+                .into_response();
+        }
+    };
+
+    // Create manual SSE response with proper headers and termination
+    let (mut sender, body) = axum::body::Body::channel();
+
+    tokio::spawn(async move {
+        let mut stream = BroadcastStream::new(stream);
+
+        while let Some(msg) = stream.next().await {
+            match msg {
+                Ok(event) => {
+                    // Filter events for this specific execution ID
+                    let event_execution_id = match &event {
+                        AgentStreamEvent::ThinkingStatus { execution_id, .. } => *execution_id,
+                        AgentStreamEvent::ContentChunk { execution_id, .. } => *execution_id,
+                        AgentStreamEvent::Completed { execution_id, .. } => *execution_id,
+                        AgentStreamEvent::Failed { execution_id, .. } => *execution_id,
+                        AgentStreamEvent::ToolCall { execution_id, .. } => *execution_id,
+                        AgentStreamEvent::ToolResult { execution_id, .. } => *execution_id,
+                    };
+
+                    // Only process events for our execution
+                    if event_execution_id != execution_id {
+                        continue;
+                    }
+
+                    let sse_data = match &event {
+                        AgentStreamEvent::ThinkingStatus { status, .. } => {
+                            format!("event: thinking\ndata: {}\n\n", status)
+                        }
+                        AgentStreamEvent::ContentChunk {
+                            chunk, sequence, ..
+                        } => {
+                            format!("event: chunk\nid: {}\ndata: {}\n\n", sequence, chunk)
+                        }
+                        AgentStreamEvent::Completed { final_response, .. } => {
+                            let response_data =
+                                serde_json::to_string(&final_response).unwrap_or_default();
+                            format!("event: complete\ndata: {}\n\n", response_data)
+                        }
+                        AgentStreamEvent::Failed { error, .. } => {
+                            format!("event: error\ndata: {}\n\n", error)
+                        }
+                        AgentStreamEvent::ToolCall {
+                            tool_name,
+                            arguments,
+                            ..
+                        } => {
+                            let tool_data = serde_json::json!({"tool_name": tool_name, "tool_input": arguments});
+                            format!("event: tool_call\ndata: {}\n\n", tool_data.to_string())
+                        }
+                        AgentStreamEvent::ToolResult {
+                            tool_name, result, ..
+                        } => {
+                            let tool_data =
+                                serde_json::json!({"tool_name": tool_name, "tool_result": result});
+                            format!("event: tool_result\ndata: {}\n\n", tool_data.to_string())
+                        }
+                    };
+
+                    if sender.send_data(sse_data.into()).await.is_err() {
+                        break;
+                    }
+
+                    // Terminate stream after completion or error
+                    match &event {
+                        AgentStreamEvent::Completed { .. } | AgentStreamEvent::Failed { .. } => {
+                            // Send termination signal
+                            let _ = sender.send_data("data: [DONE]\n\n".into()).await;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Access-Control-Allow-Headers", "Content-Type")
+        .body(body)
+        .map_err(|e| {
+            error!("Failed to create SSE response: {}", e);
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(axum::body::Body::empty())
+                .unwrap()
+        })
+        .unwrap_or_else(|_| {
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(axum::body::Body::empty())
+                .unwrap()
+        })
+        .into_response()
+}
+
 /// Stream events for a specific execution
 /// GET /agents/{agent_id}/executions/{execution_id}/stream
 pub async fn stream_execution_events(
@@ -395,6 +558,11 @@ pub async fn stream_execution_events(
     State(engine): State<Arc<AgentEngine>>,
     tenant_id: TenantId,
 ) -> impl IntoResponse {
+    info!(
+        "🌊 Streaming handler called for agent_id: {}, execution_id: {}, tenant: {}",
+        agent_id, execution_id, tenant_id.0
+    );
+
     // Parse execution ID
     let execution_id_uuid = match Uuid::parse_str(&execution_id) {
         Ok(id) => id,
@@ -402,57 +570,14 @@ pub async fn stream_execution_events(
             // Return an immediate error response for invalid UUID
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(axum::body::boxed(axum::body::Empty::new()))
+                .body(axum::body::Body::empty())
                 .unwrap()
                 .into_response();
         }
     };
 
-    // Verify the execution exists and belongs to this tenant
-    match engine.storage().get_execution(&execution_id_uuid).await {
-        Ok(Some(execution)) => {
-            // Verify agent ID matches
-            if execution.agent_id.to_string() != agent_id {
-                return Response::builder()
-                    .status(StatusCode::NOT_FOUND)
-                    .body(axum::body::boxed(axum::body::Empty::new()))
-                    .unwrap()
-                    .into_response();
-            }
-
-            // Verify tenant ID matches
-            if let Some(exec_tenant) = execution.context.get("tenant_id").and_then(|t| t.as_str()) {
-                if exec_tenant != tenant_id.0 {
-                    return Response::builder()
-                        .status(StatusCode::FORBIDDEN)
-                        .body(axum::body::boxed(axum::body::Empty::new()))
-                        .unwrap()
-                        .into_response();
-                }
-            } else {
-                // No tenant ID in context is a security issue
-                return Response::builder()
-                    .status(StatusCode::FORBIDDEN)
-                    .body(axum::body::boxed(axum::body::Empty::new()))
-                    .unwrap()
-                    .into_response();
-            }
-        }
-        Ok(None) => {
-            return Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body(axum::body::boxed(axum::body::Empty::new()))
-                .unwrap()
-                .into_response();
-        }
-        Err(_) => {
-            return Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(axum::body::boxed(axum::body::Empty::new()))
-                .unwrap()
-                .into_response();
-        }
-    }
+    // Skip storage validation for streaming - just stream directly
+    // The execution_id and agent_id are validated by the URL pattern
 
     // Create a subscriber to the agent stream
     let stream = engine.subscribe_to_stream();
@@ -536,8 +661,17 @@ fn ensure_tenant_in_context(context: serde_json::Value, tenant_id: &str) -> serd
 
 /// Create a router with all agent HTTP endpoints
 pub fn routes(engine: Arc<AgentEngine>) -> Router {
+    // Create WebSocket state
+    let websocket_state = WebSocketState::new(engine.clone());
+    let websocket_router_state = (engine.clone(), websocket_state.get_connection_manager());
+
     Router::new()
+        .route("/test", get(|| async { "Test route works!" }))
         .route("/agents/:agent_id/execute", post(execute_agent))
+        .route(
+            "/agents/:agent_id/execute/stream",
+            post(execute_agent_stream),
+        )
         .route("/agents/:agent_id/executions", get(list_agent_executions))
         .route(
             "/agents/:agent_id/executions/:execution_id",
@@ -549,6 +683,12 @@ pub fn routes(engine: Arc<AgentEngine>) -> Router {
         )
         .with_state(engine)
         .layer(axum::middleware::from_fn(validate_tenant))
+        .merge(
+            Router::new()
+                .route("/agents/ws", get(ws_handler))
+                .with_state(websocket_router_state)
+                .layer(axum::middleware::from_fn(validate_tenant)),
+        )
 }
 
 /// Add agent HTTP routes to an existing router

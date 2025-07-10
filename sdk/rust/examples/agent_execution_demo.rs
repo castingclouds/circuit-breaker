@@ -456,7 +456,7 @@ async fn demo_simple_execution(client: &Client, agent_id: &str, tenant_id: &str)
     println!("   ===========================");
 
     let context = json!({
-        "message": "Hello! I need help with my order status.",
+        "message": "What is the weather like in Hilton Head, SC",
         "user_id": "user123",
         "session_id": "session456",
         "metadata": {
