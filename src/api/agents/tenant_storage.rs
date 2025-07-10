@@ -235,7 +235,8 @@ impl MetricsCollector {
             }
         });
 
-        self._collection_task = Some(task.clone());
+        // Note: Not storing task handle since JoinHandle doesn't implement Clone
+        // Caller is responsible for managing the returned handle
         task
     }
 
@@ -404,6 +405,7 @@ impl BackupManager {
                 .await
                 {
                     Ok(metadata) => {
+                        let size_bytes = metadata.size_bytes;
                         let mut backups = backups_clone.write().await;
                         backups
                             .entry(tenant_id_clone.clone())
@@ -411,7 +413,7 @@ impl BackupManager {
                             .push(metadata);
                         info!(
                             "Backup completed for tenant {}: {} bytes",
-                            tenant_id_clone, metadata.size_bytes
+                            tenant_id_clone, size_bytes
                         );
                     }
                     Err(e) => {
@@ -559,6 +561,10 @@ impl BackupManager {
 
         let executions: Vec<AgentExecution> = serde_json::from_value(backup["executions"].clone())?;
 
+        // Capture lengths before consuming the vectors
+        let agents_count = agents.len();
+        let executions_count = executions.len();
+
         // Restore agents
         for agent in agents {
             storage.store_agent(&agent).await?;
@@ -571,10 +577,7 @@ impl BackupManager {
 
         info!(
             "Restored backup {} for tenant {}: {} agents, {} executions",
-            backup_id,
-            tenant_id,
-            agents.len(),
-            executions.len()
+            backup_id, tenant_id, agents_count, executions_count
         );
 
         Ok(())
@@ -772,14 +775,14 @@ impl TenantAgentStorage {
             return agent;
         }
 
-        // Add tenant ID to metadata
-        let metadata = agent.metadata.as_object().cloned().unwrap_or_default();
-        let mut metadata = metadata;
-        metadata.insert(
-            "tenant_id".to_string(),
-            Value::String(tenant_id.as_str().to_string()),
-        );
-        agent.metadata = Value::Object(metadata);
+        // TODO: Add tenant ID to metadata when AgentDefinition has metadata field
+        // let metadata = agent.metadata.as_object().cloned().unwrap_or_default();
+        // let mut metadata = metadata;
+        // metadata.insert(
+        //     "tenant_id".to_string(),
+        //     Value::String(tenant_id.as_str().to_string()),
+        // );
+        // agent.metadata = Value::Object(metadata);
 
         agent
     }
@@ -1414,6 +1417,48 @@ impl AgentStorage for TenantAgentStorage {
                 executions_size,
             )
             .await;
+
+        Ok(executions)
+    }
+
+    async fn list_executions_for_resource(
+        &self,
+        resource_id: &Uuid,
+    ) -> Result<Vec<AgentExecution>> {
+        // Start timing
+        let start = std::time::Instant::now();
+
+        // Get executions from inner storage
+        let executions = self.inner.list_executions_for_resource(resource_id).await?;
+
+        // Group by tenant for metrics
+        let mut tenant_executions: HashMap<TenantId, Vec<AgentExecution>> = HashMap::new();
+
+        for execution in &executions {
+            if let Some(tenant_id) = self.extract_tenant_from_execution(execution) {
+                tenant_executions
+                    .entry(tenant_id)
+                    .or_insert_with(Vec::new)
+                    .push(execution.clone());
+            }
+        }
+
+        // Record metrics for each tenant
+        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+        for (tenant_id, tenant_execs) in &tenant_executions {
+            let execs_size = serde_json::to_string(tenant_execs)
+                .map(|s| s.len() as u64)
+                .unwrap_or(0);
+
+            self.metrics
+                .record_operation(
+                    tenant_id,
+                    "list_executions_for_resource",
+                    elapsed,
+                    execs_size,
+                )
+                .await;
+        }
 
         Ok(executions)
     }

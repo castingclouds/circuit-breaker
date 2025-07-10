@@ -3,7 +3,12 @@
 //! This module provides client interfaces for creating and managing AI agents.
 
 use crate::{schema::QueryBuilder, Client, Result};
+use bytes::Bytes;
+use chrono::{DateTime, Utc};
+use futures::{SinkExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::pin::Pin;
+use tokio_tungstenite::{connect_async, tungstenite::Message, WebSocketStream};
 
 /// Client for agent operations
 #[derive(Debug, Clone)]
@@ -95,6 +100,413 @@ impl AgentClient {
                 data,
             })
             .collect())
+    }
+
+    /// Execute an agent (non-streaming) as defined in PRD Section 4.1.1
+    pub async fn execute(
+        &self,
+        agent_id: &str,
+        request: AgentExecutionRequest,
+    ) -> Result<AgentExecutionResponse> {
+        #[derive(Serialize)]
+        struct BackendRequest {
+            context: serde_json::Value,
+            input_mapping: Option<std::collections::HashMap<String, String>>,
+            output_mapping: Option<std::collections::HashMap<String, String>>,
+        }
+
+        #[derive(Deserialize)]
+        struct BackendResponse {
+            execution_id: String,
+            agent_id: String,
+            status: String,
+            output: Option<serde_json::Value>,
+            error: Option<String>,
+            created_at: String,
+            context: serde_json::Value,
+        }
+
+        let backend_request = BackendRequest {
+            context: request.context,
+            input_mapping: request.mapping.as_ref().and_then(|m| {
+                m.as_object().map(|obj| {
+                    obj.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect()
+                })
+            }),
+            output_mapping: None, // TODO: Extract from mapping if needed
+        };
+
+        let url = format!("/agents/{}/execute", agent_id);
+        let mut req = self
+            .client
+            .http_client()
+            .post(&format!("{}{}", self.client.base_url(), url))
+            .json(&backend_request);
+
+        // Add tenant_id header if provided
+        if let Some(tenant_id) = &request.tenant_id {
+            req = req.header("X-Tenant-ID", tenant_id);
+        }
+
+        let response = req.send().await?;
+
+        if !response.status().is_success() {
+            let status_code = response.status().as_u16();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(crate::Error::Server {
+                status: status_code,
+                message: error_text,
+            });
+        }
+
+        let backend_response: BackendResponse = response.json().await?;
+
+        // Parse the created_at timestamp
+        let created_at = chrono::DateTime::parse_from_rfc3339(&backend_response.created_at)
+            .map_err(|e| crate::Error::Parse {
+                message: format!("Invalid timestamp format: {}", e),
+            })?
+            .with_timezone(&chrono::Utc);
+
+        let status = match backend_response.status.as_str() {
+            "pending" => AgentExecutionStatus::Pending,
+            "running" => AgentExecutionStatus::Running,
+            "completed" => AgentExecutionStatus::Completed,
+            "failed" => AgentExecutionStatus::Failed,
+            "timeout" => AgentExecutionStatus::Timeout,
+            "cancelled" => AgentExecutionStatus::Cancelled,
+            _ => AgentExecutionStatus::Pending,
+        };
+
+        Ok(AgentExecutionResponse {
+            execution_id: backend_response.execution_id,
+            agent_id: backend_response.agent_id,
+            status,
+            context: backend_response.context,
+            output: backend_response.output,
+            error: backend_response.error,
+            created_at,
+            completed_at: None, // Backend doesn't return this in execute response
+            duration_ms: None,
+        })
+    }
+
+    /// Execute an agent with streaming as defined in PRD Section 4.1.2
+    pub async fn execute_stream(
+        &self,
+        agent_id: &str,
+        request: AgentExecutionRequest,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<AgentStreamEvent>> + Send>>> {
+        // First execute the agent to get an execution_id
+        let execution_response = self.execute(agent_id, request).await?;
+        let execution_id = execution_response.execution_id;
+
+        // Then establish SSE stream for the execution
+        let url = format!("/agents/{}/executions/{}/stream", agent_id, execution_id);
+        let req_builder = self
+            .client
+            .http_client()
+            .get(&format!("{}{}", self.client.base_url(), url))
+            .header("Accept", "text/event-stream")
+            .header("Cache-Control", "no-cache");
+
+        let response = req_builder.send().await?;
+
+        if !response.status().is_success() {
+            let status_code = response.status().as_u16();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(crate::Error::Server {
+                status: status_code,
+                message: error_text,
+            });
+        }
+
+        let stream = response.bytes_stream().map(move |chunk_result| {
+            chunk_result
+                .map_err(|e| crate::Error::Network {
+                    message: e.to_string(),
+                })
+                .and_then(|chunk: Bytes| {
+                    // Parse SSE chunk into AgentStreamEvent
+                    let chunk_str = String::from_utf8_lossy(&chunk);
+
+                    // Simple SSE parsing - look for data: lines
+                    for line in chunk_str.lines() {
+                        if let Some(data) = line.strip_prefix("data: ") {
+                            if data == "[DONE]" {
+                                // Stream completed
+                                continue;
+                            }
+
+                            match serde_json::from_str::<serde_json::Value>(data) {
+                                Ok(json_data) => {
+                                    return Ok(AgentStreamEvent {
+                                        event_type: json_data
+                                            .get("event_type")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("data")
+                                            .to_string(),
+                                        execution_id: execution_id.clone(),
+                                        data: json_data,
+                                        timestamp: chrono::Utc::now(),
+                                    });
+                                }
+                                Err(e) => {
+                                    return Err(crate::Error::Parse {
+                                        message: format!("Failed to parse SSE data: {}", e),
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    // If no valid data found, create a heartbeat event
+                    Ok(AgentStreamEvent {
+                        event_type: "heartbeat".to_string(),
+                        execution_id: execution_id.clone(),
+                        data: serde_json::json!({}),
+                        timestamp: chrono::Utc::now(),
+                    })
+                })
+        });
+
+        Ok(Box::pin(stream))
+    }
+
+    /// Execute an agent via WebSocket
+    pub async fn execute_websocket(
+        &self,
+        agent_id: &str,
+        request: AgentExecutionRequest,
+    ) -> Result<AgentWebSocketStream> {
+        // Convert HTTP URL to WebSocket URL
+        let ws_url = self
+            .client
+            .base_url()
+            .to_string()
+            .replace("http://", "ws://")
+            .replace("https://", "wss://");
+        let ws_url = format!("{}/ws", ws_url);
+
+        // Connect to WebSocket
+        let (ws_stream, _) = connect_async(&ws_url)
+            .await
+            .map_err(|e| crate::Error::Network {
+                message: format!("Failed to connect to WebSocket: {}", e),
+            })?;
+
+        let mut stream = AgentWebSocketStream::new(ws_stream);
+
+        // Authenticate if tenant_id is provided
+        if let Some(tenant_id) = &request.tenant_id {
+            stream.authenticate(tenant_id.clone()).await?;
+        }
+
+        // Execute the agent
+        stream.execute_agent(agent_id, request).await?;
+
+        Ok(stream)
+    }
+
+    /// List agent executions
+    pub async fn list_executions(
+        &self,
+        agent_id: &str,
+        request: ListExecutionsRequest,
+    ) -> Result<ListExecutionsResponse> {
+        #[derive(Deserialize)]
+        struct BackendExecutionSummary {
+            execution_id: String,
+            agent_id: String,
+            status: String,
+            created_at: String,
+            completed_at: Option<String>,
+            has_error: bool,
+        }
+
+        #[derive(Deserialize)]
+        struct BackendListResponse {
+            executions: Vec<BackendExecutionSummary>,
+            total: usize,
+            page: usize,
+            page_size: usize,
+        }
+
+        let mut url = format!("/agents/{}/executions", agent_id);
+        let mut query_params = Vec::new();
+
+        if let Some(limit) = request.limit {
+            query_params.push(format!("limit={}", limit));
+        }
+        if let Some(offset) = request.offset {
+            query_params.push(format!("offset={}", offset));
+        }
+        if let Some(ref status) = request.status {
+            query_params.push(format!("status={}", status));
+        }
+
+        if !query_params.is_empty() {
+            url.push('?');
+            url.push_str(&query_params.join("&"));
+        }
+
+        let mut req = self
+            .client
+            .http_client()
+            .get(&format!("{}{}", self.client.base_url(), url));
+
+        // Add tenant_id header if provided
+        if let Some(tenant_id) = &request.tenant_id {
+            req = req.header("X-Tenant-ID", tenant_id);
+        }
+
+        let response = req.send().await?;
+
+        if !response.status().is_success() {
+            let status_code = response.status().as_u16();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(crate::Error::Server {
+                status: status_code,
+                message: error_text,
+            });
+        }
+
+        let backend_response: BackendListResponse = response.json().await?;
+
+        let executions = backend_response
+            .executions
+            .into_iter()
+            .map(|exec| {
+                let created_at = chrono::DateTime::parse_from_rfc3339(&exec.created_at)
+                    .unwrap_or_else(|_| chrono::Utc::now().into())
+                    .with_timezone(&chrono::Utc);
+
+                let completed_at = exec
+                    .completed_at
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts).ok())
+                    .map(|dt| dt.with_timezone(&chrono::Utc));
+
+                let status = match exec.status.as_str() {
+                    "pending" => AgentExecutionStatus::Pending,
+                    "running" => AgentExecutionStatus::Running,
+                    "completed" => AgentExecutionStatus::Completed,
+                    "failed" => AgentExecutionStatus::Failed,
+                    "timeout" => AgentExecutionStatus::Timeout,
+                    "cancelled" => AgentExecutionStatus::Cancelled,
+                    _ => AgentExecutionStatus::Pending,
+                };
+
+                AgentExecutionResponse {
+                    execution_id: exec.execution_id,
+                    agent_id: exec.agent_id,
+                    status,
+                    context: serde_json::json!({}), // Not included in summary
+                    output: None,                   // Not included in summary
+                    error: if exec.has_error {
+                        Some("Error occurred".to_string())
+                    } else {
+                        None
+                    },
+                    created_at,
+                    completed_at,
+                    duration_ms: completed_at
+                        .map(|ca| ca.signed_duration_since(created_at).num_milliseconds() as u64),
+                }
+            })
+            .collect();
+
+        Ok(ListExecutionsResponse {
+            executions,
+            total: backend_response.total as u64,
+            limit: backend_response.page_size as u32,
+            offset: (backend_response.page * backend_response.page_size) as u32,
+        })
+    }
+
+    /// Get specific execution details
+    pub async fn get_execution(
+        &self,
+        agent_id: &str,
+        execution_id: &str,
+        tenant_id: Option<&str>,
+    ) -> Result<AgentExecutionResponse> {
+        #[derive(Deserialize)]
+        struct BackendResponse {
+            execution_id: String,
+            agent_id: String,
+            status: String,
+            output: Option<serde_json::Value>,
+            error: Option<String>,
+            created_at: String,
+            context: serde_json::Value,
+        }
+
+        let url = format!("/agents/{}/executions/{}", agent_id, execution_id);
+        let mut req = self
+            .client
+            .http_client()
+            .get(&format!("{}{}", self.client.base_url(), url));
+
+        // Add tenant_id header if provided
+        if let Some(tenant_id) = tenant_id {
+            req = req.header("X-Tenant-ID", tenant_id);
+        }
+
+        let response = req.send().await?;
+
+        if !response.status().is_success() {
+            let status_code = response.status().as_u16();
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(crate::Error::Server {
+                status: status_code,
+                message: error_text,
+            });
+        }
+
+        let backend_response: BackendResponse = response.json().await?;
+
+        // Parse the created_at timestamp
+        let created_at = chrono::DateTime::parse_from_rfc3339(&backend_response.created_at)
+            .map_err(|e| crate::Error::Parse {
+                message: format!("Invalid timestamp format: {}", e),
+            })?
+            .with_timezone(&chrono::Utc);
+
+        let status = match backend_response.status.as_str() {
+            "pending" => AgentExecutionStatus::Pending,
+            "running" => AgentExecutionStatus::Running,
+            "completed" => AgentExecutionStatus::Completed,
+            "failed" => AgentExecutionStatus::Failed,
+            "timeout" => AgentExecutionStatus::Timeout,
+            "cancelled" => AgentExecutionStatus::Cancelled,
+            _ => AgentExecutionStatus::Pending,
+        };
+
+        Ok(AgentExecutionResponse {
+            execution_id: backend_response.execution_id,
+            agent_id: backend_response.agent_id,
+            status,
+            context: backend_response.context,
+            output: backend_response.output,
+            error: backend_response.error,
+            created_at,
+            completed_at: None, // Backend doesn't include this in single execution response
+            duration_ms: None,
+        })
     }
 }
 
@@ -768,4 +1180,248 @@ pub struct AgentDefinition {
     pub system_prompt: Option<String>,
     pub tools: Vec<ToolDefinition>,
     pub memory: Option<MemoryConfig>,
+}
+
+/// Agent execution request as defined in the PRD
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentExecutionRequest {
+    pub context: serde_json::Value,
+    pub mapping: Option<serde_json::Value>,
+    pub tenant_id: Option<String>,
+    pub stream: Option<bool>,
+}
+
+/// Agent execution response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentExecutionResponse {
+    pub execution_id: String,
+    pub agent_id: String,
+    pub status: AgentExecutionStatus,
+    pub context: serde_json::Value,
+    pub output: Option<serde_json::Value>,
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub duration_ms: Option<u64>,
+}
+
+/// Agent execution status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AgentExecutionStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+    Timeout,
+    Cancelled,
+}
+
+/// Agent stream event for real-time updates
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentStreamEvent {
+    pub event_type: String,
+    pub execution_id: String,
+    pub data: serde_json::Value,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Request for listing agent executions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListExecutionsRequest {
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+    pub status: Option<String>,
+    pub tenant_id: Option<String>,
+}
+
+/// Response for listing agent executions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListExecutionsResponse {
+    pub executions: Vec<AgentExecutionResponse>,
+    pub total: u64,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+/// WebSocket message types for agent communication (matches backend ServerMessage)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AgentWebSocketServerMessage {
+    AuthSuccess {
+        tenant_id: String,
+    },
+    AuthFailure {
+        error: String,
+    },
+    ExecutionStarted {
+        execution_id: String,
+        agent_id: String,
+        timestamp: DateTime<Utc>,
+    },
+    Thinking {
+        execution_id: String,
+        status: String,
+        timestamp: DateTime<Utc>,
+    },
+    ContentChunk {
+        execution_id: String,
+        chunk: String,
+        sequence: u32,
+        timestamp: DateTime<Utc>,
+    },
+    Complete {
+        execution_id: String,
+        response: String,
+        usage: Option<serde_json::Value>,
+        timestamp: DateTime<Utc>,
+    },
+    Error {
+        execution_id: Option<String>,
+        error: String,
+        timestamp: DateTime<Utc>,
+    },
+    Pong {
+        timestamp: DateTime<Utc>,
+    },
+}
+
+/// WebSocket client message types (matches backend ClientMessage)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AgentWebSocketClientMessage {
+    Authenticate {
+        token: String,
+    },
+    Subscribe {
+        execution_id: String,
+    },
+    Unsubscribe {
+        execution_id: String,
+    },
+    ExecuteAgent {
+        agent_id: String,
+        context: serde_json::Value,
+        input_mapping: Option<serde_json::Value>,
+        output_mapping: Option<serde_json::Value>,
+    },
+    Ping,
+}
+
+/// WebSocket stream for agent execution
+pub struct AgentWebSocketStream {
+    ws_stream: WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    authenticated: bool,
+}
+
+impl AgentWebSocketStream {
+    pub fn new(
+        ws_stream: WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    ) -> Self {
+        Self {
+            ws_stream,
+            authenticated: false,
+        }
+    }
+
+    pub async fn authenticate(&mut self, tenant_id: String) -> Result<()> {
+        let auth_msg = AgentWebSocketClientMessage::Authenticate {
+            token: tenant_id, // Using tenant_id as token for now
+        };
+
+        self.send_message(auth_msg).await?;
+
+        // Wait for auth response
+        if let Some(msg) = self.receive_message().await? {
+            match msg {
+                AgentWebSocketServerMessage::AuthSuccess { .. } => {
+                    self.authenticated = true;
+                    Ok(())
+                }
+                AgentWebSocketServerMessage::AuthFailure { error } => {
+                    Err(crate::Error::Auth { message: error })
+                }
+                _ => Err(crate::Error::Network {
+                    message: "Unexpected message during authentication".to_string(),
+                }),
+            }
+        } else {
+            Err(crate::Error::Network {
+                message: "No response to authentication".to_string(),
+            })
+        }
+    }
+
+    pub async fn execute_agent(
+        &mut self,
+        agent_id: &str,
+        request: AgentExecutionRequest,
+    ) -> Result<()> {
+        let execute_msg = AgentWebSocketClientMessage::ExecuteAgent {
+            agent_id: agent_id.to_string(),
+            context: request.context,
+            input_mapping: request.mapping.clone(),
+            output_mapping: None, // TODO: Extract from mapping if needed
+        };
+
+        self.send_message(execute_msg).await
+    }
+
+    pub async fn subscribe(&mut self, execution_id: String) -> Result<()> {
+        let subscribe_msg = AgentWebSocketClientMessage::Subscribe { execution_id };
+        self.send_message(subscribe_msg).await
+    }
+
+    pub async fn unsubscribe(&mut self, execution_id: String) -> Result<()> {
+        let unsubscribe_msg = AgentWebSocketClientMessage::Unsubscribe { execution_id };
+        self.send_message(unsubscribe_msg).await
+    }
+
+    pub async fn ping(&mut self) -> Result<()> {
+        let ping_msg = AgentWebSocketClientMessage::Ping;
+        self.send_message(ping_msg).await
+    }
+
+    async fn send_message(&mut self, message: AgentWebSocketClientMessage) -> Result<()> {
+        let json_msg = serde_json::to_string(&message).map_err(|e| crate::Error::Parse {
+            message: format!("Failed to serialize message: {}", e),
+        })?;
+
+        self.ws_stream
+            .send(Message::Text(json_msg))
+            .await
+            .map_err(|e| crate::Error::Network {
+                message: format!("Failed to send WebSocket message: {}", e),
+            })
+    }
+
+    pub async fn receive_message(&mut self) -> Result<Option<AgentWebSocketServerMessage>> {
+        loop {
+            match self.ws_stream.next().await {
+                Some(Ok(Message::Text(text))) => {
+                    let message = serde_json::from_str(&text).map_err(|e| crate::Error::Parse {
+                        message: format!("Failed to parse WebSocket message: {}", e),
+                    })?;
+                    return Ok(Some(message));
+                }
+                Some(Ok(Message::Close(_))) => return Ok(None),
+                Some(Ok(_)) => {
+                    // Ignore binary, ping, pong messages and continue loop
+                    continue;
+                }
+                Some(Err(e)) => {
+                    return Err(crate::Error::Network {
+                        message: format!("WebSocket error: {}", e),
+                    });
+                }
+                None => return Ok(None),
+            }
+        }
+    }
+
+    pub async fn close(&mut self) -> Result<()> {
+        self.ws_stream
+            .close(None)
+            .await
+            .map_err(|e| crate::Error::Network {
+                message: format!("Failed to close WebSocket: {}", e),
+            })
+    }
 }

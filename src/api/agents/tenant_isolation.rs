@@ -539,6 +539,28 @@ impl AgentStorage for TenantAwareStorage {
 
         Ok(filtered)
     }
+
+    async fn list_executions_for_resource(
+        &self,
+        resource_id: &Uuid,
+    ) -> Result<Vec<AgentExecution>> {
+        // Get executions from inner storage
+        let executions = self.inner.list_executions_for_resource(resource_id).await?;
+
+        // Filter by tenant
+        let filtered = executions
+            .into_iter()
+            .filter(|e| {
+                if let Some(tenant) = e.context.get("tenant_id").and_then(|t| t.as_str()) {
+                    tenant == self.tenant_id
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        Ok(filtered)
+    }
 }
 
 // Tenant-aware agent engine
@@ -665,7 +687,7 @@ pub struct TenantAwareAgentEngine {
 impl TenantAwareAgentEngine {
     pub fn new(inner: Arc<AgentEngine>, tenant_id: String, config: TenantConfig) -> Self {
         let storage = Arc::new(TenantAwareStorage::new(
-            inner.storage.clone(),
+            inner.storage().clone(),
             tenant_id.clone(),
         ));
 
@@ -763,7 +785,7 @@ impl TenantAwareAgentEngine {
             completed: 0,
             failed: 0,
             running: 0,
-            avg_duration_ms: 0,
+            avg_duration_ms: Some(0),
         };
 
         let mut total_duration_ms = 0;
@@ -785,7 +807,7 @@ impl TenantAwareAgentEngine {
         }
 
         if duration_count > 0 {
-            stats.avg_duration_ms = total_duration_ms / duration_count as u64;
+            stats.avg_duration_ms = Some(total_duration_ms / duration_count as u64);
         }
 
         Ok(stats)

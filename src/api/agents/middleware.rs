@@ -3,8 +3,9 @@
 
 use async_trait::async_trait;
 use axum::{
+    body::Body,
     extract::{FromRequestParts, State},
-    http::{request::Parts, StatusCode},
+    http::{request::Parts, Request, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     RequestPartsExt,
@@ -130,7 +131,7 @@ impl<T> RequestQueue<T> {
 #[derive(Debug, Clone)]
 pub struct RateLimiter {
     config: RateLimitConfig,
-    tenant_buckets: Arc<DashMap<String, Mutex<TokenBucket>>>,
+    tenant_buckets: DashMap<String, Arc<Mutex<TokenBucket>>>,
     global_bucket: Arc<Mutex<TokenBucket>>,
     queue_semaphore: Arc<Semaphore>,
 }
@@ -139,7 +140,7 @@ impl RateLimiter {
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
             config: config.clone(),
-            tenant_buckets: Arc::new(DashMap::new()),
+            tenant_buckets: DashMap::new(),
             global_bucket: Arc::new(Mutex::new(TokenBucket::new(
                 config.max_requests,
                 config.time_period_secs,
@@ -149,14 +150,14 @@ impl RateLimiter {
     }
 
     // Get a bucket for a specific tenant, or create one if it doesn't exist
-    async fn get_tenant_bucket(&self, tenant_id: &str) -> Mutex<TokenBucket> {
+    async fn get_tenant_bucket(&self, tenant_id: &str) -> Arc<Mutex<TokenBucket>> {
         if let Some(bucket) = self.tenant_buckets.get(tenant_id) {
             bucket.value().clone()
         } else {
-            let bucket = Mutex::new(TokenBucket::new(
+            let bucket = Arc::new(Mutex::new(TokenBucket::new(
                 self.config.max_requests,
                 self.config.time_period_secs,
-            ));
+            )));
             self.tenant_buckets
                 .insert(tenant_id.to_string(), bucket.clone());
             bucket
@@ -167,7 +168,8 @@ impl RateLimiter {
     async fn try_acquire(&self, tenant_id: Option<&str>) -> bool {
         if self.config.tenant_specific && tenant_id.is_some() {
             let tenant_id = tenant_id.unwrap();
-            let mut bucket = self.get_tenant_bucket(tenant_id).await.lock().await;
+            let bucket_guard = self.get_tenant_bucket(tenant_id).await;
+            let mut bucket = bucket_guard.lock().await;
             bucket.try_acquire()
         } else {
             let mut bucket = self.global_bucket.lock().await;
@@ -254,8 +256,8 @@ pub async fn extract_tenant_from_body(json: &Value) -> Option<String> {
 pub async fn rate_limit(
     State(rate_limiter): State<Arc<RateLimiter>>,
     tenant_id: TenantId,
-    request: axum::extract::Request,
-    next: Next,
+    request: Request<Body>,
+    next: Next<Body>,
 ) -> Response {
     debug!("Rate limiting request for tenant: {}", tenant_id.0);
 
@@ -301,7 +303,7 @@ pub struct QueuedRequest<F> {
     _permit: SemaphorePermit<'static>,
 }
 
-impl<F: Future<Output = Response>> Future for QueuedRequest<F> {
+impl<F: Future<Output = Response> + Unpin> Future for QueuedRequest<F> {
     type Output = F::Output;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -312,8 +314,8 @@ impl<F: Future<Output = Response>> Future for QueuedRequest<F> {
 // Request validation middleware
 pub async fn validate_tenant(
     tenant_id: TenantId,
-    request: axum::extract::Request,
-    next: Next,
+    request: Request<Body>,
+    next: Next<Body>,
 ) -> Response {
     // In a real implementation, this would validate the tenant against a database
     // or authentication service to ensure the request is authorized

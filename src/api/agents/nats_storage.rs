@@ -1,7 +1,7 @@
 // NATS-based agent storage implementation
 // This module provides persistent storage for agents using NATS JetStream
 
-use async_nats::{self, jetstream, Client, JetStreamContext};
+use async_nats::{self, jetstream, Client};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures::{future::join_all, stream::StreamExt};
@@ -69,7 +69,7 @@ pub struct NatsAgentStorage {
     // NATS connection
     client: Client,
     // JetStream context
-    js: JetStreamContext,
+    js: jetstream::Context,
     // Storage configuration
     config: NatsStorageConfig,
     // Key-value store for agents
@@ -89,10 +89,10 @@ impl NatsAgentStorage {
             Ok(client) => client,
             Err(e) => {
                 error!("Failed to connect to NATS: {}", e);
-                return Err(CircuitBreakerError::Storage(format!(
+                return Err(CircuitBreakerError::Storage(anyhow::Error::msg(format!(
                     "Failed to connect to NATS: {}",
                     e
-                )));
+                ))));
             }
         };
 
@@ -118,19 +118,21 @@ impl NatsAgentStorage {
     async fn connect_with_retry(
         config: &NatsStorageConfig,
     ) -> std::result::Result<Client, async_nats::Error> {
-        let mut connect_options = async_nats::ConnectOptions::new();
-
-        // Apply configuration
-        connect_options = connect_options
-            .connection_timeout(config.connection_timeout)
-            .retry_timeout(config.connection_timeout * config.reconnect_attempts as u32);
-
-        if let Some(client_name) = &config.client_name {
-            connect_options = connect_options.name(client_name);
-        }
-
         // Connect with retry
         for attempt in 1..=config.reconnect_attempts {
+            let mut connect_options = async_nats::ConnectOptions::new();
+
+            // Apply configuration
+            connect_options = connect_options
+                .connection_timeout(config.connection_timeout)
+                .request_timeout(Some(
+                    config.connection_timeout * config.reconnect_attempts as u32,
+                ));
+
+            if let Some(client_name) = &config.client_name {
+                connect_options = connect_options.name(client_name);
+            }
+
             match connect_options.connect(&config.url).await {
                 Ok(client) => {
                     info!("Connected to NATS server after {} attempt(s)", attempt);
@@ -145,24 +147,19 @@ impl NatsAgentStorage {
                             "Failed to connect to NATS after {} attempts: {}",
                             attempt, e
                         );
-                        return Err(e);
+                        return Err(Box::new(e));
                     }
                 }
             }
         }
 
         // This should never be reached due to the for loop above
-        Err(async_nats::Error::Other {
-            source: Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Failed to connect to NATS server",
-            )),
-        })
+        Err(anyhow::Error::msg("Failed to connect to NATS server").into())
     }
 
     /// Ensure KV bucket exists
     async fn ensure_kv_bucket(
-        js: &JetStreamContext,
+        js: &jetstream::Context,
         bucket_name: &str,
         config: &NatsStorageConfig,
     ) -> Result<jetstream::kv::Store> {
@@ -181,8 +178,8 @@ impl NatsAgentStorage {
                     max_age: config.max_age,
                     storage: jetstream::stream::StorageType::File,
                     num_replicas: config.replicas as usize,
-                    max_bytes: config.max_bytes,
-                    description: Some(format!("Circuit Breaker Agent Storage - {}", bucket_name)),
+                    max_bytes: config.max_bytes.unwrap_or(1024 * 1024 * 1024),
+                    description: format!("Circuit Breaker Agent Storage - {}", bucket_name),
                     ..Default::default()
                 };
 
@@ -193,10 +190,10 @@ impl NatsAgentStorage {
                     }
                     Err(e) => {
                         error!("Failed to create KV bucket {}: {}", bucket_name, e);
-                        Err(CircuitBreakerError::Storage(format!(
+                        Err(CircuitBreakerError::Storage(anyhow::Error::msg(format!(
                             "Failed to create KV bucket {}: {}",
                             bucket_name, e
-                        )))
+                        ))))
                     }
                 }
             }
@@ -275,14 +272,15 @@ impl NatsAgentStorage {
 
     /// Serialize object to JSON bytes
     fn serialize<T: Serialize>(obj: &T) -> Result<Vec<u8>> {
-        serde_json::to_vec(obj)
-            .map_err(|e| CircuitBreakerError::Storage(format!("Failed to serialize object: {}", e)))
+        serde_json::to_vec(obj).map_err(|e| {
+            CircuitBreakerError::Storage(anyhow::anyhow!("Failed to serialize object: {}", e))
+        })
     }
 
     /// Deserialize object from JSON bytes
     fn deserialize<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
         serde_json::from_slice(bytes).map_err(|e| {
-            CircuitBreakerError::Storage(format!("Failed to deserialize object: {}", e))
+            CircuitBreakerError::Storage(anyhow::anyhow!("Failed to deserialize object: {}", e))
         })
     }
 
@@ -293,10 +291,12 @@ impl NatsAgentStorage {
         prefix: &str,
     ) -> Result<Vec<String>> {
         let mut keys = Vec::new();
-        let watch_opt = jetstream::kv::WatchOpt::default();
 
-        let mut entries = kv.watch_all(Some(watch_opt)).await.map_err(|e| {
-            CircuitBreakerError::Storage(format!("Failed to watch KV store: {}", e))
+        let mut entries = kv.watch_all().await.map_err(|e| {
+            CircuitBreakerError::Storage(anyhow::Error::msg(format!(
+                "Failed to watch KV store: {}",
+                e
+            )))
         })?;
 
         while let Some(Ok(entry)) = entries.next().await {
@@ -334,10 +334,10 @@ impl NatsAgentStorage {
                 }
                 Err(e) => {
                     error!("Failed to reconnect to NATS: {}", e);
-                    return Err(CircuitBreakerError::Storage(format!(
+                    return Err(CircuitBreakerError::Storage(anyhow::Error::msg(format!(
                         "Failed to reconnect to NATS: {}",
                         e
-                    )));
+                    ))));
                 }
             }
         }
@@ -362,9 +362,9 @@ impl AgentStorage for NatsAgentStorage {
 
         // Store in KV
         let agents_kv = self.agents_kv.lock().await;
-        agents_kv.put(&key, agent_bytes).await.map_err(|e| {
+        agents_kv.put(&key, agent_bytes.into()).await.map_err(|e| {
             *self.connected.blocking_write() = false;
-            CircuitBreakerError::Storage(format!("Failed to store agent: {}", e))
+            CircuitBreakerError::Storage(anyhow::anyhow!("Failed to store agent: {}", e))
         })?;
 
         debug!("Stored agent {} with key {}", agent.id, key);
@@ -381,7 +381,7 @@ impl AgentStorage for NatsAgentStorage {
         match agents_kv.get(&key).await {
             Ok(entry) => {
                 debug!("Found agent {} with key {}", id, key);
-                Ok(Some(Self::deserialize(&entry.value)?))
+                Ok(Some(Self::deserialize(&entry)?))
             }
             Err(async_nats::Error::KeyNotFound { .. }) => {
                 // Try to find the agent with any tenant prefix
@@ -397,7 +397,7 @@ impl AgentStorage for NatsAgentStorage {
                         match agents_kv.get(&agent_key).await {
                             Ok(entry) => {
                                 debug!("Found agent {} with tenant key {}", id, agent_key);
-                                return Ok(Some(Self::deserialize(&entry.value)?));
+                                return Ok(Some(Self::deserialize(&entry)?));
                             }
                             Err(_) => continue,
                         }
@@ -408,7 +408,7 @@ impl AgentStorage for NatsAgentStorage {
             }
             Err(e) => {
                 *self.connected.blocking_write() = false;
-                Err(CircuitBreakerError::Storage(format!(
+                Err(CircuitBreakerError::Storage(anyhow::anyhow!(
                     "Failed to get agent: {}",
                     e
                 )))
@@ -423,10 +423,9 @@ impl AgentStorage for NatsAgentStorage {
         let mut agents = Vec::new();
 
         // Watch all keys (this is a NATS way to list all keys/values)
-        let watch_opt = jetstream::kv::WatchOpt::default();
-        let mut entries = agents_kv.watch_all(Some(watch_opt)).await.map_err(|e| {
+        let mut entries = agents_kv.watch_all().await.map_err(|e| {
             *self.connected.blocking_write() = false;
-            CircuitBreakerError::Storage(format!("Failed to list agents: {}", e))
+            CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list agents: {}", e))
         })?;
 
         while let Some(Ok(entry)) = entries.next().await {
@@ -478,7 +477,7 @@ impl AgentStorage for NatsAgentStorage {
             }
             Err(e) => {
                 *self.connected.blocking_write() = false;
-                Err(CircuitBreakerError::Storage(format!(
+                Err(CircuitBreakerError::Storage(anyhow::anyhow!(
                     "Failed to delete agent: {}",
                     e
                 )))
@@ -501,11 +500,11 @@ impl AgentStorage for NatsAgentStorage {
         // Store in KV
         let executions_kv = self.executions_kv.lock().await;
         executions_kv
-            .put(&key, execution_bytes)
+            .put(&key, execution_bytes.into())
             .await
             .map_err(|e| {
                 *self.connected.blocking_write() = false;
-                CircuitBreakerError::Storage(format!("Failed to store execution: {}", e))
+                CircuitBreakerError::Storage(anyhow::anyhow!("Failed to store execution: {}", e))
             })?;
 
         debug!("Stored execution {} with key {}", execution.id, key);
@@ -522,7 +521,7 @@ impl AgentStorage for NatsAgentStorage {
         match executions_kv.get(&key).await {
             Ok(entry) => {
                 debug!("Found execution {} with key {}", id, key);
-                Ok(Some(Self::deserialize(&entry.value)?))
+                Ok(Some(Self::deserialize(&entry)?))
             }
             Err(async_nats::Error::KeyNotFound { .. }) => {
                 // Try to find the execution with any tenant prefix
@@ -536,7 +535,7 @@ impl AgentStorage for NatsAgentStorage {
                         match executions_kv.get(&exec_key).await {
                             Ok(entry) => {
                                 debug!("Found execution {} with tenant key {}", id, exec_key);
-                                return Ok(Some(Self::deserialize(&entry.value)?));
+                                return Ok(Some(Self::deserialize(&entry)?));
                             }
                             Err(_) => continue,
                         }
@@ -547,7 +546,7 @@ impl AgentStorage for NatsAgentStorage {
             }
             Err(e) => {
                 *self.connected.blocking_write() = false;
-                Err(CircuitBreakerError::Storage(format!(
+                Err(CircuitBreakerError::Storage(anyhow::anyhow!(
                     "Failed to get execution: {}",
                     e
                 )))
@@ -581,7 +580,7 @@ impl AgentStorage for NatsAgentStorage {
             let mut executions = Vec::with_capacity(all_keys.len());
             for key in all_keys {
                 match executions_kv.get(&key).await {
-                    Ok(entry) => match Self::deserialize::<AgentExecution>(&entry.value) {
+                    Ok(entry) => match Self::deserialize::<AgentExecution>(&entry) {
                         Ok(execution) => executions.push(execution),
                         Err(e) => warn!("Failed to deserialize execution from key {}: {}", key, e),
                     },
@@ -601,18 +600,14 @@ impl AgentStorage for NatsAgentStorage {
         // This is inefficient and should be optimized in a production system
         // with secondary indexes or a more suitable database
         let executions_kv = self.executions_kv.lock().await;
-        let watch_opt = jetstream::kv::WatchOpt::default();
-        let mut entries = executions_kv
-            .watch_all(Some(watch_opt))
-            .await
-            .map_err(|e| {
-                *self.connected.blocking_write() = false;
-                CircuitBreakerError::Storage(format!("Failed to list executions: {}", e))
-            })?;
+        let mut entries = executions_kv.watch_all().await.map_err(|e| {
+            *self.connected.blocking_write() = false;
+            CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
+        })?;
 
         let mut executions = Vec::new();
         while let Some(Ok(entry)) = entries.next().await {
-            match Self::deserialize::<AgentExecution>(&entry.value) {
+            match Self::deserialize::<AgentExecution>(&entry) {
                 Ok(execution) => {
                     // Check if context matches
                     if let Some(value) = execution.context.get(context_key) {
@@ -651,14 +646,10 @@ impl AgentStorage for NatsAgentStorage {
     ) -> Result<Vec<AgentExecution>> {
         // Get all executions and filter
         let executions_kv = self.executions_kv.lock().await;
-        let watch_opt = jetstream::kv::WatchOpt::default();
-        let mut entries = executions_kv
-            .watch_all(Some(watch_opt))
-            .await
-            .map_err(|e| {
-                *self.connected.blocking_write() = false;
-                CircuitBreakerError::Storage(format!("Failed to list executions: {}", e))
-            })?;
+        let mut entries = executions_kv.watch_all().await.map_err(|e| {
+            *self.connected.blocking_write() = false;
+            CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
+        })?;
 
         let mut executions = Vec::new();
         while let Some(Ok(entry)) = entries.next().await {
@@ -698,14 +689,10 @@ impl AgentStorage for NatsAgentStorage {
     ) -> Result<Vec<AgentExecution>> {
         // Get all executions and filter by nested context
         let executions_kv = self.executions_kv.lock().await;
-        let watch_opt = jetstream::kv::WatchOpt::default();
-        let mut entries = executions_kv
-            .watch_all(Some(watch_opt))
-            .await
-            .map_err(|e| {
-                *self.connected.blocking_write() = false;
-                CircuitBreakerError::Storage(format!("Failed to list executions: {}", e))
-            })?;
+        let mut entries = executions_kv.watch_all().await.map_err(|e| {
+            *self.connected.blocking_write() = false;
+            CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
+        })?;
 
         let path_parts: Vec<&str> = context_path.split('.').collect();
 
@@ -763,14 +750,10 @@ impl AgentStorage for NatsAgentStorage {
     async fn list_executions_for_agent(&self, agent_id: &AgentId) -> Result<Vec<AgentExecution>> {
         // Get all executions and filter by agent ID
         let executions_kv = self.executions_kv.lock().await;
-        let watch_opt = jetstream::kv::WatchOpt::default();
-        let mut entries = executions_kv
-            .watch_all(Some(watch_opt))
-            .await
-            .map_err(|e| {
-                *self.connected.blocking_write() = false;
-                CircuitBreakerError::Storage(format!("Failed to list executions: {}", e))
-            })?;
+        let mut entries = executions_kv.watch_all().await.map_err(|e| {
+            *self.connected.blocking_write() = false;
+            CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
+        })?;
 
         let mut executions = Vec::new();
         while let Some(Ok(entry)) = entries.next().await {
@@ -799,14 +782,10 @@ impl AgentStorage for NatsAgentStorage {
     ) -> Result<Vec<AgentExecution>> {
         // Get all executions and filter by status
         let executions_kv = self.executions_kv.lock().await;
-        let watch_opt = jetstream::kv::WatchOpt::default();
-        let mut entries = executions_kv
-            .watch_all(Some(watch_opt))
-            .await
-            .map_err(|e| {
-                *self.connected.blocking_write() = false;
-                CircuitBreakerError::Storage(format!("Failed to list executions: {}", e))
-            })?;
+        let mut entries = executions_kv.watch_all().await.map_err(|e| {
+            *self.connected.blocking_write() = false;
+            CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
+        })?;
 
         let mut executions = Vec::new();
         while let Some(Ok(entry)) = entries.next().await {
@@ -832,14 +811,10 @@ impl AgentStorage for NatsAgentStorage {
     async fn list_recent_executions(&self, limit: usize) -> Result<Vec<AgentExecution>> {
         // Get all executions
         let executions_kv = self.executions_kv.lock().await;
-        let watch_opt = jetstream::kv::WatchOpt::default();
-        let mut entries = executions_kv
-            .watch_all(Some(watch_opt))
-            .await
-            .map_err(|e| {
-                *self.connected.blocking_write() = false;
-                CircuitBreakerError::Storage(format!("Failed to list executions: {}", e))
-            })?;
+        let mut entries = executions_kv.watch_all().await.map_err(|e| {
+            *self.connected.blocking_write() = false;
+            CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
+        })?;
 
         // Collect and sort executions by start time
         let mut executions = Vec::new();
@@ -877,14 +852,10 @@ impl AgentStorage for NatsAgentStorage {
     ) -> Result<Vec<AgentExecution>> {
         // Get all executions and filter by agent ID and context
         let executions_kv = self.executions_kv.lock().await;
-        let watch_opt = jetstream::kv::WatchOpt::default();
-        let mut entries = executions_kv
-            .watch_all(Some(watch_opt))
-            .await
-            .map_err(|e| {
-                *self.connected.blocking_write() = false;
-                CircuitBreakerError::Storage(format!("Failed to list executions: {}", e))
-            })?;
+        let mut entries = executions_kv.watch_all().await.map_err(|e| {
+            *self.connected.blocking_write() = false;
+            CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
+        })?;
 
         let mut executions = Vec::new();
         while let Some(Ok(entry)) = entries.next().await {
@@ -908,6 +879,46 @@ impl AgentStorage for NatsAgentStorage {
                     );
                     continue;
                 }
+            }
+        }
+
+        Ok(executions)
+    }
+
+    async fn list_executions_for_resource(
+        &self,
+        resource_id: &Uuid,
+    ) -> Result<Vec<AgentExecution>> {
+        self.ensure_connected().await?;
+
+        let resource_id_str = resource_id.to_string();
+        let executions_kv = self.executions_kv.lock().await;
+        let mut entries = executions_kv.watch_all().await.map_err(|e| {
+            *self.connected.blocking_write() = false;
+            CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
+        })?;
+
+        let mut executions = Vec::new();
+        while let Some(Ok(entry)) = entries.next().await {
+            match Self::deserialize::<AgentExecution>(&entry) {
+                Ok(execution) => {
+                    // Check for resource_id in various context locations
+                    if execution
+                        .get_context_value("resource_id")
+                        .and_then(|v| v.as_str())
+                        .map(|value| value == resource_id_str)
+                        .unwrap_or(false)
+                        || execution
+                            .get_context_value("workflow")
+                            .and_then(|w| w.get("resource_id"))
+                            .and_then(|v| v.as_str())
+                            .map(|value| value == resource_id_str)
+                            .unwrap_or(false)
+                    {
+                        executions.push(execution);
+                    }
+                }
+                Err(e) => warn!("Failed to deserialize execution: {}", e),
             }
         }
 

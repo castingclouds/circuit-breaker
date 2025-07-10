@@ -58,7 +58,7 @@ enum ClientMessage {
     Ping,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(tag = "type")]
 enum ServerMessage {
     #[serde(rename = "auth_success")]
@@ -252,11 +252,7 @@ impl ConnectionManager {
         for (conn_id, connection) in connections.iter() {
             if connection.subscriptions.contains(execution_id) {
                 // Clone the message for each subscriber
-                let message_clone = serde_json::to_value(&message)
-                    .and_then(|v| serde_json::from_value(v))
-                    .map_err(|e| {
-                        CircuitBreakerError::Internal(format!("Failed to clone message: {}", e))
-                    })?;
+                let message_clone = message.clone();
 
                 // Send in a way that doesn't block other subscribers if one connection is slow
                 let _ = connection.send_message(message_clone).await;
@@ -490,12 +486,9 @@ async fn handle_socket(
                     }
                 }
             }
-            axum::extract::ws::Message::Ping(data) => {
-                // Respond to ping with pong
-                if let Err(e) = ws_sender.send(axum::extract::ws::Message::Pong(data)).await {
-                    error!("Failed to send pong: {}", e);
-                    break;
-                }
+            axum::extract::ws::Message::Ping(_) => {
+                // Ping/Pong is handled automatically by the WebSocket protocol
+                // No manual response needed
             }
             axum::extract::ws::Message::Close(_) => {
                 info!("WebSocket connection closed by client: {}", connection_id);
@@ -540,7 +533,7 @@ async fn process_client_message(
             match Uuid::parse_str(&execution_id) {
                 Ok(execution_uuid) => {
                     // Verify the execution exists and belongs to this tenant
-                    match engine.storage.get_execution(&execution_uuid).await {
+                    match engine.storage().get_execution(&execution_uuid).await {
                         Ok(Some(execution)) => {
                             // Check tenant ID in context
                             if let Some(exec_tenant) =
@@ -658,6 +651,9 @@ async fn process_client_message(
                 agent_id: AgentId::from(agent_id.clone()),
                 input_mapping: input_mapping.unwrap_or_default(),
                 output_mapping: output_mapping.unwrap_or_default(),
+                required: true,
+                timeout_seconds: Some(30),
+                retry_config: None,
             };
 
             // Execute the agent

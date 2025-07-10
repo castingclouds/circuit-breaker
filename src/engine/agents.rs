@@ -74,7 +74,9 @@ pub trait AgentStorage: Send + Sync {
 
     // Convenience methods for common query patterns
 
-    // Removed resource-specific method - use list_executions_by_context instead
+    /// List executions for a specific resource
+    async fn list_executions_for_resource(&self, resource_id: &Uuid)
+        -> Result<Vec<AgentExecution>>;
 
     /// Get executions by status
     async fn list_executions_by_status(
@@ -256,6 +258,32 @@ impl AgentStorage for InMemoryAgentStorage {
                         .get_context_value(context_key)
                         .and_then(|v| v.as_str())
                         .map(|value| value == context_value)
+                        .unwrap_or(false)
+            })
+            .cloned()
+            .collect())
+    }
+
+    async fn list_executions_for_resource(
+        &self,
+        resource_id: &Uuid,
+    ) -> Result<Vec<AgentExecution>> {
+        let executions = self.executions.read().await;
+        let resource_id_str = resource_id.to_string();
+
+        Ok(executions
+            .values()
+            .filter(|exec| {
+                // Check for resource_id in various context locations
+                exec.get_context_value("resource_id")
+                    .and_then(|v| v.as_str())
+                    .map(|value| value == resource_id_str)
+                    .unwrap_or(false)
+                    || exec
+                        .get_context_value("workflow")
+                        .and_then(|w| w.get("resource_id"))
+                        .and_then(|v| v.as_str())
+                        .map(|value| value == resource_id_str)
                         .unwrap_or(false)
             })
             .cloned()
@@ -766,6 +794,11 @@ impl AgentEngine {
             config,
             stream_sender,
         }
+    }
+
+    /// Get a reference to the storage backend
+    pub fn storage(&self) -> &Arc<dyn AgentStorage> {
+        &self.storage
     }
 
     /// Subscribe to agent execution stream events

@@ -9,6 +9,12 @@ use crate::models::{ActivityId, Rule, StateId};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AgentId(String);
 
+impl std::fmt::Display for AgentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl AgentId {
     pub fn new(id: String) -> Self {
         Self(id)
@@ -221,6 +227,19 @@ pub enum AgentExecutionStatus {
     Failed,
     Timeout,
     Cancelled,
+}
+
+impl std::fmt::Display for AgentExecutionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AgentExecutionStatus::Pending => write!(f, "pending"),
+            AgentExecutionStatus::Running => write!(f, "running"),
+            AgentExecutionStatus::Completed => write!(f, "completed"),
+            AgentExecutionStatus::Failed => write!(f, "failed"),
+            AgentExecutionStatus::Timeout => write!(f, "timeout"),
+            AgentExecutionStatus::Cancelled => write!(f, "cancelled"),
+        }
+    }
 }
 
 /// Agent execution record

@@ -87,9 +87,12 @@ pub async fn execute_agent(
 
     // Convert request to agent config
     let config = AgentActivityConfig {
-        agent_id: AgentId::from(agent_id),
+        agent_id: AgentId::from(agent_id.clone()),
         input_mapping: request.input_mapping.unwrap_or_default(),
         output_mapping: request.output_mapping.unwrap_or_default(),
+        required: true,
+        timeout_seconds: Some(300), // 5 minutes default timeout
+        retry_config: None,
     };
 
     // Execute the agent
@@ -104,7 +107,12 @@ pub async fn execute_agent(
                 created_at: execution.started_at.to_rfc3339(),
                 context: execution.context,
             };
-            (StatusCode::OK, Json(response))
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(response).unwrap_or_else(
+                    |_| serde_json::json!({"error": "Failed to serialize response"}),
+                )),
+            )
         }
         Err(e) => {
             let error_msg = e.to_string();
@@ -135,7 +143,7 @@ pub async fn list_agent_executions(
 
     // Get executions for this agent
     let executions = match engine
-        .storage
+        .storage()
         .list_executions_for_agent(&agent_id_parsed)
         .await
     {
@@ -204,7 +212,13 @@ pub async fn list_agent_executions(
         page_size: limit,
     };
 
-    (StatusCode::OK, Json(response))
+    (
+        StatusCode::OK,
+        Json(
+            serde_json::to_value(response)
+                .unwrap_or_else(|_| serde_json::json!({"error": "Failed to serialize response"})),
+        ),
+    )
 }
 
 /// Get details of a specific execution
@@ -228,7 +242,7 @@ pub async fn get_execution_details(
     };
 
     // Get execution details
-    match engine.storage.get_execution(&uuid).await {
+    match engine.storage().get_execution(&uuid).await {
         Ok(Some(execution)) => {
             // Verify agent ID matches
             if execution.agent_id.to_string() != agent_id {
@@ -271,7 +285,12 @@ pub async fn get_execution_details(
                 context: execution.context,
             };
 
-            (StatusCode::OK, Json(response))
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(response).unwrap_or_else(
+                    |_| serde_json::json!({"error": "Failed to serialize response"}),
+                )),
+            )
         }
         Ok(None) => (
             StatusCode::NOT_FOUND,
@@ -312,7 +331,7 @@ pub async fn stream_execution_events(
     };
 
     // Verify the execution exists and belongs to this tenant
-    match engine.storage.get_execution(&execution_id_uuid).await {
+    match engine.storage().get_execution(&execution_id_uuid).await {
         Ok(Some(execution)) => {
             // Verify agent ID matches
             if execution.agent_id.to_string() != agent_id {
@@ -371,7 +390,9 @@ pub async fn stream_execution_events(
                         status,
                         context,
                     } if execution_id == execution_id_uuid => {
-                        Some(Ok(Event::default().event("thinking").data(status)))
+                        Some(Ok::<axum::response::sse::Event, axum::Error>(
+                            Event::default().event("thinking").data(status),
+                        ))
                     }
                     AgentStreamEvent::ContentChunk {
                         execution_id,

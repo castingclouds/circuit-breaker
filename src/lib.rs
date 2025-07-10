@@ -238,6 +238,32 @@ pub enum CircuitBreakerError {
     /// GraphQL-specific errors
     #[error("GraphQL error: {0}")]
     GraphQL(String),
+
+    /// Forbidden access error
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
+    /// Rate limiting error
+    #[error("Rate limited: {0}")]
+    RateLimited(String),
+
+    /// Too many requests error
+    #[error("Too many requests: {0}")]
+    TooManyRequests(String),
+
+    /// Quota exceeded error
+    #[error("Quota exceeded: {0}")]
+    QuotaExceeded(String),
+
+    /// Internal server error
+    #[error("Internal error: {0}")]
+    Internal(String),
+}
+
+impl From<std::io::Error> for CircuitBreakerError {
+    fn from(err: std::io::Error) -> Self {
+        CircuitBreakerError::Internal(err.to_string())
+    }
 }
 
 /// Type alias for Results that use our custom error type

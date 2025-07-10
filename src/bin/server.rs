@@ -507,14 +507,14 @@ async fn main() -> Result<(), String> {
                 Ok(Err(e)) => error!("❌ GraphQL server error: {}", e),
                 Err(e) => error!("❌ GraphQL server task error: {}", e),
             }
-        }
+        },
         result = openai_handle => {
             match result {
                 Ok(Ok(())) => info!("✅ OpenAI API server shutdown gracefully"),
                 Ok(Err(e)) => error!("❌ OpenAI API server error: {}", e),
                 Err(e) => error!("❌ OpenAI API server task error: {}", e),
             }
-        }
+        },
         result = mcp_handle => {
             match result {
                 Ok(Ok(())) => info!("✅ MCP server shutdown gracefully"),
