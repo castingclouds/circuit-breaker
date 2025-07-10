@@ -17,7 +17,7 @@
 
 use circuit_breaker_sdk::{
     agents::{AgentExecutionRequest, AgentWebSocketServerMessage, ListExecutionsRequest},
-    Client, Result,
+    Client, Error, Result,
 };
 use futures::{future, StreamExt};
 use serde_json::json;
@@ -60,25 +60,199 @@ async fn main() -> Result<()> {
 
     // Demo configuration
     let tenant_id = "demo-tenant-001";
-    let agent_id = "customer-support-agent"; // This should exist in your system
 
     println!("\n🎯 Demo Configuration:");
     println!("   Tenant ID: {}", tenant_id);
-    println!("   Agent ID: {}", agent_id);
     println!("   Base URL: {}", base_url);
 
+    // Create demo agents first
+    println!("\n🏗️  Creating Demo Agents:");
+    println!("   ========================");
+    let agent_ids = match create_demo_agents(&client, tenant_id).await {
+        Ok(ids) => {
+            println!("   ✅ Successfully created {} agents", ids.len());
+            ids
+        }
+        Err(e) => {
+            println!("   ❌ Failed to create agents: {}", e);
+            println!("   💡 Make sure the GraphQL server is running at http://localhost:4000");
+            return Ok(());
+        }
+    };
+
+    let primary_agent_id = &agent_ids[0];
+    println!("\n   Using primary agent: {}", primary_agent_id);
+
     // Run all demo scenarios
-    demo_simple_execution(&client, agent_id, tenant_id).await?;
-    demo_streaming_execution(&client, agent_id, tenant_id).await?;
-    demo_websocket_execution(&client, agent_id, tenant_id).await?;
-    demo_execution_management(&client, agent_id, tenant_id).await?;
-    demo_concurrent_executions(&client, agent_id, tenant_id).await?;
-    demo_tenant_isolation(&client, agent_id).await?;
+    demo_simple_execution(&client, primary_agent_id, tenant_id).await?;
+    demo_streaming_execution(&client, primary_agent_id, tenant_id).await?;
+    demo_websocket_execution(&client, primary_agent_id, tenant_id).await?;
+    demo_execution_management(&client, primary_agent_id, tenant_id).await?;
+    demo_concurrent_executions(&client, primary_agent_id, tenant_id).await?;
+    demo_tenant_isolation(&client, primary_agent_id).await?;
 
     println!("\n🎉 Agent Execution Demo Complete!");
     println!("   All scenarios have been successfully demonstrated.");
 
     Ok(())
+}
+
+/// Create demo agents via GraphQL for testing
+async fn create_demo_agents(client: &Client, tenant_id: &str) -> Result<Vec<String>> {
+    println!("   📝 Creating customer support agent...");
+    // Create a customer support agent
+    let customer_support_agent = create_agent_via_graphql(
+        client,
+        "customer-support-agent",
+        "Customer Support Assistant",
+        "AI assistant specialized in handling customer inquiries, order status, and support requests",
+        tenant_id,
+    )
+    .await?;
+
+    println!("   📝 Creating sales assistant agent...");
+    // Create a sales assistant agent
+    let sales_assistant_agent = create_agent_via_graphql(
+        client,
+        "sales-assistant-agent",
+        "Sales Assistant",
+        "AI assistant specialized in product recommendations, pricing inquiries, and sales support",
+        tenant_id,
+    )
+    .await?;
+
+    Ok(vec![customer_support_agent, sales_assistant_agent])
+}
+
+/// Create a single agent via GraphQL
+async fn create_agent_via_graphql(
+    client: &Client,
+    agent_id: &str,
+    name: &str,
+    description: &str,
+    tenant_id: &str,
+) -> Result<String> {
+    println!(
+        "      🔧 Preparing GraphQL mutation for agent: {}",
+        agent_id
+    );
+
+    let mutation = format!(
+        r#"
+        mutation CreateAgent($input: AgentDefinitionInput!) {{
+            createAgent(input: $input) {{
+                id
+                name
+                description
+            }}
+        }}
+        "#
+    );
+
+    let variables = json!({
+        "input": {
+            "name": name,
+            "description": description,
+            "llmProvider": {
+                "providerType": "openai",
+                "apiKey": "sk-test-key", // Demo key
+                "model": "gpt-4",
+                "baseUrl": null
+            },
+            "llmConfig": {
+                "temperature": 0.7,
+                "maxTokens": 1000,
+                "topP": null,
+                "frequencyPenalty": null,
+                "presencePenalty": null,
+                "stopSequences": []
+            },
+            "prompts": {
+                "system": format!("You are a helpful {}. {}", name, description),
+                "userTemplate": "User: {{message}}\n\nContext: {{context}}",
+                "contextInstructions": "Always be helpful, professional, and provide accurate information."
+            },
+            "capabilities": ["text-generation", "conversation"],
+            "tools": []
+        }
+    });
+
+    // Use GraphQL endpoint (port 4000) for agent creation
+    let graphql_client = Client::builder()
+        .base_url("http://localhost:4000")?
+        .build()?;
+
+    // Create request body
+    let request_body = json!({
+        "query": mutation,
+        "variables": variables
+    });
+
+    println!("      📡 Sending GraphQL request to create agent...");
+    println!("      🌐 URL: {}/graphql", graphql_client.base_url());
+    println!(
+        "      📝 Request body: {}",
+        serde_json::to_string_pretty(&request_body).unwrap_or_else(|_| "Invalid JSON".to_string())
+    );
+
+    // Make GraphQL request
+    let response = graphql_client
+        .http_client()
+        .post(&format!(
+            "{}/graphql",
+            graphql_client.base_url().as_str().trim_end_matches('/')
+        ))
+        .header("Content-Type", "application/json")
+        .header("X-Tenant-ID", tenant_id)
+        .json(&request_body)
+        .send()
+        .await?;
+
+    let status = response.status();
+    println!("      📊 GraphQL response status: {}", status);
+
+    if !status.is_success() {
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
+        println!("      📋 GraphQL response body: {}", error_text);
+        return Err(Error::Server {
+            status: status.as_u16(),
+            message: format!("GraphQL request failed: {}", error_text),
+        });
+    }
+
+    let response_json: serde_json::Value = response.json().await?;
+    println!(
+        "      📋 GraphQL response JSON: {}",
+        serde_json::to_string_pretty(&response_json).unwrap_or_else(|_| "Invalid JSON".to_string())
+    );
+
+    // Check for GraphQL errors
+    if let Some(errors) = response_json.get("errors") {
+        return Err(Error::Server {
+            status: 400,
+            message: format!("GraphQL errors: {}", errors),
+        });
+    }
+
+    // Extract the created agent ID
+    let created_agent = response_json
+        .get("data")
+        .and_then(|data| data.get("createAgent"))
+        .and_then(|agent| agent.get("id"))
+        .and_then(|id| id.as_str())
+        .ok_or_else(|| Error::Server {
+            status: 500,
+            message: "Failed to extract agent ID from GraphQL response".to_string(),
+        })?;
+
+    println!(
+        "      ✅ Successfully created agent: {} (ID: {})",
+        name, created_agent
+    );
+    Ok(created_agent.to_string())
 }
 
 /// Demo 1: Simple Agent Execution
@@ -110,6 +284,11 @@ async fn demo_simple_execution(client: &Client, agent_id: &str, tenant_id: &str)
     println!(
         "   Executing agent with context: {}",
         serde_json::to_string_pretty(&context)?
+    );
+    println!(
+        "   Connecting to URL: {}/agents/{}/execute",
+        client.get_endpoint_url("rest").trim_end_matches('/'),
+        agent_id
     );
 
     match client.agents().execute(agent_id, request).await {

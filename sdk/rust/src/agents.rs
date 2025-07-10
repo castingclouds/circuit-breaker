@@ -139,10 +139,11 @@ impl AgentClient {
         };
 
         let url = format!("/agents/{}/execute", agent_id);
+        let rest_endpoint = self.client.get_endpoint_url("rest").trim_end_matches('/');
         let mut req = self
             .client
             .http_client()
-            .post(&format!("{}{}", self.client.base_url(), url))
+            .post(&format!("{}{}", rest_endpoint, url))
             .json(&backend_request);
 
         // Add tenant_id header if provided

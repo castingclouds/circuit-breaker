@@ -121,8 +121,8 @@ impl Client {
         let path = base_url.path();
 
         let (graphql_endpoint, rest_endpoint) = match port {
-            Some(3000) | _ if path.contains("v1") => {
-                // REST endpoint specified
+            Some(3000) => {
+                // REST endpoint specified - port 3000 is our REST API
                 let rest = base_url.to_string();
                 let graphql = format!(
                     "{}://{}:4000/graphql",
@@ -131,8 +131,8 @@ impl Client {
                 );
                 (graphql, rest)
             }
-            Some(4000) | _ if path.contains("graphql") => {
-                // GraphQL endpoint specified
+            Some(4000) => {
+                // GraphQL endpoint specified - port 4000 is our GraphQL API
                 let graphql = if path.ends_with("graphql") {
                     base_url.to_string()
                 } else {
@@ -146,20 +146,44 @@ impl Client {
                 (graphql, rest)
             }
             _ => {
-                // Default ports
-                let graphql = format!(
-                    "{}://{}:4000/graphql",
-                    base_url.scheme(),
-                    base_url.host_str().unwrap_or("localhost")
-                );
-                let rest = format!(
-                    "{}://{}:3000",
-                    base_url.scheme(),
-                    base_url.host_str().unwrap_or("localhost")
-                );
-                (graphql, rest)
+                // Check path to determine endpoint type, or use defaults
+                if path.contains("graphql") {
+                    // GraphQL endpoint specified via path
+                    let graphql = if path.ends_with("graphql") {
+                        base_url.to_string()
+                    } else {
+                        format!("{}/graphql", base_url.as_str().trim_end_matches('/'))
+                    };
+                    let rest = format!(
+                        "{}://{}:3000",
+                        base_url.scheme(),
+                        base_url.host_str().unwrap_or("localhost")
+                    );
+                    (graphql, rest)
+                } else {
+                    // Default ports
+                    let graphql = format!(
+                        "{}://{}:4000/graphql",
+                        base_url.scheme(),
+                        base_url.host_str().unwrap_or("localhost")
+                    );
+                    let rest = format!(
+                        "{}://{}:3000",
+                        base_url.scheme(),
+                        base_url.host_str().unwrap_or("localhost")
+                    );
+                    (graphql, rest)
+                }
             }
         };
+
+        // Debug logging to show determined endpoints
+        tracing::debug!(
+            "Determined endpoints from base URL '{}': GraphQL='{}', REST='{}'",
+            base_url,
+            graphql_endpoint,
+            rest_endpoint
+        );
 
         Ok((graphql_endpoint, rest_endpoint))
     }

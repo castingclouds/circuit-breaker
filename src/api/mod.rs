@@ -2,6 +2,7 @@
 // This module provides multiple API interfaces:
 // - OpenAI-compatible REST API
 // - MCP (Model Context Protocol) server
+// - Agent execution API
 
 pub mod agents;
 pub mod handlers;
@@ -22,6 +23,7 @@ use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
+use crate::engine::{AgentEngine, AgentEngineConfig, InMemoryAgentStorage};
 use crate::llm::cost::CostOptimizer;
 use crate::llm::LLMRouter;
 use handlers::{chat_completions, get_model, health_check, list_models, not_found, OpenAIApiState};
@@ -67,6 +69,7 @@ pub struct CircuitBreakerApiServer {
     config: ApiConfig,
     openai_state: OpenAIApiState,
     mcp_manager: MCPServerManager,
+    agent_engine: Arc<AgentEngine>,
 }
 
 /// OpenAI API Server (for backward compatibility)
@@ -78,10 +81,16 @@ impl CircuitBreakerApiServer {
         let openai_state = OpenAIApiState::new();
         let mcp_manager = MCPServerManager::new();
 
+        // Create agent engine with in-memory storage
+        let storage = Arc::new(InMemoryAgentStorage::default());
+        let agent_config = AgentEngineConfig::default();
+        let agent_engine = Arc::new(AgentEngine::new(storage, agent_config));
+
         Self {
             config,
             openai_state,
             mcp_manager,
+            agent_engine,
         }
     }
 
@@ -98,10 +107,29 @@ impl CircuitBreakerApiServer {
                     as Box<dyn std::error::Error + Send + Sync>
             })?;
 
+        // Create agent engine with NATS storage
+        let nats_storage = crate::api::agents::nats_storage::NatsAgentStorage::new(
+            crate::api::agents::nats_storage::NatsStorageConfig {
+                url: nats_url.to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to create NATS storage: {}", e),
+            )) as Box<dyn std::error::Error + Send + Sync>
+        })?;
+
+        let agent_config = AgentEngineConfig::default();
+        let agent_engine = Arc::new(AgentEngine::new(Arc::new(nats_storage), agent_config));
+
         Ok(Self {
             config,
             openai_state,
             mcp_manager,
+            agent_engine,
         })
     }
 
@@ -172,6 +200,10 @@ impl CircuitBreakerApiServer {
             // Remote MCP functionality is built into the main MCP router
         }
 
+        // Add agent execution routes
+        let agent_router = agents::http_handlers::routes(self.agent_engine.clone());
+        app = app.merge(agent_router);
+
         // Add fallback for unknown routes
         app = app.fallback(not_found);
 
@@ -211,6 +243,19 @@ impl CircuitBreakerApiServer {
             info!("     GET  http://{}/mcp/{{instance_id}}", addr);
             info!("     POST http://{}/mcp/{{instance_id}}", addr);
         }
+
+        info!("   Agent Execution API:");
+        info!("     POST http://{}/agents/{{agent_id}}/execute", addr);
+        info!("     GET  http://{}/agents/{{agent_id}}/executions", addr);
+        info!(
+            "     GET  http://{}/agents/{{agent_id}}/executions/{{execution_id}}",
+            addr
+        );
+        info!(
+            "     GET  http://{}/agents/{{agent_id}}/executions/{{execution_id}}/events",
+            addr
+        );
+        info!("     WS   http://{}/agents/{{agent_id}}/execute/ws", addr);
 
         info!("📋 Configuration:");
         info!("   CORS enabled: {}", self.config.cors_enabled);
