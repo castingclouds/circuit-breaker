@@ -20,6 +20,7 @@ pub mod common_models {
     pub const GPT_O4_MINI: &str = "o4-mini-2025-04-16";
     pub const CLAUDE_4_SONNET: &str = "claude-sonnet-4-20250514";
     pub const GEMINI_PRO: &str = "gemini-2.5-pro";
+    pub const GEMINI_FLASH: &str = "gemini-1.5-flash";
 }
 
 /// Client for LLM operations through Circuit Breaker router

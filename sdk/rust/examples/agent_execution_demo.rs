@@ -17,6 +17,7 @@
 
 use circuit_breaker_sdk::{
     agents::{AgentExecutionRequest, AgentWebSocketServerMessage, ListExecutionsRequest},
+    llm::common_models,
     Client, Error, Result,
 };
 use futures::{future, StreamExt};
@@ -65,6 +66,62 @@ async fn main() -> Result<()> {
     println!("   Tenant ID: {}", tenant_id);
     println!("   Base URL: {}", base_url);
 
+    println!("\n🔑 Environment Variables Status (Server-Side):");
+    let openai_key = env::var("OPENAI_API_KEY").ok();
+    let anthropic_key = env::var("ANTHROPIC_API_KEY").ok();
+    let google_key = env::var("GOOGLE_API_KEY").ok();
+    let cb_url = env::var("CIRCUIT_BREAKER_URL").ok();
+    let cb_key = env::var("CIRCUIT_BREAKER_API_KEY").ok();
+
+    println!(
+        "   • OPENAI_API_KEY: {} (used by server)",
+        if openai_key.is_some() {
+            "✅ Set"
+        } else {
+            "❌ Not set"
+        }
+    );
+    println!(
+        "   • ANTHROPIC_API_KEY: {} (used by server)",
+        if anthropic_key.is_some() {
+            "✅ Set"
+        } else {
+            "❌ Not set"
+        }
+    );
+    println!(
+        "   • GOOGLE_API_KEY: {} (used by server)",
+        if google_key.is_some() {
+            "✅ Set"
+        } else {
+            "❌ Not set"
+        }
+    );
+    println!(
+        "   • CIRCUIT_BREAKER_URL: {}",
+        if cb_url.is_some() {
+            "✅ Set"
+        } else {
+            "❌ Not set"
+        }
+    );
+    println!(
+        "   • CIRCUIT_BREAKER_API_KEY: {}",
+        if cb_key.is_some() {
+            "✅ Set"
+        } else {
+            "❌ Not set"
+        }
+    );
+
+    if openai_key.is_none() && anthropic_key.is_none() && google_key.is_none() {
+        println!("   ⚠️  WARNING: No LLM API keys found! Agent execution may fail.");
+        println!("   📝 NOTE: Keys must be set on the Circuit Breaker SERVER, not client");
+    }
+
+    println!("   🔒 SECURITY: API keys are read by server from environment variables");
+    println!("   ℹ️  Virtual models automatically route to available providers");
+
     // Create demo agents first
     println!("\n🏗️  Creating Demo Agents:");
     println!("   ========================");
@@ -90,6 +147,7 @@ async fn main() -> Result<()> {
     demo_execution_management(&client, primary_agent_id, tenant_id).await?;
     demo_concurrent_executions(&client, primary_agent_id, tenant_id).await?;
     demo_tenant_isolation(&client, primary_agent_id).await?;
+    demo_virtual_model_examples(&client, tenant_id).await?;
 
     println!("\n🎉 Agent Execution Demo Complete!");
     println!("   All scenarios have been successfully demonstrated.");
@@ -106,6 +164,7 @@ async fn create_demo_agents(client: &Client, tenant_id: &str) -> Result<Vec<Stri
         "customer-support-agent",
         "Customer Support Assistant",
         "AI assistant specialized in handling customer inquiries, order status, and support requests",
+        common_models::SMART_FAST,
         tenant_id,
     )
     .await?;
@@ -117,6 +176,7 @@ async fn create_demo_agents(client: &Client, tenant_id: &str) -> Result<Vec<Stri
         "sales-assistant-agent",
         "Sales Assistant",
         "AI assistant specialized in product recommendations, pricing inquiries, and sales support",
+        common_models::SMART_BALANCED,
         tenant_id,
     )
     .await?;
@@ -124,12 +184,26 @@ async fn create_demo_agents(client: &Client, tenant_id: &str) -> Result<Vec<Stri
     Ok(vec![customer_support_agent, sales_assistant_agent])
 }
 
+/// Map virtual models to standard fallback models
+fn get_fallback_model(virtual_model: &str) -> (&str, &str) {
+    match virtual_model {
+        common_models::SMART_CHEAP => ("openai", "gpt-3.5-turbo"),
+        common_models::SMART_FAST => ("openai", "gpt-4"),
+        common_models::SMART_BALANCED => ("openai", "gpt-4"),
+        common_models::SMART_CREATIVE => ("anthropic", "claude-3-sonnet-20240229"),
+        common_models::SMART_CODING => ("openai", "gpt-4"),
+        common_models::SMART_ANALYSIS => ("openai", "gpt-4"),
+        _ => ("openai", "gpt-3.5-turbo"),
+    }
+}
+
 /// Create a single agent via GraphQL
 async fn create_agent_via_graphql(
-    client: &Client,
+    _client: &Client,
     agent_id: &str,
     name: &str,
     description: &str,
+    virtual_model: &str,
     tenant_id: &str,
 ) -> Result<String> {
     println!(
@@ -149,15 +223,31 @@ async fn create_agent_via_graphql(
         "#
     );
 
+    // Debug: Print what we're trying to create
+    println!(
+        "      🔍 Attempting to create agent with virtual model: {}",
+        virtual_model
+    );
+
+    // First, try with the virtual model using OpenAI provider
+    let provider_type = "openai";
+    let _api_key = env::var("OPENAI_API_KEY").unwrap_or_else(|_| "sk-placeholder".to_string());
+    let model = virtual_model;
+    let base_url_option: Option<String> = None;
+
+    println!(
+        "      🔍 Trying virtual model - Provider: {}, Model: {}",
+        provider_type, model
+    );
+
     let variables = json!({
         "input": {
             "name": name,
             "description": description,
             "llmProvider": {
-                "providerType": "openai",
-                "apiKey": "sk-test-key", // Demo key
-                "model": "gpt-4",
-                "baseUrl": null
+                "providerType": provider_type,
+                "model": model,
+                "baseUrl": base_url_option
             },
             "llmConfig": {
                 "temperature": 0.7,
@@ -188,12 +278,121 @@ async fn create_agent_via_graphql(
         "variables": variables
     });
 
+    // Try creating the agent with virtual model first
+    match try_create_agent(&graphql_client, &request_body, tenant_id).await {
+        Ok(agent_id) => {
+            println!("      ✅ Agent created with virtual model: {}", agent_id);
+            println!(
+                "      📝 Virtual model '{}' will be used for execution",
+                virtual_model
+            );
+            return Ok(agent_id);
+        }
+        Err(e) => {
+            println!("      ⚠️  Virtual model '{}' failed: {}", virtual_model, e);
+            println!("      🔄 Trying fallback to standard model...");
+        }
+    }
+
+    // Fallback to standard model
+    let (fallback_provider, fallback_model) = get_fallback_model(virtual_model);
+    // NOTE: No API keys sent - server pulls from environment variables
+
+    println!(
+        "      🔍 Trying fallback - Provider: {}, Model: {}",
+        fallback_provider, fallback_model
+    );
+
+    let fallback_variables = json!({
+        "input": {
+            "name": name,
+            "description": description,
+            "llmProvider": {
+                "providerType": fallback_provider,
+                "model": fallback_model,
+                "baseUrl": base_url_option
+            },
+            "llmConfig": {
+                "temperature": 0.7,
+                "maxTokens": 1000,
+                "topP": null,
+                "frequencyPenalty": null,
+                "presencePenalty": null,
+                "stopSequences": []
+            },
+            "prompts": {
+                "system": format!("You are a helpful {}. {}", name, description),
+                "userTemplate": "User: {{message}}\n\nContext: {{context}}",
+                "contextInstructions": "Always be helpful, professional, and provide accurate information."
+            },
+            "capabilities": ["text-generation", "conversation"],
+            "tools": []
+        }
+    });
+
+    let fallback_request_body = json!({
+        "query": mutation,
+        "variables": fallback_variables
+    });
+
+    match try_create_agent(&graphql_client, &fallback_request_body, tenant_id).await {
+        Ok(agent_id) => {
+            println!("      ✅ Agent created with fallback model: {}", agent_id);
+            println!(
+                "      📝 Fallback model '{}' ({}) will be used for execution",
+                fallback_model, fallback_provider
+            );
+            println!("      ⚠️  Note: This agent may not use Circuit Breaker routing");
+            Ok(agent_id)
+        }
+        Err(e) => {
+            println!("      ❌ Fallback also failed: {}", e);
+            println!("      💡 Possible issues:");
+            println!("         • GraphQL server doesn't support the provider type");
+            println!("         • API key format is incorrect");
+            println!("         • Server configuration issue");
+            Err(e)
+        }
+    }
+}
+
+/// Helper function to try creating an agent with given request body
+async fn try_create_agent(
+    graphql_client: &Client,
+    request_body: &serde_json::Value,
+    tenant_id: &str,
+) -> Result<String> {
     println!("      📡 Sending GraphQL request to create agent...");
     println!("      🌐 URL: {}/graphql", graphql_client.base_url());
-    println!(
-        "      📝 Request body: {}",
-        serde_json::to_string_pretty(&request_body).unwrap_or_else(|_| "Invalid JSON".to_string())
-    );
+
+    // Extract and log key details from request
+    if let Some(input) = request_body.get("variables").and_then(|v| v.get("input")) {
+        if let Some(provider) = input.get("llmProvider") {
+            println!("      🔍 LLM Provider Config:");
+            println!(
+                "         Type: {}",
+                provider
+                    .get("providerType")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+            );
+            println!(
+                "         Model: {}",
+                provider
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+            );
+            println!(
+                "         API Key: {}",
+                if provider.get("apiKey").is_some() {
+                    "Provided (SECURITY RISK!)"
+                } else {
+                    "Not provided (server uses environment)"
+                }
+            );
+        }
+    }
 
     // Make GraphQL request
     let response = graphql_client
@@ -204,7 +403,7 @@ async fn create_agent_via_graphql(
         ))
         .header("Content-Type", "application/json")
         .header("X-Tenant-ID", tenant_id)
-        .json(&request_body)
+        .json(request_body)
         .send()
         .await?;
 
@@ -248,10 +447,6 @@ async fn create_agent_via_graphql(
             message: "Failed to extract agent ID from GraphQL response".to_string(),
         })?;
 
-    println!(
-        "      ✅ Successfully created agent: {} (ID: {})",
-        name, created_agent
-    );
     Ok(created_agent.to_string())
 }
 
@@ -291,17 +486,49 @@ async fn demo_simple_execution(client: &Client, agent_id: &str, tenant_id: &str)
         agent_id
     );
 
+    // Add detailed logging for debugging
+    println!("   🔍 Request details:");
+    println!("      Agent ID: {}", agent_id);
+    println!(
+        "      Tenant ID: {}",
+        request.tenant_id.as_ref().unwrap_or(&"None".to_string())
+    );
+    println!(
+        "      Context keys: {:?}",
+        context
+            .as_object()
+            .map(|obj| obj.keys().collect::<Vec<_>>())
+    );
+    println!("      Stream: {}", request.stream.unwrap_or(false));
+
+    println!("   ⏳ Sending execution request...");
+    let start_time = std::time::Instant::now();
+
     match client.agents().execute(agent_id, request).await {
         Ok(response) => {
-            println!("   ✅ Execution completed successfully!");
+            let duration = start_time.elapsed();
+            println!("   ✅ Execution successful ({:?}):", duration);
+            println!("      Agent ID: {}", response.agent_id);
             println!("      Execution ID: {}", response.execution_id);
             println!("      Status: {:?}", response.status);
+            println!(
+                "      Created: {}",
+                response.created_at.format("%Y-%m-%d %H:%M:%S")
+            );
             if let Some(output) = response.output {
                 println!("      Output: {}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!("      Output: None (execution may be pending)");
             }
         }
         Err(e) => {
-            println!("   ❌ Execution failed: {}", e);
+            let duration = start_time.elapsed();
+            println!("   ❌ Execution failed after {:?}: {}", duration, e);
+            println!("      This could indicate:");
+            println!("      • Agent model/provider configuration issues");
+            println!("      • Missing or invalid API keys");
+            println!("      • Backend routing problems");
+            println!("      • Network connectivity issues");
         }
     }
 
@@ -809,6 +1036,211 @@ async fn demo_tenant_isolation(client: &Client, agent_id: &str) -> Result<()> {
             }
         }
     }
+
+    Ok(())
+}
+
+/// Demo 7: Virtual Model Examples
+async fn demo_virtual_model_examples(client: &Client, tenant_id: &str) -> Result<()> {
+    println!("\n7. 🎯 Virtual Model Examples");
+    println!("   ===========================");
+    println!("   Demonstrating different Circuit Breaker virtual models");
+    println!("   These models use intelligent routing to select the best provider");
+    println!("   🔒 SECURITY: Circuit Breaker server reads API keys from environment:");
+    println!("   • Server environment: OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, etc.");
+    println!("   • Clients NEVER send API keys - server handles all provider authentication");
+
+    // Virtual model configurations to test
+    let virtual_model_configs = vec![
+        (
+            "💰 Cost-Optimized Agent",
+            common_models::SMART_CHEAP,
+            "Customer Support",
+            "Handle customer inquiries cost-effectively",
+        ),
+        (
+            "⚡ Performance-First Agent",
+            common_models::SMART_FAST,
+            "Emergency Response",
+            "Provide rapid responses for urgent queries",
+        ),
+        (
+            "⚖️ Balanced Agent",
+            common_models::SMART_BALANCED,
+            "General Assistant",
+            "Balanced performance and cost for general tasks",
+        ),
+        (
+            "🎨 Creative Agent",
+            common_models::SMART_CREATIVE,
+            "Content Creator",
+            "Generate creative content and marketing materials",
+        ),
+        (
+            "💻 Coding Agent",
+            common_models::SMART_CODING,
+            "Code Assistant",
+            "Help with programming and technical questions",
+        ),
+        (
+            "📊 Analysis Agent",
+            common_models::SMART_ANALYSIS,
+            "Data Analyst",
+            "Analyze data and provide insights",
+        ),
+    ];
+
+    let mut created_agents = Vec::new();
+
+    // Create agents with different virtual models
+    for (display_name, virtual_model, agent_name, description) in virtual_model_configs {
+        println!(
+            "   📝 Creating {} with model: {}",
+            display_name, virtual_model
+        );
+
+        let agent_id = format!(
+            "virtual-{}",
+            virtual_model.replace(":", "-").replace("cb-", "")
+        );
+
+        match create_agent_via_graphql(
+            client,
+            &agent_id,
+            agent_name,
+            description,
+            virtual_model,
+            tenant_id,
+        )
+        .await
+        {
+            Ok(created_agent_id) => {
+                created_agents.push((display_name, virtual_model, created_agent_id.clone()));
+                println!("      ✅ Created agent: {}", created_agent_id);
+            }
+            Err(e) => {
+                println!("      ❌ Failed to create {}: {}", display_name, e);
+            }
+        }
+    }
+
+    // Test each virtual model agent
+    for (display_name, virtual_model, agent_id) in created_agents {
+        println!("   🧪 Testing {} ({})", display_name, virtual_model);
+
+        let context = match virtual_model {
+            common_models::SMART_CHEAP => json!({
+                "message": "Help me understand the basics of cloud computing",
+                "priority": "normal",
+                "cost_constraint": "low"
+            }),
+            common_models::SMART_FAST => json!({
+                "message": "I need a quick explanation of microservices",
+                "priority": "urgent",
+                "speed_requirement": "fast"
+            }),
+            common_models::SMART_BALANCED => json!({
+                "message": "Explain the pros and cons of different database types",
+                "priority": "normal",
+                "balance_requirement": "optimal"
+            }),
+            common_models::SMART_CREATIVE => json!({
+                "message": "Write a creative product description for a new AI-powered tool",
+                "priority": "normal",
+                "creativity_level": "high"
+            }),
+            common_models::SMART_CODING => json!({
+                "message": "Show me how to implement a simple REST API in Python",
+                "priority": "normal",
+                "code_type": "web_development"
+            }),
+            common_models::SMART_ANALYSIS => json!({
+                "message": "Analyze the key trends in cloud computing for 2024",
+                "priority": "normal",
+                "analysis_depth": "comprehensive"
+            }),
+            _ => json!({
+                "message": "This is a test message",
+                "priority": "normal"
+            }),
+        };
+
+        let request = AgentExecutionRequest {
+            context,
+            mapping: Some(json!({
+                "input_field": "message",
+                "output_field": "response"
+            })),
+            tenant_id: Some(tenant_id.to_string()),
+            stream: Some(false),
+        };
+
+        println!(
+            "      🌐 Executing with virtual model: {} -> {}",
+            virtual_model,
+            client.get_endpoint_url("rest").trim_end_matches('/'),
+        );
+
+        match client.agents().execute(&agent_id, request).await {
+            Ok(response) => {
+                println!("      ✅ Execution successful:");
+                println!("         Execution ID: {}", response.execution_id);
+                println!("         Status: {:?}", response.status);
+                if let Some(output) = response.output {
+                    // Truncate long responses for demo
+                    let output_str = output.to_string();
+                    if output_str.len() > 200 {
+                        println!("         Output: {}...", &output_str[..200]);
+                    } else {
+                        println!("         Output: {}", output_str);
+                    }
+                }
+                println!(
+                    "         Virtual Model: {} routes to optimal provider",
+                    virtual_model
+                );
+            }
+            Err(e) => {
+                println!("      ❌ Execution failed: {}", e);
+            }
+        }
+
+        // Small delay between requests
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    println!("\n   🎯 Virtual Model Benefits:");
+    println!(
+        "   • {} - Routes to cheapest available models",
+        common_models::SMART_CHEAP
+    );
+    println!(
+        "   • {} - Routes to fastest available models",
+        common_models::SMART_FAST
+    );
+    println!(
+        "   • {} - Balances cost and performance",
+        common_models::SMART_BALANCED
+    );
+    println!(
+        "   • {} - Routes to models optimized for creativity",
+        common_models::SMART_CREATIVE
+    );
+    println!(
+        "   • {} - Routes to models optimized for coding",
+        common_models::SMART_CODING
+    );
+    println!(
+        "   • {} - Routes to models optimized for analysis",
+        common_models::SMART_ANALYSIS
+    );
+    println!("   • Circuit Breaker handles provider selection, API keys, and fallbacks");
+    println!("   • Agents don't need to know about specific providers or models");
+    println!(
+        "   • 🔒 SECURE: Server environment variables (OPENAI_API_KEY, etc.) used automatically"
+    );
+    println!("   • Router selects optimal provider based on cost, speed, and availability");
+    println!("   • 🚫 NEVER send API keys from client - major security vulnerability!");
 
     Ok(())
 }

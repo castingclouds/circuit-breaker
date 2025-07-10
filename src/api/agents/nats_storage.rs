@@ -62,7 +62,7 @@ impl Default for NatsStorageConfig {
 const AGENT_PREFIX: &str = "agent";
 const EXECUTION_PREFIX: &str = "exec";
 const TENANT_PREFIX: &str = "tenant";
-const KEY_SEPARATOR: &str = ":";
+const KEY_SEPARATOR: &str = "_";
 
 // NATS agent storage implementation
 pub struct NatsAgentStorage {
@@ -163,15 +163,20 @@ impl NatsAgentStorage {
         bucket_name: &str,
         config: &NatsStorageConfig,
     ) -> Result<jetstream::kv::Store> {
+        debug!("🔍 Ensuring KV bucket: {}", bucket_name);
+
         // Check if bucket already exists
         match js.get_key_value(bucket_name).await {
             Ok(kv) => {
-                debug!("Using existing KV bucket: {}", bucket_name);
+                debug!("🔍 Using existing KV bucket: {}", bucket_name);
                 Ok(kv)
             }
-            Err(_) => {
+            Err(e) => {
                 // Create new bucket
-                info!("Creating new KV bucket: {}", bucket_name);
+                info!(
+                    "🔍 Creating new KV bucket: {} (error getting existing: {})",
+                    bucket_name, e
+                );
                 let kv_config = jetstream::kv::Config {
                     bucket: bucket_name.to_string(),
                     history: 5,
@@ -183,13 +188,15 @@ impl NatsAgentStorage {
                     ..Default::default()
                 };
 
+                debug!("🔍 KV config: {:?}", kv_config);
+
                 match js.create_key_value(kv_config).await {
                     Ok(kv) => {
-                        info!("Created KV bucket: {}", bucket_name);
+                        info!("🔍 Created KV bucket: {}", bucket_name);
                         Ok(kv)
                     }
                     Err(e) => {
-                        error!("Failed to create KV bucket {}: {}", bucket_name, e);
+                        error!("🔍 Failed to create KV bucket {}: {}", bucket_name, e);
                         Err(CircuitBreakerError::Storage(anyhow::Error::msg(format!(
                             "Failed to create KV bucket {}: {}",
                             bucket_name, e
@@ -292,17 +299,18 @@ impl NatsAgentStorage {
     ) -> Result<Vec<String>> {
         let mut keys = Vec::new();
 
-        let mut entries = kv.watch_all().await.map_err(|e| {
+        let mut all_keys = kv.keys().await.map_err(|e| {
             CircuitBreakerError::Storage(anyhow::Error::msg(format!(
-                "Failed to watch KV store: {}",
+                "Failed to get keys from KV store: {}",
                 e
             )))
         })?;
 
-        while let Some(Ok(entry)) = entries.next().await {
-            let key = entry.key;
-            if key.starts_with(prefix) {
-                keys.push(key);
+        while let Some(key) = all_keys.next().await {
+            if let Ok(key) = key {
+                if key.starts_with(prefix) {
+                    keys.push(key);
+                }
             }
         }
 
@@ -354,18 +362,73 @@ impl AgentStorage for NatsAgentStorage {
         // Extract tenant ID if present
         let tenant_id = self.extract_tenant_from_agent(agent);
 
+        // Debug logging
+        debug!(
+            "🔍 Storing agent - ID: {}, Tenant: {:?}",
+            agent.id, tenant_id
+        );
+
         // Generate key
         let key = Self::agent_key(&agent.id, tenant_id.as_ref());
+        debug!("🔍 Generated key: '{}'", key);
+
+        // Validate key
+        if key.is_empty() {
+            return Err(CircuitBreakerError::Storage(anyhow::anyhow!(
+                "Generated key is empty for agent {}",
+                agent.id
+            )));
+        }
+        if key.starts_with('.') || key.ends_with('.') {
+            return Err(CircuitBreakerError::Storage(anyhow::anyhow!(
+                "Generated key '{}' starts or ends with '.' for agent {}",
+                key,
+                agent.id
+            )));
+        }
 
         // Serialize agent
         let agent_bytes = Self::serialize(agent)?;
 
         // Store in KV
         let agents_kv = self.agents_kv.lock().await;
-        agents_kv.put(&key, agent_bytes.into()).await.map_err(|e| {
-            *self.connected.blocking_write() = false;
-            CircuitBreakerError::Storage(anyhow::anyhow!("Failed to store agent: {}", e))
-        })?;
+        debug!(
+            "🔍 About to store in KV - Key: '{}', Bucket: '{}'",
+            key, self.config.agents_bucket
+        );
+        debug!("🔍 KV store status: Connected to NATS");
+        debug!("🔍 Key bytes: {:?}", key.as_bytes());
+        debug!("🔍 Key length: {}", key.len());
+        debug!("🔍 Key chars: {:?}", key.chars().collect::<Vec<_>>());
+
+        // Check for invisible characters
+        for (i, byte) in key.as_bytes().iter().enumerate() {
+            if *byte < 32 || *byte > 126 {
+                debug!("🔍 Non-printable byte at position {}: {:#04x}", i, byte);
+            }
+        }
+
+        match agents_kv.put(&key, agent_bytes.into()).await {
+            Ok(revision) => {
+                debug!(
+                    "🔍 Successfully stored agent with key '{}' at revision {}",
+                    key, revision
+                );
+            }
+            Err(e) => {
+                error!("🔍 Failed to store agent - Key: '{}', Error: {}", key, e);
+                debug!(
+                    "🔍 NATS client status: {:?}",
+                    self.client.connection_state()
+                );
+                debug!("🔍 Bucket config: {:?}", self.config);
+                return Err(CircuitBreakerError::Storage(anyhow::anyhow!(
+                    "Failed to store agent with key '{}': {}",
+                    key,
+                    e
+                )));
+            }
+        }
 
         debug!("Stored agent {} with key {}", agent.id, key);
         Ok(())
@@ -408,13 +471,6 @@ impl AgentStorage for NatsAgentStorage {
 
                 Ok(None)
             }
-            Err(e) => {
-                *self.connected.blocking_write() = false;
-                Err(CircuitBreakerError::Storage(anyhow::anyhow!(
-                    "Failed to get agent: {}",
-                    e
-                )))
-            }
         }
     }
 
@@ -426,7 +482,6 @@ impl AgentStorage for NatsAgentStorage {
 
         // Watch all keys (this is a NATS way to list all keys/values)
         let mut entries = agents_kv.watch_all().await.map_err(|e| {
-            *self.connected.blocking_write() = false;
             CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list agents: {}", e))
         })?;
 
@@ -477,13 +532,10 @@ impl AgentStorage for NatsAgentStorage {
 
                 Ok(false)
             }
-            Err(e) => {
-                *self.connected.blocking_write() = false;
-                Err(CircuitBreakerError::Storage(anyhow::anyhow!(
-                    "Failed to delete agent: {}",
-                    e
-                )))
-            }
+            Err(e) => Err(CircuitBreakerError::Storage(anyhow::anyhow!(
+                "Failed to delete agent: {}",
+                e
+            ))),
         }
     }
 
@@ -505,7 +557,6 @@ impl AgentStorage for NatsAgentStorage {
             .put(&key, execution_bytes.into())
             .await
             .map_err(|e| {
-                *self.connected.blocking_write() = false;
                 CircuitBreakerError::Storage(anyhow::anyhow!("Failed to store execution: {}", e))
             })?;
 
@@ -548,13 +599,10 @@ impl AgentStorage for NatsAgentStorage {
 
                 Ok(None)
             }
-            Err(e) => {
-                *self.connected.blocking_write() = false;
-                Err(CircuitBreakerError::Storage(anyhow::anyhow!(
-                    "Failed to get execution: {}",
-                    e
-                )))
-            }
+            Err(e) => Err(CircuitBreakerError::Storage(anyhow::anyhow!(
+                "Failed to get execution: {}",
+                e
+            ))),
         }
     }
 
@@ -608,7 +656,6 @@ impl AgentStorage for NatsAgentStorage {
         // with secondary indexes or a more suitable database
         let executions_kv = self.executions_kv.lock().await;
         let mut entries = executions_kv.watch_all().await.map_err(|e| {
-            *self.connected.blocking_write() = false;
             CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
         })?;
 
@@ -654,7 +701,6 @@ impl AgentStorage for NatsAgentStorage {
         // Get all executions and filter
         let executions_kv = self.executions_kv.lock().await;
         let mut entries = executions_kv.watch_all().await.map_err(|e| {
-            *self.connected.blocking_write() = false;
             CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
         })?;
 
@@ -697,7 +743,6 @@ impl AgentStorage for NatsAgentStorage {
         // Get all executions and filter by nested context
         let executions_kv = self.executions_kv.lock().await;
         let mut entries = executions_kv.watch_all().await.map_err(|e| {
-            *self.connected.blocking_write() = false;
             CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
         })?;
 
@@ -758,7 +803,6 @@ impl AgentStorage for NatsAgentStorage {
         // Get all executions and filter by agent ID
         let executions_kv = self.executions_kv.lock().await;
         let mut entries = executions_kv.watch_all().await.map_err(|e| {
-            *self.connected.blocking_write() = false;
             CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
         })?;
 
@@ -790,7 +834,6 @@ impl AgentStorage for NatsAgentStorage {
         // Get all executions and filter by status
         let executions_kv = self.executions_kv.lock().await;
         let mut entries = executions_kv.watch_all().await.map_err(|e| {
-            *self.connected.blocking_write() = false;
             CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
         })?;
 
@@ -819,7 +862,6 @@ impl AgentStorage for NatsAgentStorage {
         // Get all executions
         let executions_kv = self.executions_kv.lock().await;
         let mut entries = executions_kv.watch_all().await.map_err(|e| {
-            *self.connected.blocking_write() = false;
             CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
         })?;
 
@@ -860,7 +902,6 @@ impl AgentStorage for NatsAgentStorage {
         // Get all executions and filter by agent ID and context
         let executions_kv = self.executions_kv.lock().await;
         let mut entries = executions_kv.watch_all().await.map_err(|e| {
-            *self.connected.blocking_write() = false;
             CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
         })?;
 
@@ -901,7 +942,6 @@ impl AgentStorage for NatsAgentStorage {
         let resource_id_str = resource_id.to_string();
         let executions_kv = self.executions_kv.lock().await;
         let mut entries = executions_kv.watch_all().await.map_err(|e| {
-            *self.connected.blocking_write() = false;
             CircuitBreakerError::Storage(anyhow::anyhow!("Failed to list executions: {}", e))
         })?;
 

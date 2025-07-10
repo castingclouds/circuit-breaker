@@ -4,6 +4,7 @@
 use async_graphql::{Context, Enum, InputObject, Object, Schema, SimpleObject, Subscription, ID};
 use chrono::Utc;
 use serde_json;
+use tracing::debug;
 use uuid::Uuid;
 
 use crate::engine::rules::StoredRule;
@@ -456,7 +457,7 @@ pub struct AgentDefinitionInput {
 pub struct AgentLLMProviderInput {
     pub provider_type: String,
     pub model: String,
-    pub api_key: String,
+    pub api_key: Option<String>,
     pub base_url: Option<String>,
 }
 
@@ -1844,22 +1845,37 @@ impl Mutation {
     ) -> async_graphql::Result<AgentDefinitionGQL> {
         let agent_storage = ctx.data::<std::sync::Arc<dyn AgentStorage>>()?;
 
+        debug!(
+            "🔍 GraphQL using storage backend: {}",
+            std::any::type_name::<dyn AgentStorage>()
+        );
+        debug!(
+            "🔍 GraphQL storage implementation: {:?}",
+            std::ptr::addr_of!(**agent_storage)
+        );
+
         // Convert input to internal types
         let agent_id = AgentId::from(format!("agent_{}", Uuid::new_v4()));
 
         let llm_provider = match input.llm_provider.provider_type.as_str() {
             "openai" => LLMProvider::OpenAI {
-                api_key: input.llm_provider.api_key,
+                api_key: input.llm_provider.api_key.unwrap_or_else(|| {
+                    std::env::var("OPENAI_API_KEY").unwrap_or_else(|_| "not-set".to_string())
+                }),
                 model: input.llm_provider.model,
                 base_url: input.llm_provider.base_url,
             },
             "anthropic" => LLMProvider::Anthropic {
-                api_key: input.llm_provider.api_key,
+                api_key: input.llm_provider.api_key.unwrap_or_else(|| {
+                    std::env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| "not-set".to_string())
+                }),
                 model: input.llm_provider.model,
                 base_url: input.llm_provider.base_url,
             },
             "google" => LLMProvider::Google {
-                api_key: input.llm_provider.api_key,
+                api_key: input.llm_provider.api_key.unwrap_or_else(|| {
+                    std::env::var("GOOGLE_API_KEY").unwrap_or_else(|_| "not-set".to_string())
+                }),
                 model: input.llm_provider.model,
             },
             "ollama" => LLMProvider::Ollama {

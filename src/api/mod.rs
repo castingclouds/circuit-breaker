@@ -84,7 +84,12 @@ impl CircuitBreakerApiServer {
         // Create agent engine with in-memory storage
         let storage = Arc::new(InMemoryAgentStorage::default());
         let agent_config = AgentEngineConfig::default();
-        let agent_engine = Arc::new(AgentEngine::new(storage, agent_config));
+        // Create a testing LLM router for this instance
+        let llm_router = Arc::new(
+            futures::executor::block_on(crate::llm::LLMRouter::new_for_testing())
+                .unwrap_or_else(|_| panic!("Failed to create LLM router for testing")),
+        );
+        let agent_engine = Arc::new(AgentEngine::new(storage, agent_config, llm_router));
 
         Self {
             config,
@@ -123,7 +128,16 @@ impl CircuitBreakerApiServer {
         })?;
 
         let agent_config = AgentEngineConfig::default();
-        let agent_engine = Arc::new(AgentEngine::new(Arc::new(nats_storage), agent_config));
+        // Create a testing LLM router for this instance
+        let llm_router = Arc::new(
+            futures::executor::block_on(crate::llm::LLMRouter::new_for_testing())
+                .unwrap_or_else(|_| panic!("Failed to create LLM router for testing")),
+        );
+        let agent_engine = Arc::new(AgentEngine::new(
+            Arc::new(nats_storage),
+            agent_config,
+            llm_router,
+        ));
 
         Ok(Self {
             config,
@@ -279,6 +293,7 @@ pub struct CircuitBreakerApiServerBuilder {
     llm_router: Option<LLMRouter>,
     cost_optimizer: Option<CostOptimizer>,
     nats_url: Option<String>,
+    agent_engine: Option<Arc<AgentEngine>>,
 }
 
 /// OpenAI API server builder (for backward compatibility)
@@ -291,6 +306,7 @@ impl CircuitBreakerApiServerBuilder {
             llm_router: None,
             cost_optimizer: None,
             nats_url: None,
+            agent_engine: None,
         }
     }
 
@@ -344,6 +360,11 @@ impl CircuitBreakerApiServerBuilder {
         self
     }
 
+    pub fn with_agent_engine(mut self, agent_engine: Arc<AgentEngine>) -> Self {
+        self.agent_engine = Some(agent_engine);
+        self
+    }
+
     pub fn with_openai_api(mut self, enabled: bool) -> Self {
         self.config.enable_openai_api = enabled;
         self
@@ -355,7 +376,17 @@ impl CircuitBreakerApiServerBuilder {
     }
 
     pub async fn build_async(self) -> CircuitBreakerApiServer {
-        let mut server = if let Some(nats_url) = self.nats_url {
+        let mut server = if let Some(agent_engine) = self.agent_engine {
+            // Use provided agent engine
+            let openai_state = OpenAIApiState::new();
+            let mcp_manager = MCPServerManager::new();
+            CircuitBreakerApiServer {
+                config: self.config,
+                openai_state,
+                mcp_manager,
+                agent_engine,
+            }
+        } else if let Some(nats_url) = self.nats_url {
             CircuitBreakerApiServer::with_nats_storage(self.config, &nats_url)
                 .await
                 .expect("Failed to create server with NATS storage")
@@ -377,7 +408,17 @@ impl CircuitBreakerApiServerBuilder {
     }
 
     pub fn build(self) -> CircuitBreakerApiServer {
-        let mut server = if self.nats_url.is_some() {
+        let mut server = if let Some(agent_engine) = self.agent_engine {
+            // Use provided agent engine
+            let openai_state = OpenAIApiState::new();
+            let mcp_manager = MCPServerManager::new();
+            CircuitBreakerApiServer {
+                config: self.config,
+                openai_state,
+                mcp_manager,
+                agent_engine,
+            }
+        } else if self.nats_url.is_some() {
             panic!("Cannot use NATS storage with synchronous build - use build_async() instead");
         } else {
             CircuitBreakerApiServer::new(self.config)

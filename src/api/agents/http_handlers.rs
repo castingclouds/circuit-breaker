@@ -79,11 +79,21 @@ pub async fn execute_agent(
     tenant_id: TenantId,
     Json(request): Json<ExecuteAgentRequest>,
 ) -> impl IntoResponse {
-    // Log the request
-    info!("Executing agent {} for tenant {}", agent_id, tenant_id.0);
+    // Log the request with details
+    info!("🚀 Executing agent {} for tenant {}", agent_id, tenant_id.0);
+    debug!(
+        "📋 Request context: {}",
+        serde_json::to_string(&request.context).unwrap_or_else(|_| "Invalid JSON".to_string())
+    );
+    debug!("📋 Input mapping: {:?}", request.input_mapping);
+    debug!("📋 Output mapping: {:?}", request.output_mapping);
 
     // Ensure the request context includes tenant information
     let context = ensure_tenant_in_context(request.context, &tenant_id.0);
+    debug!(
+        "📋 Enhanced context with tenant: {}",
+        serde_json::to_string(&context).unwrap_or_else(|_| "Invalid JSON".to_string())
+    );
 
     // Convert request to agent config
     let config = AgentActivityConfig {
@@ -95,9 +105,43 @@ pub async fn execute_agent(
         retry_config: None,
     };
 
+    info!("⚙️  Agent config created - calling engine.execute_agent()");
+    debug!(
+        "⚙️  Agent config: agent_id={}, timeout={}s",
+        config.agent_id,
+        config.timeout_seconds.unwrap_or(0)
+    );
+
     // Execute the agent
+    let execution_start = std::time::Instant::now();
+    info!(
+        "🎯 Starting agent execution for agent_id: {}",
+        config.agent_id
+    );
+
     match engine.execute_agent(&config, context).await {
         Ok(execution) => {
+            let execution_duration = execution_start.elapsed();
+            info!(
+                "✅ Agent execution completed successfully in {:?}",
+                execution_duration
+            );
+            info!("📋 Execution ID: {}", execution.id);
+            info!("📋 Execution status: {:?}", execution.status);
+
+            if let Some(ref output) = execution.output_data {
+                debug!(
+                    "📋 Execution output: {}",
+                    serde_json::to_string(output).unwrap_or_else(|_| "Invalid JSON".to_string())
+                );
+            } else {
+                debug!("📋 No execution output");
+            }
+
+            if let Some(ref error) = execution.error_message {
+                warn!("⚠️  Execution completed with error: {}", error);
+            }
+
             let response = ExecuteAgentResponse {
                 execution_id: execution.id.to_string(),
                 agent_id: execution.agent_id.to_string(),
@@ -107,6 +151,11 @@ pub async fn execute_agent(
                 created_at: execution.started_at.to_rfc3339(),
                 context: execution.context,
             };
+
+            info!(
+                "📤 Sending successful response for execution {}",
+                execution.id
+            );
             (
                 StatusCode::OK,
                 Json(serde_json::to_value(response).unwrap_or_else(
@@ -115,12 +164,41 @@ pub async fn execute_agent(
             )
         }
         Err(e) => {
+            let execution_duration = execution_start.elapsed();
             let error_msg = e.to_string();
-            error!("Agent execution failed: {}", error_msg);
+            error!(
+                "❌ Agent execution failed after {:?}: {}",
+                execution_duration, error_msg
+            );
+            error!("🔍 Error details: {:?}", e);
+            error!("🔍 Failed agent_id: {}", agent_id);
+            error!("🔍 Failed tenant: {}", tenant_id.0);
+
+            // Log the error type for debugging
+            match &e {
+                crate::CircuitBreakerError::Internal(message) => {
+                    error!("🌐 Internal error: {}", message);
+                }
+                crate::CircuitBreakerError::Storage(storage_err) => {
+                    error!("💾 Storage error: {}", storage_err);
+                }
+                crate::CircuitBreakerError::NotFound(message) => {
+                    error!("🤖 Resource not found: {}", message);
+                }
+                crate::CircuitBreakerError::RateLimited(message) => {
+                    error!("⏰ Rate limited: {}", message);
+                }
+                _ => {
+                    error!("🔍 Other error type: {:?}", e);
+                }
+            }
 
             let error_response = serde_json::json!({
                 "error": error_msg,
                 "agent_id": agent_id,
+                "tenant_id": tenant_id.0,
+                "execution_duration_ms": execution_duration.as_millis(),
+                "error_type": format!("{:?}", e).split('(').next().unwrap_or("Unknown"),
             });
 
             (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))

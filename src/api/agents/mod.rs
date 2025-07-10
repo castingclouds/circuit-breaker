@@ -67,8 +67,17 @@ pub async fn execute_agent(
     tenant_id: TenantId,
     Json(request): Json<ExecuteAgentRequest>,
 ) -> impl IntoResponse {
-    // Log the tenant ID for this request
-    info!("Executing agent for tenant: {}", tenant_id.0);
+    // Log the tenant ID for this request with detailed information
+    info!(
+        "🚀 Executing agent {} for tenant: {}",
+        request.agent_id, tenant_id.0
+    );
+    debug!(
+        "📋 Request context: {}",
+        serde_json::to_string(&request.context).unwrap_or_else(|_| "Invalid JSON".to_string())
+    );
+    debug!("📋 Input mapping: {:?}", request.input_mapping);
+    debug!("📋 Output mapping: {:?}", request.output_mapping);
 
     // Ensure the request context includes tenant information
     let context = if !request.context.get("tenant_id").is_some() {
@@ -80,21 +89,28 @@ pub async fn execute_agent(
                 serde_json::Value::String(tenant_id.0.clone()),
             );
         }
+        debug!("📋 Added tenant_id to context");
         context
     } else {
+        debug!("📋 Context already has tenant_id");
         request.context.clone()
     };
+
+    debug!(
+        "📋 Final context: {}",
+        serde_json::to_string(&context).unwrap_or_else(|_| "Invalid JSON".to_string())
+    );
 
     // Create modified request with tenant-enriched context
     let request = ExecuteAgentRequest {
         agent_id: request.agent_id,
-        context,
+        context: context.clone(),
         input_mapping: request.input_mapping,
         output_mapping: request.output_mapping,
     };
     // Convert request to agent config
     let config = AgentActivityConfig {
-        agent_id: AgentId::from(request.agent_id),
+        agent_id: AgentId::from(request.agent_id.clone()),
         input_mapping: request.input_mapping.unwrap_or_default(),
         output_mapping: request.output_mapping.unwrap_or_default(),
         required: true,
@@ -102,10 +118,48 @@ pub async fn execute_agent(
         retry_config: None,
     };
 
+    info!(
+        "⚙️  Created agent config for agent_id: {}",
+        request.agent_id
+    );
+    debug!(
+        "⚙️  Config details: timeout={}s, input_mapping={:?}, output_mapping={:?}",
+        config.timeout_seconds.unwrap_or(0),
+        config.input_mapping,
+        config.output_mapping
+    );
+
     // Execute the agent
-    let context = request.context.clone();
-    match engine.execute_agent(&config, request.context).await {
+    let execution_start = std::time::Instant::now();
+    info!(
+        "🎯 Calling engine.execute_agent() for agent: {}",
+        request.agent_id
+    );
+    debug!("🎯 About to execute with engine at address: {:p}", &*engine);
+
+    match engine.execute_agent(&config, context.clone()).await {
         Ok(execution) => {
+            let execution_duration = execution_start.elapsed();
+            info!(
+                "✅ Agent execution completed successfully in {:?}",
+                execution_duration
+            );
+            info!("📋 Execution ID: {}", execution.id);
+            info!("📋 Execution status: {:?}", execution.status);
+
+            if let Some(ref output) = execution.output_data {
+                debug!(
+                    "📋 Execution output: {}",
+                    serde_json::to_string(output).unwrap_or_else(|_| "Invalid JSON".to_string())
+                );
+            } else {
+                debug!("📋 No execution output available");
+            }
+
+            if let Some(ref error) = execution.error_message {
+                warn!("⚠️  Execution completed with error: {}", error);
+            }
+
             let response = ExecuteAgentResponse {
                 execution_id: execution.id.to_string(),
                 agent_id: execution.agent_id.to_string(),
@@ -114,17 +168,52 @@ pub async fn execute_agent(
                 error: execution.error_message,
                 context: execution.context,
             };
+
+            info!(
+                "📤 Sending successful response for execution {}",
+                execution.id
+            );
             (StatusCode::OK, Json(response))
         }
         Err(e) => {
+            let execution_duration = execution_start.elapsed();
             let error_msg = e.to_string();
-            error!("Agent execution failed: {}", error_msg);
+            error!(
+                "❌ Agent execution failed after {:?}: {}",
+                execution_duration, error_msg
+            );
+            error!("🔍 Error details: {:?}", e);
+            error!("🔍 Failed agent_id: {}", request.agent_id);
+            error!("🔍 Failed tenant: {}", tenant_id.0);
+
+            // Log specific error types for debugging
+            match &e {
+                crate::CircuitBreakerError::Internal(message) => {
+                    error!("🌐 Internal error during agent execution: {}", message);
+                }
+                crate::CircuitBreakerError::Storage(storage_err) => {
+                    error!("💾 Storage error during agent execution: {}", storage_err);
+                }
+                crate::CircuitBreakerError::NotFound(message) => {
+                    error!("🤖 Resource not found: {}", message);
+                }
+                crate::CircuitBreakerError::RateLimited(message) => {
+                    error!("⏰ Rate limited: {}", message);
+                }
+                _ => {
+                    error!("🔍 Other error type during execution: {:?}", e);
+                }
+            }
+
             let response = ExecuteAgentResponse {
                 execution_id: Uuid::new_v4().to_string(),
                 agent_id: config.agent_id.to_string(),
                 status: "failed".to_string(),
                 output: None,
-                error: Some(error_msg),
+                error: Some(format!(
+                    "{} (duration: {:?})",
+                    error_msg, execution_duration
+                )),
                 context: context.clone(),
             };
             (StatusCode::INTERNAL_SERVER_ERROR, Json(response))
@@ -139,7 +228,8 @@ pub async fn execute_agent_stream(
     Json(request): Json<ExecuteAgentRequest>,
 ) -> Sse<impl Stream<Item = std::result::Result<Event, Infallible>>> {
     // Log the tenant ID for this streaming request
-    info!("Streaming agent execution for tenant: {}", tenant_id.0);
+    info!("🌊 Streaming agent execution for tenant: {}", tenant_id.0);
+    info!("🌊 Streaming agent: {}", request.agent_id);
 
     // Ensure the request context includes tenant information
     let context = if !request.context.get("tenant_id").is_some() {
@@ -168,7 +258,7 @@ pub async fn execute_agent_stream(
 
     // Configure the agent
     let config = AgentActivityConfig {
-        agent_id: AgentId::from(request.agent_id),
+        agent_id: AgentId::from(request.agent_id.clone()),
         input_mapping: request.input_mapping.unwrap_or_default(),
         output_mapping: request.output_mapping.unwrap_or_default(),
         required: true,
@@ -177,11 +267,22 @@ pub async fn execute_agent_stream(
     };
 
     // Execute the agent and get the execution ID
+    info!(
+        "🌊 Starting streaming execution for agent: {}",
+        request.agent_id
+    );
     let execution_result = engine.execute_agent(&config, request.context).await;
     let execution_id = match execution_result {
-        Ok(execution) => execution.id,
+        Ok(execution) => {
+            info!(
+                "🌊 Streaming execution started successfully: {}",
+                execution.id
+            );
+            execution.id
+        }
         Err(e) => {
-            error!("Agent execution failed: {}", e);
+            error!("🌊 Streaming agent execution failed: {}", e);
+            error!("🌊 Failed streaming agent_id: {}", request.agent_id);
             Uuid::new_v4() // Return a placeholder ID for failed executions
         }
     };
@@ -624,7 +725,14 @@ impl StandaloneAgentApiBuilder {
                 Arc::new(InMemoryAgentStorage::default())
             });
 
-            Arc::new(AgentEngine::new(storage, self.config))
+            {
+                // Create a testing LLM router for this instance
+                let llm_router = Arc::new(
+                    futures::executor::block_on(crate::llm::LLMRouter::new_for_testing())
+                        .unwrap_or_else(|_| panic!("Failed to create LLM router for testing")),
+                );
+                Arc::new(AgentEngine::new(storage, self.config, llm_router))
+            }
         };
 
         let mut router = routes(engine);

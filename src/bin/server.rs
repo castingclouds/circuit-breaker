@@ -252,8 +252,8 @@ async fn main() -> Result<(), String> {
     // Create shared LLM infrastructure
     info!("🔧 Initializing shared LLM infrastructure...");
 
-    // Create LLM router with configured API keys
-    let llm_router = LLMRouter::new_with_keys(
+    // Create LLM router with configured API keys for OpenAI API server
+    let openai_llm_router = LLMRouter::new_with_keys(
         config.openai_api_key.clone(),
         config.anthropic_api_key.clone(),
         config.google_api_key.clone(),
@@ -264,6 +264,21 @@ async fn main() -> Result<(), String> {
         error!("Failed to create LLM router: {}", e);
         format!("Failed to create LLM router: {}", e)
     })?;
+
+    // Create second LLM router instance for AgentEngine
+    let agent_llm_router = std::sync::Arc::new(
+        LLMRouter::new_with_keys(
+            config.openai_api_key.clone(),
+            config.anthropic_api_key.clone(),
+            config.google_api_key.clone(),
+            config.ollama_base_url.clone(),
+        )
+        .await
+        .map_err(|e| {
+            error!("Failed to create agent LLM router: {}", e);
+            format!("Failed to create agent LLM router: {}", e)
+        })?,
+    );
 
     // Create cost optimizer with dependencies
     let usage_tracker =
@@ -292,67 +307,101 @@ async fn main() -> Result<(), String> {
         .with_port(config.graphql_port)
         .with_agents();
 
-    // Configure storage backend based on environment variable
-    match config.storage_type.as_str() {
-        "nats" => {
-            info!("🔧 Initializing NATS storage backend...");
-            info!("📡 Testing NATS connection to: {}", config.nats_url);
+    // Create shared storage for both GraphQL and API servers
+    let shared_agent_storage = if config.storage_type == "nats" {
+        info!("🔧 Initializing NATS storage backend...");
+        info!("📡 Testing NATS connection to: {}", config.nats_url);
 
-            // Test basic NATS connectivity first
-            match async_nats::connect(&config.nats_url).await {
-                Ok(client) => {
-                    info!("✅ Successfully connected to NATS server");
+        // Test basic NATS connectivity first
+        match async_nats::connect(&config.nats_url).await {
+            Ok(client) => {
+                info!("✅ Successfully connected to NATS server");
 
-                    // Test JetStream availability
-                    let _jetstream = async_nats::jetstream::new(client);
-                    info!("✅ JetStream context created successfully");
-                    info!("📊 NATS connection ready for workflow storage");
-                }
-                Err(e) => {
-                    error!(
-                        "❌ Failed to connect to NATS server at {}: {}",
-                        config.nats_url, e
-                    );
-                    error!("💡 Make sure NATS server is running:");
-                    error!("   nats-server --jetstream");
-                    error!("   Or using Docker: docker run -p 4222:4222 nats:alpine --jetstream");
-                    return Err(format!("Failed to connect to NATS: {}", e));
-                }
+                // Test JetStream availability
+                let _jetstream = async_nats::jetstream::new(client);
+                info!("✅ JetStream context created successfully");
+                info!("📊 NATS connection ready for workflow storage");
             }
+            Err(e) => {
+                error!(
+                    "❌ Failed to connect to NATS server at {}: {}",
+                    config.nats_url, e
+                );
+                error!("💡 Make sure NATS server is running:");
+                error!("   nats-server --jetstream");
+                error!("   Or using Docker: docker run -p 4222:4222 nats:alpine --jetstream");
+                return Err(format!("Failed to connect to NATS: {}", e));
+            }
+        }
 
-            // Now configure the storage backend
-            info!("🔧 Configuring NATS storage backend...");
-            graphql_builder = graphql_builder
-                .with_nats(&config.nats_url)
-                .await
-                .map_err(|e| {
-                    error!("❌ Failed to initialize NATS storage: {}", e);
-                    format!("Failed to initialize NATS storage: {}", e)
-                })?;
-            info!("✅ NATS storage backend successfully configured");
-            info!("🎯 Circuit Breaker will use NATS JetStream for persistent storage");
-        }
-        "memory" | _ => {
-            info!("🔧 Configuring in-memory storage backend");
-            info!("⚠️  Note: Data will not persist between server restarts");
-            info!("✅ In-memory storage backend configured");
-        }
+        info!("🔧 Creating shared NATS agent storage...");
+        Some(std::sync::Arc::new(
+            circuit_breaker::api::agents::nats_storage::NatsAgentStorage::new(
+                circuit_breaker::api::agents::nats_storage::NatsStorageConfig {
+                    url: config.nats_url.clone(),
+                    connection_timeout: std::time::Duration::from_secs(10),
+                    reconnect_attempts: 5,
+                    client_name: Some("circuit-breaker-server".to_string()),
+                    stream_name: "agents".to_string(),
+                    agents_bucket: "agents".to_string(),
+                    executions_bucket: "executions".to_string(),
+                    max_batch_size: 1000,
+                    max_age: std::time::Duration::from_secs(86400), // 24 hours
+                    replicas: 1,
+                    max_bytes: None,
+                },
+            )
+            .await
+            .map_err(|e| {
+                error!("❌ Failed to create shared NATS agent storage: {}", e);
+                format!("Failed to create shared NATS agent storage: {}", e)
+            })?,
+        ))
+    } else {
+        info!("🔧 Configuring in-memory storage backend");
+        info!("⚠️  Note: Data will not persist between server restarts");
+        None
+    };
+
+    // Configure GraphQL server with shared storage
+    if let Some(ref storage) = shared_agent_storage {
+        info!("🔧 Configuring GraphQL server with shared NATS agent storage");
+        graphql_builder = graphql_builder
+            .with_nats(&config.nats_url)
+            .await
+            .map_err(|e| {
+                error!("❌ Failed to initialize GraphQL NATS storage: {}", e);
+                format!("Failed to initialize GraphQL NATS storage: {}", e)
+            })?
+            .with_agent_storage(storage.clone());
+        info!("✅ GraphQL server configured with shared NATS agent storage");
+    } else {
+        info!("✅ GraphQL in-memory storage backend configured");
     }
 
-    // Build OpenAI API server with NATS storage if configured
+    // Build OpenAI API server with shared storage
     let mut openai_builder = OpenAIApiServerBuilder::new()
         .with_port(config.openai_port)
         .with_host(config.openai_host.clone())
         .with_cors(config.openai_cors_enabled)
         .with_api_key_required(config.openai_api_key_required)
         .with_streaming(config.openai_enable_streaming)
-        .with_llm_router(llm_router)
+        .with_llm_router(openai_llm_router)
         .with_cost_optimizer(cost_optimizer);
 
-    // Add NATS storage if configured
-    if config.storage_type == "nats" {
-        info!("🔧 Configuring OpenAI API server with NATS storage for MCP instances");
-        openai_builder = openai_builder.with_nats_storage(config.nats_url.clone());
+    if let Some(storage) = shared_agent_storage {
+        info!("🔧 Configuring OpenAI API server with shared NATS agent storage");
+        let agent_config = circuit_breaker::engine::agents::AgentEngineConfig::default();
+        let shared_agent_engine =
+            std::sync::Arc::new(circuit_breaker::engine::agents::AgentEngine::new(
+                storage,
+                agent_config,
+                agent_llm_router,
+            ));
+        openai_builder = openai_builder.with_agent_engine(shared_agent_engine);
+        info!("✅ OpenAI API server configured with shared NATS agent storage");
+    } else {
+        info!("✅ OpenAI API server configured with in-memory agent storage");
     }
 
     let openai_server = openai_builder.build_async().await;

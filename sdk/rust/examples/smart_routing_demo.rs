@@ -6,9 +6,9 @@
 //! consistent OpenAI-compatible interface.
 
 use circuit_breaker_sdk::{
-    common_models, create_balanced_chat, create_chat, create_cost_optimized_chat, create_fast_chat,
-    create_smart_chat, ChatCompletionRequest, ChatMessage, ChatRole, CircuitBreakerOptions, Client,
-    Result, RoutingStrategy, SmartCompletionRequest, TaskType,
+    create_balanced_chat, create_chat, create_cost_optimized_chat, create_fast_chat,
+    create_smart_chat, llm::common_models, ChatCompletionRequest, ChatMessage, ChatRole,
+    CircuitBreakerOptions, Client, Result, RoutingStrategy, SmartCompletionRequest, TaskType,
 };
 use futures::StreamExt;
 use std::env;

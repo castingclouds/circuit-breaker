@@ -23,6 +23,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, RwLock};
 use tokio::time::sleep;
+use tracing::{debug, error, info, warn};
 
 use uuid::Uuid;
 
@@ -783,16 +784,28 @@ pub struct AgentEngine {
     storage: Arc<dyn AgentStorage>,
     config: AgentEngineConfig,
     stream_sender: broadcast::Sender<AgentStreamEvent>,
+    llm_router: Arc<crate::llm::LLMRouter>,
 }
 
 impl AgentEngine {
-    pub fn new(storage: Arc<dyn AgentStorage>, config: AgentEngineConfig) -> Self {
+    pub fn new(
+        storage: Arc<dyn AgentStorage>,
+        config: AgentEngineConfig,
+        llm_router: Arc<crate::llm::LLMRouter>,
+    ) -> Self {
         let (stream_sender, _) = broadcast::channel(config.stream_buffer_size);
+
+        // Validate environment variables for LLM providers
+        if let Err(e) = Self::validate_environment_variables() {
+            warn!("⚠️  Environment validation failed: {}", e);
+            warn!("🔧 Agent execution may fail without proper API keys");
+        }
 
         Self {
             storage,
             config,
             stream_sender,
+            llm_router,
         }
     }
 
@@ -812,18 +825,64 @@ impl AgentEngine {
         config: &AgentActivityConfig,
         context: serde_json::Value,
     ) -> Result<AgentExecution> {
+        info!(
+            "🎯 AgentEngine::execute_agent() called for agent_id: {}",
+            config.agent_id
+        );
+        debug!(
+            "🎯 Agent config: timeout={}s, required={}",
+            config.timeout_seconds.unwrap_or(0),
+            config.required
+        );
+        debug!(
+            "🎯 Context: {}",
+            serde_json::to_string(&context).unwrap_or_else(|_| "Invalid JSON".to_string())
+        );
+
+        info!("📂 Looking up agent definition for: {}", config.agent_id);
+        debug!(
+            "🔍 Using storage backend: {}",
+            std::any::type_name::<dyn AgentStorage>()
+        );
+        debug!(
+            "🔍 Storage implementation: {:?}",
+            std::ptr::addr_of!(*self.storage)
+        );
         let agent = self
             .storage
             .get_agent(&config.agent_id)
             .await?
             .ok_or_else(|| {
+                error!("❌ Agent not found: {}", config.agent_id);
+                error!(
+                    "🔍 Storage type when agent not found: {}",
+                    std::any::type_name::<dyn AgentStorage>()
+                );
                 CircuitBreakerError::NotFound(format!("Agent {}", config.agent_id.as_str()))
             })?;
 
-        // Map input using context
-        let input_data = self.map_input_data(&config.input_mapping, &context)?;
+        info!("✅ Agent definition found: {}", agent.name);
+        debug!("📋 Agent LLM provider: {:?}", agent.llm_provider);
+        debug!("📋 Agent system prompt: {}", agent.prompts.system);
 
+        // Map input using context
+        info!("🔄 Mapping input data using context");
+        debug!("🔄 Input mapping: {:?}", config.input_mapping);
+        let input_data = self.map_input_data(&config.input_mapping, &context)?;
+        debug!(
+            "🔄 Mapped input data: {}",
+            serde_json::to_string(&input_data).unwrap_or_else(|_| "Invalid JSON".to_string())
+        );
+
+        info!("📝 Creating new agent execution");
         let mut execution = AgentExecution::new(config.agent_id.clone(), context, input_data);
+        info!("📝 Created execution with ID: {}", execution.id);
+
+        info!(
+            "⚡ Calling execute_agent_internal() for execution: {}",
+            execution.id
+        );
+        let internal_start = std::time::Instant::now();
 
         self.execute_agent_internal(
             &agent,
@@ -832,6 +891,13 @@ impl AgentEngine {
             &config.output_mapping,
         )
         .await?;
+
+        let internal_duration = internal_start.elapsed();
+        info!(
+            "✅ execute_agent_internal() completed in {:?} for execution: {}",
+            internal_duration, execution.id
+        );
+        info!("📋 Final execution status: {:?}", execution.status);
 
         Ok(execution)
     }
@@ -868,17 +934,48 @@ impl AgentEngine {
         _input_mapping: &HashMap<String, String>,
         _output_mapping: &HashMap<String, String>,
     ) -> Result<()> {
+        info!(
+            "⚡ execute_agent_internal() starting for execution: {}",
+            execution.id
+        );
+        debug!("⚡ Agent: {} ({})", agent.name, agent.id);
+        debug!("⚡ LLM Provider: {:?}", agent.llm_provider);
+        debug!("⚡ LLM Config: {:?}", agent.llm_config);
+
+        info!("📝 Starting execution and storing to storage");
         execution.start();
+
+        info!("💾 Storing execution to storage");
         self.storage.store_execution(execution).await?;
+        info!("✅ Execution stored successfully");
 
         // Emit starting event
+        info!(
+            "📡 Emitting ThinkingStatus event for execution: {}",
+            execution.id
+        );
         let _ = self.stream_sender.send(AgentStreamEvent::ThinkingStatus {
             execution_id: execution.id,
             status: "Starting agent execution".to_string(),
             context: Some(execution.context.clone()),
         });
+        info!("📡 ThinkingStatus event sent");
 
         // Execute the LLM call (this would integrate with actual LLM providers)
+        info!(
+            "🤖 About to call LLM provider for execution: {}",
+            execution.id
+        );
+        info!("🤖 LLM Provider type: {:?}", agent.llm_provider);
+        debug!(
+            "🤖 Input data: {}",
+            serde_json::to_string(&execution.input_data)
+                .unwrap_or_else(|_| "Invalid JSON".to_string())
+        );
+
+        let llm_start = std::time::Instant::now();
+        info!("🎯 Calling call_llm_provider()...");
+
         match self
             .call_llm_provider(
                 &agent.llm_provider,
@@ -888,25 +985,46 @@ impl AgentEngine {
             .await
         {
             Ok(response) => {
+                let llm_duration = llm_start.elapsed();
+                info!("✅ LLM call completed successfully in {:?}", llm_duration);
+                debug!(
+                    "📋 LLM response: {}",
+                    serde_json::to_string(&response).unwrap_or_else(|_| "Invalid JSON".to_string())
+                );
+
+                info!("📝 Marking execution as complete");
                 execution.complete(response.clone());
 
                 // Emit completion event
+                info!(
+                    "📡 Emitting Completed event for execution: {}",
+                    execution.id
+                );
                 let _ = self.stream_sender.send(AgentStreamEvent::Completed {
                     execution_id: execution.id,
                     final_response: response,
                     usage: None,
                     context: Some(execution.context.clone()),
                 });
+                info!("📡 Completed event sent");
             }
             Err(e) => {
+                let llm_duration = llm_start.elapsed();
+                error!("❌ LLM call failed after {:?}: {}", llm_duration, e);
+                error!("❌ LLM error details: {:?}", e);
+                error!("❌ Failed execution: {}", execution.id);
+
+                info!("📝 Marking execution as failed");
                 execution.fail(e.to_string());
 
                 // Emit failure event
+                info!("📡 Emitting Failed event for execution: {}", execution.id);
                 let _ = self.stream_sender.send(AgentStreamEvent::Failed {
                     execution_id: execution.id,
                     error: e.to_string(),
                     context: Some(execution.context.clone()),
                 });
+                info!("📡 Failed event sent");
             }
         }
 
@@ -942,71 +1060,517 @@ impl AgentEngine {
         Ok(current.clone())
     }
 
-    /// Call the configured LLM provider (placeholder implementation)
-    async fn call_llm_provider(
+    /// Route virtual models through Circuit Breaker's intelligent routing
+    async fn route_virtual_model(
         &self,
-        provider: &LLMProvider,
+        virtual_model: &str,
         config: &LLMConfig,
         input: &Value,
     ) -> Result<Value> {
-        // This is a placeholder implementation
-        // In a real implementation, this would make HTTP calls to the LLM providers
+        info!("🌟 Routing virtual model: {}", virtual_model);
 
-        match provider {
-            LLMProvider::OpenAI { model, .. } => {
-                // Simulate OpenAI API call
-                sleep(Duration::from_millis(500)).await;
-                Ok(json!({
-                    "model": model,
-                    "response": "This is a simulated OpenAI response",
-                    "input_processed": input,
-                    "temperature": config.temperature
-                }))
+        // Map virtual models to actual providers based on routing strategy
+        let (actual_provider, actual_model, routing_reason) = match virtual_model {
+            "cb:fastest" => {
+                info!("🚀 cb:fastest -> routing to fastest available model");
+                ("openai", "o4-mini-2025-04-16", "Optimized for speed")
             }
-            LLMProvider::Anthropic {
-                model,
-                api_key,
-                base_url,
-            } => {
-                // Make real Anthropic API call
-                self.call_anthropic_api(model, api_key, base_url.as_deref(), config, input)
-                    .await
+            "cb:cost-optimal" => {
+                info!("💰 cb:cost-optimal -> routing to most cost-effective model");
+                ("openai", "o4-mini-2025-04-16", "Optimized for cost")
             }
-            LLMProvider::Google { model, .. } => {
-                // Simulate Google API call
-                sleep(Duration::from_millis(400)).await;
-                Ok(json!({
-                    "model": model,
-                    "response": "This is a simulated Google response",
-                    "input_processed": input,
-                    "temperature": config.temperature
-                }))
+            "cb:smart-chat" => {
+                info!("⚖️ cb:smart-chat -> routing to balanced model");
+                (
+                    "anthropic",
+                    "claude-sonnet-4-20250514",
+                    "Balanced performance and cost",
+                )
             }
-            LLMProvider::Ollama { model, base_url } => {
-                // Simulate Ollama API call
-                sleep(Duration::from_millis(800)).await;
-                Ok(json!({
-                    "model": model,
-                    "base_url": base_url,
-                    "response": "This is a simulated Ollama response",
-                    "input_processed": input,
-                    "temperature": config.temperature
-                }))
+            "cb:creative" => {
+                info!("🎨 cb:creative -> routing to creative model");
+                (
+                    "anthropic",
+                    "claude-sonnet-4-20250514",
+                    "Optimized for creativity",
+                )
             }
-            LLMProvider::Custom {
-                model, endpoint, ..
-            } => {
-                // Simulate custom API call
-                sleep(Duration::from_millis(700)).await;
-                Ok(json!({
-                    "model": model,
-                    "endpoint": endpoint,
-                    "response": "This is a simulated custom provider response",
-                    "input_processed": input,
-                    "temperature": config.temperature
-                }))
+            "cb:coding" => {
+                info!("💻 cb:coding -> routing to coding-optimized model");
+                (
+                    "anthropic",
+                    "claude-sonnet-4-20250514",
+                    "Optimized for code generation",
+                )
             }
+            "cb:analysis" => {
+                info!("📊 cb:analysis -> routing to analysis-optimized model");
+                ("google", "gemini-2.5-flash", "Optimized for data analysis")
+            }
+            _ => {
+                warn!(
+                    "🔍 Unknown virtual model: {} -> falling back to default",
+                    virtual_model
+                );
+                (
+                    "openai",
+                    "o4-mini-2025-04-16",
+                    "Unknown virtual model fallback",
+                )
+            }
+        };
+
+        info!(
+            "🎯 Virtual model {} routed to {} {} ({})",
+            virtual_model, actual_provider, actual_model, routing_reason
+        );
+
+        // Create the appropriate provider configuration
+        let routed_provider = match actual_provider {
+            "openai" => {
+                let api_key =
+                    std::env::var("OPENAI_API_KEY").unwrap_or_else(|_| "not-set".to_string());
+                LLMProvider::OpenAI {
+                    model: actual_model.to_string(),
+                    api_key,
+                    base_url: None,
+                }
+            }
+            "anthropic" => {
+                let api_key =
+                    std::env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| "not-set".to_string());
+                LLMProvider::Anthropic {
+                    model: actual_model.to_string(),
+                    api_key,
+                    base_url: None,
+                }
+            }
+            "google" => {
+                let api_key =
+                    std::env::var("GOOGLE_API_KEY").unwrap_or_else(|_| "not-set".to_string());
+                LLMProvider::Google {
+                    model: actual_model.to_string(),
+                    api_key,
+                }
+            }
+            _ => {
+                error!(
+                    "🔴 Unsupported provider in virtual routing: {}",
+                    actual_provider
+                );
+                return Err(CircuitBreakerError::Internal(format!(
+                    "Unsupported LLM provider: {} with model: {}",
+                    actual_provider, actual_model
+                )));
+            }
+        };
+
+        info!("🔄 Recursively calling LLM provider with routed configuration");
+
+        // Recursively call with the routed provider
+        let mut result = self
+            .call_llm_provider(&routed_provider, config, input)
+            .await?;
+
+        // Add virtual model metadata to response
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("virtual_model".to_string(), json!(virtual_model));
+            obj.insert("routed_provider".to_string(), json!(actual_provider));
+            obj.insert("routed_model".to_string(), json!(actual_model));
+            obj.insert("routing_reason".to_string(), json!(routing_reason));
         }
+
+        info!("✅ Virtual model routing completed for: {}", virtual_model);
+        Ok(result)
+    }
+
+    /// Validate environment variables for LLM providers
+    pub fn validate_environment_variables() -> Result<()> {
+        info!("🔍 Validating environment variables for LLM providers");
+
+        let openai_key = std::env::var("OPENAI_API_KEY").ok();
+        let anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok();
+        let google_key = std::env::var("GOOGLE_API_KEY").ok();
+
+        info!(
+            "🔑 OPENAI_API_KEY: {}",
+            if openai_key.is_some() {
+                "✅ Set"
+            } else {
+                "❌ Not set"
+            }
+        );
+        info!(
+            "🔑 ANTHROPIC_API_KEY: {}",
+            if anthropic_key.is_some() {
+                "✅ Set"
+            } else {
+                "❌ Not set"
+            }
+        );
+        info!(
+            "🔑 GOOGLE_API_KEY: {}",
+            if google_key.is_some() {
+                "✅ Set"
+            } else {
+                "❌ Not set"
+            }
+        );
+
+        if openai_key.is_none() && anthropic_key.is_none() && google_key.is_none() {
+            error!("❌ No LLM API keys found in environment variables!");
+            error!("💡 Set at least one of: OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY");
+            return Err(CircuitBreakerError::Internal(
+                "No LLM API keys found in environment".to_string(),
+            ));
+        }
+
+        info!("✅ Environment variable validation completed");
+        Ok(())
+    }
+
+    /// Call the configured LLM provider (placeholder implementation)
+    fn call_llm_provider<'a>(
+        &'a self,
+        provider: &'a LLMProvider,
+        config: &'a LLMConfig,
+        input: &'a Value,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        Box::pin(async move {
+            info!("🤖 call_llm_provider() starting");
+            debug!("🤖 Provider: {:?}", provider);
+            debug!("🤖 Config: {:?}", config);
+            debug!(
+                "🤖 Input: {}",
+                serde_json::to_string(input).unwrap_or_else(|_| "Invalid JSON".to_string())
+            );
+
+            // Check if this is a virtual model that needs Circuit Breaker routing
+            let model_name = match provider {
+                LLMProvider::OpenAI { model, .. } => model,
+                LLMProvider::Anthropic { model, .. } => model,
+                LLMProvider::Google { model, .. } => model,
+                LLMProvider::Ollama { model, .. } => model,
+                LLMProvider::Custom { model, .. } => model,
+            };
+
+            info!("🎯 Model requested: {}", model_name);
+
+            // Check for virtual model routing
+            if model_name.starts_with("cb:") {
+                info!(
+                    "🌟 Virtual model detected: {} - routing through Circuit Breaker",
+                    model_name
+                );
+                return self.route_virtual_model(model_name, config, input).await;
+            }
+
+            info!("🔧 Using direct provider routing for model: {}", model_name);
+
+            match provider {
+                LLMProvider::OpenAI {
+                    model,
+                    api_key,
+                    base_url,
+                    ..
+                } => {
+                    info!("🤖 Calling OpenAI provider with model: {}", model);
+                    debug!("🤖 OpenAI base_url: {:?}", base_url);
+
+                    // Check if API key is available from environment
+                    let env_api_key = std::env::var("OPENAI_API_KEY").ok();
+                    if env_api_key.is_none() {
+                        warn!("⚠️  OPENAI_API_KEY not found in environment variables");
+                    }
+
+                    info!("⏱️  Starting OpenAI API simulation (500ms delay)");
+                    sleep(Duration::from_millis(500)).await;
+                    info!("🚀 Making real OpenAI API call with model: {}", model);
+
+                    // Use the LLM router for real API calls
+                    let request = crate::llm::LLMRequest {
+                        id: uuid::Uuid::new_v4(),
+                        model: model.clone(),
+                        messages: vec![crate::llm::ChatMessage {
+                            role: crate::llm::MessageRole::User,
+                            content: input.to_string(),
+                            name: None,
+                            function_call: None,
+                        }],
+                        temperature: Some(config.temperature.into()),
+                        max_tokens: config.max_tokens,
+                        top_p: None,
+                        frequency_penalty: None,
+                        presence_penalty: None,
+                        stop: None,
+                        stream: Some(false),
+                        functions: None,
+                        function_call: None,
+                        user: None,
+                        metadata: std::collections::HashMap::new(),
+                    };
+
+                    match self.llm_router.chat_completion(request).await {
+                        Ok(response) => {
+                            info!("✅ OpenAI API call completed");
+                            Ok(json!({
+                                "model": model,
+                                "response": response.choices.get(0)
+                                    .map(|c| c.message.content.clone())
+                                    .unwrap_or_else(|| "No response content".to_string()),
+                                "input_processed": input,
+                                "temperature": config.temperature,
+                                "provider": "openai",
+                                "usage": response.usage
+                            }))
+                        }
+                        Err(e) => {
+                            error!("❌ OpenAI API call failed: {}", e);
+                            Err(CircuitBreakerError::InvalidInput(format!(
+                                "OpenAI API error: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+                LLMProvider::Anthropic {
+                    model,
+                    api_key,
+                    base_url,
+                    ..
+                } => {
+                    info!("🤖 Calling Anthropic provider with model: {}", model);
+                    debug!("🤖 Anthropic base_url: {:?}", base_url);
+
+                    // Check if API key is available from environment
+                    let env_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
+                    if env_api_key.is_none() {
+                        warn!("⚠️  ANTHROPIC_API_KEY not found in environment variables");
+                    }
+
+                    info!("🚀 Making real Anthropic API call with model: {}", model);
+
+                    // Use the LLM router for real API calls
+                    let request = crate::llm::LLMRequest {
+                        id: uuid::Uuid::new_v4(),
+                        model: model.clone(),
+                        messages: vec![crate::llm::ChatMessage {
+                            role: crate::llm::MessageRole::User,
+                            content: input.to_string(),
+                            name: None,
+                            function_call: None,
+                        }],
+                        temperature: Some(config.temperature.into()),
+                        max_tokens: config.max_tokens,
+                        top_p: None,
+                        frequency_penalty: None,
+                        presence_penalty: None,
+                        stop: None,
+                        stream: Some(false),
+                        functions: None,
+                        function_call: None,
+                        user: None,
+                        metadata: std::collections::HashMap::new(),
+                    };
+
+                    match self.llm_router.chat_completion(request).await {
+                        Ok(response) => {
+                            info!("✅ Anthropic API call completed");
+                            Ok(json!({
+                                "model": model,
+                                "response": response.choices.get(0)
+                                    .map(|c| c.message.content.clone())
+                                    .unwrap_or_else(|| "No response content".to_string()),
+                                "input_processed": input,
+                                "temperature": config.temperature,
+                                "provider": "anthropic",
+                                "usage": response.usage
+                            }))
+                        }
+                        Err(e) => {
+                            error!("❌ Anthropic API call failed: {}", e);
+                            Err(CircuitBreakerError::InvalidInput(format!(
+                                "Anthropic API error: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+                LLMProvider::Google { model, api_key, .. } => {
+                    info!("🤖 Calling Google provider with model: {}", model);
+
+                    // Check if API key is available from environment
+                    let env_api_key = std::env::var("GOOGLE_API_KEY").ok();
+                    if env_api_key.is_none() {
+                        warn!("⚠️  GOOGLE_API_KEY not found in environment variables");
+                    }
+
+                    info!("🚀 Making real Google API call with model: {}", model);
+
+                    // Use the LLM router for real API calls
+                    let request = crate::llm::LLMRequest {
+                        id: uuid::Uuid::new_v4(),
+                        model: model.clone(),
+                        messages: vec![crate::llm::ChatMessage {
+                            role: crate::llm::MessageRole::User,
+                            content: input.to_string(),
+                            name: None,
+                            function_call: None,
+                        }],
+                        temperature: Some(config.temperature.into()),
+                        max_tokens: config.max_tokens,
+                        top_p: None,
+                        frequency_penalty: None,
+                        presence_penalty: None,
+                        stop: None,
+                        stream: Some(false),
+                        functions: None,
+                        function_call: None,
+                        user: None,
+                        metadata: std::collections::HashMap::new(),
+                    };
+
+                    match self.llm_router.chat_completion(request).await {
+                        Ok(response) => {
+                            info!("✅ Google API call completed");
+                            Ok(json!({
+                                "model": model,
+                                "response": response.choices.get(0)
+                                    .map(|c| c.message.content.clone())
+                                    .unwrap_or_else(|| "No response content".to_string()),
+                                "input_processed": input,
+                                "temperature": config.temperature,
+                                "provider": "google",
+                                "usage": response.usage
+                            }))
+                        }
+                        Err(e) => {
+                            error!("❌ Google API call failed: {}", e);
+                            Err(CircuitBreakerError::InvalidInput(format!(
+                                "Google API error: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+                LLMProvider::Ollama {
+                    model, base_url, ..
+                } => {
+                    info!("🤖 Calling Ollama provider with model: {}", model);
+                    debug!("🤖 Ollama base_url: {}", base_url);
+
+                    info!("🚀 Making real Ollama API call with model: {}", model);
+
+                    // Use the LLM router for real API calls
+                    let request = crate::llm::LLMRequest {
+                        id: uuid::Uuid::new_v4(),
+                        model: model.clone(),
+                        messages: vec![crate::llm::ChatMessage {
+                            role: crate::llm::MessageRole::User,
+                            content: input.to_string(),
+                            name: None,
+                            function_call: None,
+                        }],
+                        temperature: Some(config.temperature.into()),
+                        max_tokens: config.max_tokens,
+                        top_p: None,
+                        frequency_penalty: None,
+                        presence_penalty: None,
+                        stop: None,
+                        stream: Some(false),
+                        functions: None,
+                        function_call: None,
+                        user: None,
+                        metadata: std::collections::HashMap::new(),
+                    };
+
+                    match self.llm_router.chat_completion(request).await {
+                        Ok(response) => {
+                            info!("✅ Ollama API call completed");
+                            Ok(json!({
+                                "model": model,
+                                "response": response.choices.get(0)
+                                    .map(|c| c.message.content.clone())
+                                    .unwrap_or_else(|| "No response content".to_string()),
+                                "input_processed": input,
+                                "temperature": config.temperature,
+                                "provider": "ollama",
+                                "usage": response.usage
+                            }))
+                        }
+                        Err(e) => {
+                            error!("❌ Ollama API call failed: {}", e);
+                            Err(CircuitBreakerError::InvalidInput(format!(
+                                "Ollama API error: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+                LLMProvider::Custom {
+                    model,
+                    endpoint,
+                    headers,
+                    ..
+                } => {
+                    info!("🤖 Calling Custom provider with model: {}", model);
+                    debug!("🤖 Custom endpoint: {}", endpoint);
+                    debug!("🤖 Custom headers: {:?}", headers);
+
+                    info!(
+                        "🚀 Making real Custom Provider API call with model: {}",
+                        model
+                    );
+
+                    // Use the LLM router for real API calls
+                    let request = crate::llm::LLMRequest {
+                        id: uuid::Uuid::new_v4(),
+                        model: model.clone(),
+                        messages: vec![crate::llm::ChatMessage {
+                            role: crate::llm::MessageRole::User,
+                            content: input.to_string(),
+                            name: None,
+                            function_call: None,
+                        }],
+                        temperature: Some(config.temperature.into()),
+                        max_tokens: config.max_tokens,
+                        top_p: None,
+                        frequency_penalty: None,
+                        presence_penalty: None,
+                        stop: None,
+                        stream: Some(false),
+                        functions: None,
+                        function_call: None,
+                        user: None,
+                        metadata: std::collections::HashMap::new(),
+                    };
+
+                    match self.llm_router.chat_completion(request).await {
+                        Ok(response) => {
+                            info!("✅ Custom Provider API call completed");
+                            Ok(json!({
+                                "model": model,
+                                "endpoint": endpoint,
+                                "response": response.choices.get(0)
+                                    .map(|c| c.message.content.clone())
+                                    .unwrap_or_else(|| "No response content".to_string()),
+                                "input_processed": input,
+                                "temperature": config.temperature,
+                                "provider": "custom",
+                                "usage": response.usage
+                            }))
+                        }
+                        Err(e) => {
+                            error!("❌ Custom Provider API call failed: {}", e);
+                            Err(CircuitBreakerError::InvalidInput(format!(
+                                "Custom Provider API error: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+            }
+        })
     }
 
     /// Apply agent output to context using output mapping

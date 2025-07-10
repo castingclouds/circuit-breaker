@@ -82,13 +82,40 @@ impl GraphQLServer {
         let agent_storage = std::sync::Arc::new(InMemoryAgentStorage::default());
 
         // Create agent engine with shared storage
-        let agent_engine = AgentEngine::new(agent_storage.clone(), AgentEngineConfig::default());
+        // Create a testing LLM router for this instance
+        let llm_router = Arc::new(
+            futures::executor::block_on(crate::llm::LLMRouter::new_for_testing())
+                .unwrap_or_else(|_| panic!("Failed to create LLM router for testing")),
+        );
+        let agent_engine = AgentEngine::new(
+            agent_storage.clone(),
+            AgentEngineConfig::default(),
+            llm_router,
+        );
 
         // Clone the shared Arc<dyn AgentStorage> and assign it to self.agent_storage
         // This ensures the storage is shared across the application
         let shared_storage = agent_storage.clone();
 
         self.agent_storage = Some(shared_storage as std::sync::Arc<dyn AgentStorage>);
+        self.agent_engine = Some(agent_engine);
+        self
+    }
+
+    pub fn with_agent_storage(mut self, agent_storage: std::sync::Arc<dyn AgentStorage>) -> Self {
+        // Create agent engine with provided storage
+        // Create a testing LLM router for this instance
+        let llm_router = Arc::new(
+            futures::executor::block_on(crate::llm::LLMRouter::new_for_testing())
+                .unwrap_or_else(|_| panic!("Failed to create LLM router for testing")),
+        );
+        let agent_engine = AgentEngine::new(
+            agent_storage.clone(),
+            AgentEngineConfig::default(),
+            llm_router,
+        );
+
+        self.agent_storage = Some(agent_storage);
         self.agent_engine = Some(agent_engine);
         self
     }
@@ -335,6 +362,11 @@ impl GraphQLServerBuilder {
 
     pub fn with_agents(mut self) -> Self {
         self.server = self.server.with_agents();
+        self
+    }
+
+    pub fn with_agent_storage(mut self, agent_storage: std::sync::Arc<dyn AgentStorage>) -> Self {
+        self.server = self.server.with_agent_storage(agent_storage);
         self
     }
 
