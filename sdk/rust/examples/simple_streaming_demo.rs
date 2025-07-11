@@ -9,6 +9,21 @@ use std::{
 };
 use tracing::info;
 
+// Helper function to handle escape characters in streaming content
+fn process_escape_characters(content: &str) -> String {
+    content
+        .replace("\\n", "\n") // Convert \n to actual newlines
+        .replace("\\t", "\t") // Convert \t to actual tabs
+        .replace("\\r", "\r") // Convert \r to carriage returns
+        .replace("\\\"", "\"") // Convert \" to actual quotes
+        .replace("\\'", "'") // Convert \' to actual apostrophes
+        .replace("\\b", "\x08") // Convert \b to backspace
+        .replace("\\f", "\x0C") // Convert \f to form feed
+        .replace("\\v", "\x0B") // Convert \v to vertical tab
+        .replace("\\0", "\0") // Convert \0 to null character
+        .replace("\\\\", "\\") // Convert \\ to actual backslash (must be last)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
@@ -154,7 +169,7 @@ async fn test_sse_streaming(client: &Client, agent_id: &str, tenant_id: &str) {
                                             if event_count == 1 {
                                                 print!("\n   📝 Response: ");
                                             }
-                                            print!("{}", content);
+                                            print!("{}", process_escape_characters(content));
                                             io::stdout().flush().unwrap();
                                         }
                                         (Some("complete"), Some(_)) => {
@@ -242,7 +257,7 @@ async fn test_websocket(client: &Client, agent_id: &str, tenant_id: &str) {
                                 if message_count == 1 {
                                     print!("   📝 Response: ");
                                 }
-                                print!("{}", chunk);
+                                print!("{}", process_escape_characters(&chunk));
                                 io::stdout().flush().unwrap();
                             }
                             circuit_breaker_sdk::agents::AgentWebSocketServerMessage::Complete { execution_id, response, .. } => {
