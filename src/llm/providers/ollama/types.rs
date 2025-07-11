@@ -1,5 +1,5 @@
 //! Ollama-specific request and response types
-//! 
+//!
 //! This module contains type definitions that match Ollama's API format.
 //! Ollama uses a different API structure compared to OpenAI-compatible APIs.
 
@@ -33,6 +33,9 @@ pub struct OllamaRequest {
     /// Keep alive parameter for model lifecycle
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keep_alive: Option<String>,
+    /// Tools available for function calling
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<OllamaTool>>,
 }
 
 /// Ollama chat message
@@ -45,6 +48,9 @@ pub struct OllamaChatMessage {
     /// Optional images for multimodal models (base64 encoded)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<String>>,
+    /// Tool calls made by the assistant
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<OllamaToolCall>>,
 }
 
 /// Ollama model options/parameters
@@ -294,8 +300,47 @@ pub struct OllamaBatchEmbeddingsResponse {
     pub embeddings: Vec<Vec<f64>>,
 }
 
+/// Tool definition for function calling
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaTool {
+    #[serde(rename = "type")]
+    pub tool_type: String, // "function"
+    pub function: OllamaFunction,
+}
+
+/// Function definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaFunction {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+/// Tool call in a message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaToolCall {
+    pub function: OllamaFunctionCall,
+}
+
+/// Function call details
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OllamaFunctionCall {
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
 impl From<&crate::llm::ChatMessage> for OllamaChatMessage {
     fn from(msg: &crate::llm::ChatMessage) -> Self {
+        let tool_calls = msg.function_call.as_ref().map(|fc| {
+            vec![OllamaToolCall {
+                function: OllamaFunctionCall {
+                    name: fc.name.clone(),
+                    arguments: serde_json::from_str(&fc.arguments)
+                        .unwrap_or(serde_json::Value::Null),
+                },
+            }]
+        });
+
         Self {
             role: match msg.role {
                 crate::llm::MessageRole::System => "system".to_string(),
@@ -305,12 +350,22 @@ impl From<&crate::llm::ChatMessage> for OllamaChatMessage {
             },
             content: msg.content.clone(),
             images: None, // TODO: Add support for multimodal when needed
+            tool_calls,
         }
     }
 }
 
 impl From<OllamaChatMessage> for crate::llm::ChatMessage {
     fn from(msg: OllamaChatMessage) -> Self {
+        let function_call = msg
+            .tool_calls
+            .as_ref()
+            .and_then(|tool_calls| tool_calls.first())
+            .map(|tool_call| crate::llm::FunctionCall {
+                name: tool_call.function.name.clone(),
+                arguments: tool_call.function.arguments.to_string(),
+            });
+
         Self {
             role: match msg.role.as_str() {
                 "system" => crate::llm::MessageRole::System,
@@ -320,7 +375,7 @@ impl From<OllamaChatMessage> for crate::llm::ChatMessage {
             },
             content: msg.content,
             name: None,
-            function_call: None,
+            function_call,
         }
     }
 }

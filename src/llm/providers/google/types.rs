@@ -1,8 +1,8 @@
 //! Google provider-specific types and structures
 //! This module contains all the request/response types specific to Google's Gemini API
 
+use crate::llm::{ChatMessage, MessageRole, TokenUsage};
 use serde::{Deserialize, Serialize};
-use crate::llm::{ChatMessage, TokenUsage, MessageRole};
 
 /// Google API request structure for chat completions
 #[derive(Debug, Clone, Serialize)]
@@ -28,7 +28,15 @@ pub struct GoogleContent {
 /// Google content part
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GooglePart {
-    pub text: String,
+    pub text: Option<String>,
+    pub function_call: Option<GoogleFunctionCall>,
+}
+
+/// Google function call in response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoogleFunctionCall {
+    pub name: String,
+    pub args: serde_json::Value,
 }
 
 /// Google generation configuration
@@ -179,7 +187,8 @@ impl From<&ChatMessage> for GoogleContent {
     fn from(msg: &ChatMessage) -> Self {
         Self {
             parts: vec![GooglePart {
-                text: msg.content.clone(),
+                text: Some(msg.content.clone()),
+                function_call: None,
             }],
             role: Some(match msg.role {
                 MessageRole::System => "user".to_string(), // Google doesn't have system role
@@ -205,24 +214,42 @@ impl From<GoogleUsageMetadata> for TokenUsage {
 impl GoogleResponse {
     /// Convert to our internal ChatMessage format
     pub fn to_chat_message(&self) -> ChatMessage {
-        let content = self.candidates
+        let content = self
+            .candidates
             .first()
             .and_then(|candidate| {
                 candidate.content.as_ref().and_then(|content| {
                     if content.parts.is_empty() {
                         None
                     } else {
-                        content.parts.first().map(|part| part.text.clone())
+                        content.parts.first().and_then(|part| part.text.clone())
                     }
                 })
             })
             .unwrap_or_else(|| "No response generated".to_string());
 
+        let mut function_call = None;
+
+        // Check for function calls in any part
+        if let Some(candidate) = self.candidates.first() {
+            if let Some(content) = &candidate.content {
+                for part in &content.parts {
+                    if let Some(ref fc) = part.function_call {
+                        function_call = Some(crate::llm::FunctionCall {
+                            name: fc.name.clone(),
+                            arguments: serde_json::to_string(&fc.args).unwrap_or_default(),
+                        });
+                        break; // Use first function call found
+                    }
+                }
+            }
+        }
+
         ChatMessage {
             role: MessageRole::Assistant,
             content,
             name: None,
-            function_call: None,
+            function_call,
         }
     }
 
@@ -238,7 +265,8 @@ impl GoogleResponse {
 pub fn create_system_content(system_message: &str) -> GoogleContent {
     GoogleContent {
         parts: vec![GooglePart {
-            text: format!("System: {}", system_message),
+            text: Some(format!("System: {}", system_message)),
+            function_call: None,
         }],
         role: Some("user".to_string()),
     }
@@ -248,7 +276,7 @@ pub fn create_system_content(system_message: &str) -> GoogleContent {
 pub fn convert_conversation_history(messages: &[ChatMessage]) -> Vec<GoogleContent> {
     let mut contents = Vec::new();
     let mut system_messages = Vec::new();
-    
+
     // Collect system messages separately
     for msg in messages {
         match msg.role {
@@ -260,17 +288,21 @@ pub fn convert_conversation_history(messages: &[ChatMessage]) -> Vec<GoogleConte
             }
         }
     }
-    
+
     // If we have system messages, prepend them as user content
     if !system_messages.is_empty() {
         let system_content = GoogleContent {
             parts: vec![GooglePart {
-                text: format!("System instructions: {}", system_messages.join("\n")),
+                text: Some(format!(
+                    "System instructions: {}",
+                    system_messages.join("\n")
+                )),
+                function_call: None,
             }],
             role: Some("user".to_string()),
         };
         contents.insert(0, system_content);
     }
-    
+
     contents
 }

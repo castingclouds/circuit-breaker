@@ -429,36 +429,34 @@ pub async fn execute_agent_stream(
         retry_config: None,
     };
 
-    // Subscribe to stream before starting execution
-    let stream = engine.subscribe_to_stream();
-
-    // Start the agent execution and get the execution ID
-    let execution_result = engine.execute_agent(&config, enhanced_context).await;
-    let execution_id = match execution_result {
-        Ok(execution) => {
-            info!("🌊 Streaming execution started: {}", execution.id);
-            execution.id
-        }
-        Err(e) => {
-            error!("🌊 Streaming execution failed: {}", e);
-            // Return error response
-            return Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(axum::body::Body::empty())
-                .unwrap()
-                .into_response();
-        }
-    };
-
     // Create manual SSE response with proper headers and termination
     let (mut sender, body) = axum::body::Body::channel();
 
+    // Use Arc<Mutex<Option<Uuid>>> to share execution_id between tasks
+    let execution_id_shared = Arc::new(tokio::sync::Mutex::new(None::<Uuid>));
+    let execution_id_shared_clone = execution_id_shared.clone();
+
+    // Subscribe to stream and start SSE listener task immediately
+    let stream = engine.subscribe_to_stream();
+
+    // Start SSE listener task immediately to avoid missing events
     tokio::spawn(async move {
         let mut stream = BroadcastStream::new(stream);
+
+        info!("🌊 SSE listener started, waiting for events...");
 
         while let Some(msg) = stream.next().await {
             match msg {
                 Ok(event) => {
+                    // Get the current execution_id from shared state
+                    let execution_id = {
+                        let guard = execution_id_shared_clone.lock().await;
+                        match *guard {
+                            Some(id) => id,
+                            None => continue, // Skip events until execution_id is set
+                        }
+                    };
+
                     // Filter events for this specific execution ID
                     let event_execution_id = match &event {
                         AgentStreamEvent::ThinkingStatus { execution_id, .. } => *execution_id,
@@ -473,6 +471,8 @@ pub async fn execute_agent_stream(
                     if event_execution_id != execution_id {
                         continue;
                     }
+
+                    info!("🌊 Processing SSE event for execution: {}", execution_id);
 
                     let sse_data = match &event {
                         AgentStreamEvent::ThinkingStatus { status, .. } => {
@@ -530,6 +530,30 @@ pub async fn execute_agent_stream(
             }
         }
     });
+
+    // Now start the agent execution and send execution_id to SSE listener
+    let execution_result = engine.execute_agent(&config, enhanced_context).await;
+    let execution_id = match execution_result {
+        Ok(execution) => {
+            info!("🌊 Streaming execution started: {}", execution.id);
+            // Set execution_id in shared state so SSE listener can process events
+            {
+                let mut guard = execution_id_shared.lock().await;
+                *guard = Some(execution.id);
+            }
+            info!("🌊 Execution ID set in shared state: {}", execution.id);
+            execution.id
+        }
+        Err(e) => {
+            error!("🌊 Streaming execution failed: {}", e);
+            // Return error response
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(axum::body::Body::empty())
+                .unwrap()
+                .into_response();
+        }
+    };
 
     Response::builder()
         .status(StatusCode::OK)

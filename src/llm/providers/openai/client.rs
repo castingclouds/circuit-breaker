@@ -101,6 +101,27 @@ impl OpenAIClient {
             (request.max_tokens, request.temperature)
         };
 
+        // Convert function definitions to OpenAI tools format
+        let tools = request.functions.as_ref().map(|functions| {
+            functions
+                .iter()
+                .map(|func| super::types::Tool {
+                    tool_type: "function".to_string(),
+                    function: super::types::Function {
+                        name: func.name.clone(),
+                        description: func.description.clone(),
+                        parameters: func.parameters.clone(),
+                    },
+                })
+                .collect()
+        });
+
+        let tool_choice = if tools.is_some() {
+            Some(super::types::ToolChoice::Auto("auto".to_string()))
+        } else {
+            None
+        };
+
         let mut openai_request = OpenAIRequest {
             model: request.model.clone(),
             messages,
@@ -119,8 +140,8 @@ impl OpenAIClient {
             stream: Some(false), // Force non-streaming for regular chat_completion
             user: request.user.clone(),
             response_format: None,
-            tools: None,
-            tool_choice: None,
+            tools,
+            tool_choice,
         };
 
         // Set the appropriate max tokens field
@@ -138,10 +159,36 @@ impl OpenAIClient {
         let choices: Vec<Choice> = response
             .choices
             .into_iter()
-            .map(|choice| Choice {
-                index: choice.index,
-                message: choice.message,
-                finish_reason: choice.finish_reason,
+            .map(|choice| {
+                // Convert OpenAI tool_calls to our function_call format
+                let function_call = choice
+                    .message
+                    .tool_calls
+                    .as_ref()
+                    .and_then(|tool_calls| tool_calls.first())
+                    .map(|tool_call| crate::llm::FunctionCall {
+                        name: tool_call.function.name.clone(),
+                        arguments: tool_call.function.arguments.clone(),
+                    });
+
+                let message = crate::llm::ChatMessage {
+                    role: match choice.message.role.as_str() {
+                        "system" => crate::llm::MessageRole::System,
+                        "user" => crate::llm::MessageRole::User,
+                        "assistant" => crate::llm::MessageRole::Assistant,
+                        "function" => crate::llm::MessageRole::Function,
+                        _ => crate::llm::MessageRole::Assistant, // Default fallback
+                    },
+                    content: choice.message.content.clone(),
+                    name: choice.message.name.clone(),
+                    function_call,
+                };
+
+                Choice {
+                    index: choice.index,
+                    message,
+                    finish_reason: choice.finish_reason,
+                }
             })
             .collect();
 

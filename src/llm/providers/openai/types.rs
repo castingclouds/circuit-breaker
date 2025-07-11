@@ -1,8 +1,8 @@
 //! OpenAI provider-specific types and structures
 //! This module contains all the request/response types specific to OpenAI's API
 
-use serde::{Deserialize, Serialize};
 use crate::llm::{ChatMessage, TokenUsage};
+use serde::{Deserialize, Serialize};
 
 /// OpenAI API request structure for chat completions
 #[derive(Debug, Clone, Serialize)]
@@ -76,10 +76,10 @@ pub struct Function {
 #[serde(untagged)]
 pub enum ToolChoice {
     Auto(String), // "auto", "none"
-    Specific { 
+    Specific {
         #[serde(rename = "type")]
         choice_type: String,
-        function: FunctionChoice 
+        function: FunctionChoice,
     },
 }
 
@@ -122,7 +122,7 @@ pub struct OpenAIResponse {
 #[derive(Debug, Deserialize)]
 pub struct OpenAIChoice {
     pub index: u32,
-    pub message: ChatMessage,
+    pub message: OpenAIChatMessage,
     pub finish_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logprobs: Option<serde_json::Value>,
@@ -170,7 +170,7 @@ pub struct OpenAIStreamingChunk {
 #[derive(Debug, Deserialize)]
 pub struct OpenAIStreamingChoice {
     pub index: u32,
-    pub delta: ChatMessage,
+    pub delta: OpenAIChatMessage,
     pub finish_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logprobs: Option<serde_json::Value>,

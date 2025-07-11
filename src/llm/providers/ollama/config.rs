@@ -134,8 +134,8 @@ fn create_generic_model_info(model_id: &str) -> ModelInfo {
         context_window,
         max_output_tokens,
         supports_streaming: true,
-        supports_function_calling: false, // Most local models don't support this yet
-        cost_per_input_token: 0.0,        // Local inference is free
+        supports_function_calling: supports_function_calling(model_id),
+        cost_per_input_token: 0.0, // Local inference is free
         cost_per_output_token: 0.0,
         capabilities,
         parameter_restrictions: HashMap::new(),
@@ -174,6 +174,42 @@ fn determine_model_capabilities_from_name(name: &str) -> Vec<crate::llm::traits:
     }
 
     capabilities
+}
+
+/// Determine if a model supports function calling
+pub fn supports_function_calling(model_name: &str) -> bool {
+    let name_lower = model_name.to_lowercase();
+
+    // Llama 3.1+ models support function calling
+    if name_lower.contains("llama3.1") || name_lower.contains("llama3:") {
+        return true;
+    }
+
+    // Mistral models with function calling support
+    if name_lower.contains("mistral") && !name_lower.contains("7b") {
+        return true;
+    }
+
+    // Specific models known to support function calling
+    if name_lower.contains("functionary")
+        || name_lower.contains("hermes")
+        || name_lower.contains("nexusraven")
+        || name_lower.contains("gorilla")
+    {
+        return true;
+    }
+
+    // Check for version numbers that indicate function calling support
+    if name_lower.contains("qwen") && (name_lower.contains("2.5") || name_lower.contains("3")) {
+        return true;
+    }
+
+    // Phi-3.5+ models
+    if name_lower.contains("phi3.5") || name_lower.contains("phi-3.5") {
+        return true;
+    }
+
+    false
 }
 
 /// Estimate model capabilities from name patterns

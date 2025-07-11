@@ -4,24 +4,24 @@
 use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::{header::HeaderMap, header::HeaderValue, header::CONTENT_TYPE, Client};
-use tracing::{debug, error};
 use std::time::Duration;
+use tracing::{debug, error};
 
 use crate::llm::{
-    LLMError, LLMRequest, LLMResponse, LLMResult, StreamingChunk, StreamingChoice,
-    Choice, LLMProviderType, RoutingInfo, RoutingStrategy, ChatMessage, MessageRole,
-    EmbeddingsRequest, EmbeddingsResponse,
+    ChatMessage, Choice, EmbeddingsRequest, EmbeddingsResponse, LLMError, LLMProviderType,
+    LLMRequest, LLMResponse, LLMResult, MessageRole, RoutingInfo, RoutingStrategy, StreamingChoice,
+    StreamingChunk,
 };
 
 use crate::llm::traits::{
-    LLMProviderClient, ModelInfo, ProviderConfigRequirements, CostCalculator, CostBreakdown
+    CostBreakdown, CostCalculator, LLMProviderClient, ModelInfo, ProviderConfigRequirements,
 };
 
+use super::config::{get_available_models, get_config_requirements, GoogleConfig};
 use super::types::{
-    GoogleRequest, GoogleResponse, GoogleUsageMetadata, GoogleGenerationConfig,
-    GoogleError, convert_conversation_history
+    convert_conversation_history, GoogleError, GoogleGenerationConfig, GoogleRequest,
+    GoogleResponse, GoogleUsageMetadata,
 };
-use super::config::{GoogleConfig, get_config_requirements, get_available_models};
 
 /// Google provider client
 pub struct GoogleClient {
@@ -57,7 +57,7 @@ impl GoogleClient {
             headers.insert(
                 header_name,
                 HeaderValue::from_str(value)
-                    .map_err(|e| LLMError::Internal(format!("Invalid header value: {}", e)))?
+                    .map_err(|e| LLMError::Internal(format!("Invalid header value: {}", e)))?,
             );
         }
 
@@ -81,7 +81,18 @@ impl GoogleClient {
             contents,
             generation_config: Some(generation_config),
             safety_settings: Some(super::config::get_default_safety_settings()),
-            tools: None, // TODO: Implement function calling support
+            tools: request.functions.as_ref().map(|functions| {
+                vec![super::types::GoogleTool {
+                    function_declarations: functions
+                        .iter()
+                        .map(|func| super::types::GoogleFunctionDeclaration {
+                            name: func.name.clone(),
+                            description: func.description.clone(),
+                            parameters: func.parameters.clone(),
+                        })
+                        .collect(),
+                }]
+            }),
         };
 
         Ok(google_request)
@@ -136,10 +147,12 @@ impl GoogleClient {
     /// Calculate cost for Google usage from metadata
     fn calculate_cost_from_metadata(&self, usage: &GoogleUsageMetadata, model: &str) -> f64 {
         if let Some((input_cost, output_cost)) = super::config::get_model_cost_info(model) {
-            (usage.prompt_token_count as f64 * input_cost) + (usage.candidates_token_count as f64 * output_cost)
+            (usage.prompt_token_count as f64 * input_cost)
+                + (usage.candidates_token_count as f64 * output_cost)
         } else {
             // Fallback to Gemini Pro pricing if model not found
-            (usage.prompt_token_count as f64 * 0.0000005) + (usage.candidates_token_count as f64 * 0.0000015)
+            (usage.prompt_token_count as f64 * 0.0000005)
+                + (usage.candidates_token_count as f64 * 0.0000015)
         }
     }
 
@@ -162,18 +175,17 @@ impl GoogleClient {
                 401 => LLMError::AuthenticationFailed(error_text.to_string()),
                 429 => LLMError::RateLimitExceeded(error_text.to_string()),
                 400 => LLMError::InvalidRequest(error_text.to_string()),
-                _ => LLMError::Internal(format!(
-                    "HTTP {}: {}",
-                    status_code, error_text
-                )),
+                _ => LLMError::Internal(format!("HTTP {}: {}", status_code, error_text)),
             }
         }
     }
 
     /// Build request URL for Google API
     fn build_request_url(&self, model: &str, api_key: &str) -> String {
-        format!("{}/models/{}:generateContent?key={}", 
-            self.config.base_url, model, api_key)
+        format!(
+            "{}/models/{}:generateContent?key={}",
+            self.config.base_url, model, api_key
+        )
     }
 }
 
@@ -182,13 +194,13 @@ fn find_complete_json_object(buffer: &str) -> Option<usize> {
     let mut brace_count = 0;
     let mut in_string = false;
     let mut escape_next = false;
-    
+
     for (i, ch) in buffer.char_indices() {
         if escape_next {
             escape_next = false;
             continue;
         }
-        
+
         match ch {
             '\\' if in_string => escape_next = true,
             '"' => in_string = !in_string,
@@ -202,25 +214,30 @@ fn find_complete_json_object(buffer: &str) -> Option<usize> {
             _ => {}
         }
     }
-    
+
     None
 }
 
 /// Parse a Google JSON chunk into a StreamingChunk
-fn parse_google_json_chunk(json_str: &str, request_id: &str, model: &str) -> LLMResult<Option<StreamingChunk>> {
+fn parse_google_json_chunk(
+    json_str: &str,
+    request_id: &str,
+    model: &str,
+) -> LLMResult<Option<StreamingChunk>> {
     use super::types::GoogleResponse;
-    
+
     let google_response: GoogleResponse = serde_json::from_str(json_str)
         .map_err(|e| LLMError::Parse(format!("Failed to parse Google JSON chunk: {}", e)))?;
-    
+
     if let Some(candidate) = google_response.candidates.first() {
         if let Some(content) = &candidate.content {
-            let text = content.parts
+            let text = content
+                .parts
                 .iter()
-                .map(|part| part.text.clone())
+                .filter_map(|part| part.text.clone())
                 .collect::<Vec<String>>()
                 .join("");
-            
+
             if !text.is_empty() || candidate.finish_reason.is_some() {
                 Ok(Some(StreamingChunk {
                     id: request_id.to_string(),
@@ -264,11 +281,15 @@ impl LLMProviderClient for GoogleClient {
         let google_request = temp_client.convert_request(request)?;
 
         let request_url = temp_client.build_request_url(&request.model, api_key);
-        
-        debug!("Google API Request: URL={}, Model={}", request_url, request.model);
+
+        debug!(
+            "Google API Request: URL={}, Model={}",
+            request_url, request.model
+        );
         debug!("API key: {}...", &api_key[..8.min(api_key.len())]);
 
-        let response = temp_client.client
+        let response = temp_client
+            .client
             .post(&request_url)
             .headers(headers)
             .json(&google_request)
@@ -293,24 +314,31 @@ impl LLMProviderClient for GoogleClient {
             .text()
             .await
             .map_err(|e| LLMError::Network(e.to_string()))?;
-        
+
         debug!("Google API Raw Response: {}", response_text);
-        
-        let google_response: GoogleResponse = serde_json::from_str(&response_text)
-            .map_err(|e| {
+
+        let google_response: GoogleResponse =
+            serde_json::from_str(&response_text).map_err(|e| {
                 error!("Google Response Deserialization Error: {}", e);
                 debug!("Response was: {}", response_text);
                 LLMError::Serialization(format!("Failed to parse Google response: {}", e))
             })?;
 
-        debug!("Parsed Google Response: {} candidates", google_response.candidates.len());
+        debug!(
+            "Parsed Google Response: {} candidates",
+            google_response.candidates.len()
+        );
         for (i, candidate) in google_response.candidates.iter().enumerate() {
-            debug!("Candidate {}: has_content={}, finish_reason={:?}", 
-                     i, candidate.content.is_some(), candidate.finish_reason);
+            debug!(
+                "Candidate {}: has_content={}, finish_reason={:?}",
+                i,
+                candidate.content.is_some(),
+                candidate.finish_reason
+            );
             if let Some(content) = &candidate.content {
                 debug!("Content parts count: {}", content.parts.len());
                 for (j, part) in content.parts.iter().enumerate() {
-                    debug!("Part {}: '{}'", j, part.text);
+                    debug!("Part {}: text={:?}", j, part.text);
                 }
             }
         }
@@ -331,18 +359,15 @@ impl LLMProviderClient for GoogleClient {
         let temp_client = GoogleClient::new(client_config);
 
         let google_request = temp_client.convert_request(&request)?;
-        
+
         // Google uses streaming with the streamGenerateContent endpoint
         let request_url = format!(
             "{}/models/{}:streamGenerateContent?key={}",
-            temp_client.config.base_url,
-            &request.model,
-            &api_key
+            temp_client.config.base_url, &request.model, &api_key
         );
-        
 
-
-        let response = temp_client.client
+        let response = temp_client
+            .client
             .post(&request_url)
             .header("Content-Type", "application/json")
             .json(&google_request)
@@ -358,11 +383,8 @@ impl LLMProviderClient for GoogleClient {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
 
-
             return Err(temp_client.handle_error_response(status.as_u16(), &error_text));
         }
-
-
 
         // Google uses JSON array streaming format, not SSE
         let request_id = request.id.to_string();
@@ -371,8 +393,6 @@ impl LLMProviderClient for GoogleClient {
         let stream = response.bytes_stream();
         let buffer = String::new();
         let chunk_index = 0;
-        
-
 
         let google_stream = futures::stream::unfold(
             (stream, buffer, chunk_index, request_id, model),
@@ -382,31 +402,51 @@ impl LLMProviderClient for GoogleClient {
                         Ok(bytes) => {
                             let chunk_str = String::from_utf8_lossy(&bytes);
 
-                            
                             buffer.push_str(&chunk_str);
                             chunk_index += 1;
-                            
+
                             // Try to parse complete JSON objects from buffer
                             while let Some(json_end) = find_complete_json_object(&buffer) {
                                 let json_str = buffer[..json_end].trim().to_string();
                                 buffer = buffer[json_end..].to_string();
-                            
+
                                 if !json_str.is_empty() {
                                     // Remove leading comma or bracket if present
-                                    let clean_json = json_str.trim_start_matches(',').trim_start_matches('[').trim();
-                                
+                                    let clean_json = json_str
+                                        .trim_start_matches(',')
+                                        .trim_start_matches('[')
+                                        .trim();
+
                                     if !clean_json.is_empty() {
-                                        match parse_google_json_chunk(&clean_json, &request_id, &model) {
+                                        match parse_google_json_chunk(
+                                            &clean_json,
+                                            &request_id,
+                                            &model,
+                                        ) {
                                             Ok(Some(chunk)) => {
-
-                                                return Some((Ok(chunk), (stream, buffer, chunk_index, request_id, model)));
+                                                return Some((
+                                                    Ok(chunk),
+                                                    (
+                                                        stream,
+                                                        buffer,
+                                                        chunk_index,
+                                                        request_id,
+                                                        model,
+                                                    ),
+                                                ));
                                             }
-                                            Ok(None) => {
-
-                                            }
+                                            Ok(None) => {}
                                             Err(e) => {
-
-                                                return Some((Err(e), (stream, buffer, chunk_index, request_id, model)));
+                                                return Some((
+                                                    Err(e),
+                                                    (
+                                                        stream,
+                                                        buffer,
+                                                        chunk_index,
+                                                        request_id,
+                                                        model,
+                                                    ),
+                                                ));
                                             }
                                         }
                                     }
@@ -414,36 +454,34 @@ impl LLMProviderClient for GoogleClient {
                             }
                         }
                         Err(_e) => {
-
-                            return Some((Err(LLMError::Network(_e.to_string())), (stream, buffer, chunk_index, request_id, model)));
+                            return Some((
+                                Err(LLMError::Network(_e.to_string())),
+                                (stream, buffer, chunk_index, request_id, model),
+                            ));
                         }
                     }
                 }
-                
+
                 // Process any remaining buffer content when stream ends
                 if !buffer.trim().is_empty() {
                     let clean_json = buffer.trim().trim_end_matches(']').trim();
                     if !clean_json.is_empty() {
                         match parse_google_json_chunk(clean_json, &request_id, &model) {
                             Ok(Some(chunk)) => {
-
-                                return Some((Ok(chunk), (stream, String::new(), chunk_index, request_id, model)));
+                                return Some((
+                                    Ok(chunk),
+                                    (stream, String::new(), chunk_index, request_id, model),
+                                ));
                             }
-                            Ok(None) => {
-
-                            }
-                            Err(e) => {
-
-                            }
+                            Ok(None) => {}
+                            Err(e) => {}
                         }
                     }
                 }
-                
 
                 None
-            }
+            },
         );
-
 
         Ok(Box::new(Box::pin(google_stream)))
     }
@@ -460,7 +498,8 @@ impl LLMProviderClient for GoogleClient {
         let headers = temp_client.build_headers()?;
         let request_url = format!("{}/models?key={}", temp_client.config.base_url, api_key);
 
-        let response = temp_client.client
+        let response = temp_client
+            .client
             .get(&request_url)
             .headers(headers)
             .timeout(Duration::from_secs(10)) // Shorter timeout for health checks
@@ -488,16 +527,23 @@ impl LLMProviderClient for GoogleClient {
         self
     }
 
-    async fn embeddings(&self, _request: &EmbeddingsRequest, _api_key: &str) -> LLMResult<EmbeddingsResponse> {
+    async fn embeddings(
+        &self,
+        _request: &EmbeddingsRequest,
+        _api_key: &str,
+    ) -> LLMResult<EmbeddingsResponse> {
         // TODO: Implement Google embeddings support
-        Err(LLMError::Provider("Embeddings not yet implemented for Google provider".to_string()))
+        Err(LLMError::Provider(
+            "Embeddings not yet implemented for Google provider".to_string(),
+        ))
     }
 }
 
 impl CostCalculator for GoogleClient {
     fn calculate_cost(&self, usage: &crate::llm::TokenUsage, model: &str) -> f64 {
         if let Some((input_cost, output_cost)) = super::config::get_model_cost_info(model) {
-            (usage.prompt_tokens as f64 * input_cost) + (usage.completion_tokens as f64 * output_cost)
+            (usage.prompt_tokens as f64 * input_cost)
+                + (usage.completion_tokens as f64 * output_cost)
         } else {
             // Fallback to Gemini Pro pricing
             (usage.prompt_tokens as f64 * 0.0000005) + (usage.completion_tokens as f64 * 0.0000015)
@@ -517,7 +563,7 @@ impl CostCalculator for GoogleClient {
         if let Some((input_cost, output_cost)) = super::config::get_model_cost_info(model) {
             let input_cost_total = usage.prompt_tokens as f64 * input_cost;
             let output_cost_total = usage.completion_tokens as f64 * output_cost;
-            
+
             CostBreakdown {
                 input_cost: input_cost_total,
                 output_cost: output_cost_total,
@@ -528,7 +574,7 @@ impl CostCalculator for GoogleClient {
             // Fallback to Gemini Pro pricing
             let input_cost_total = usage.prompt_tokens as f64 * 0.0000005;
             let output_cost_total = usage.completion_tokens as f64 * 0.0000015;
-            
+
             CostBreakdown {
                 input_cost: input_cost_total,
                 output_cost: output_cost_total,
@@ -569,7 +615,7 @@ mod tests {
                     content: "Hello".to_string(),
                     name: None,
                     function_call: None,
-                }
+                },
             ],
             temperature: Some(0.7),
             max_tokens: Some(100),
@@ -587,7 +633,7 @@ mod tests {
         let google_request = client.convert_request(&request).unwrap();
         assert!(!google_request.contents.is_empty());
         assert!(google_request.generation_config.is_some());
-        
+
         let gen_config = google_request.generation_config.unwrap();
         assert_eq!(gen_config.temperature, Some(0.7));
         assert_eq!(gen_config.max_output_tokens, Some(100));
@@ -615,7 +661,7 @@ mod tests {
     #[test]
     fn test_is_gemini_model() {
         use crate::llm::providers::google::is_gemini_model;
-        
+
         assert!(is_gemini_model("gemini-pro"));
         assert!(is_gemini_model("gemini-1.5-flash"));
         assert!(is_gemini_model("gemini-2.5-flash-preview-05-20"));

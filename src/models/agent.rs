@@ -80,7 +80,7 @@ impl Default for LLMConfig {
     fn default() -> Self {
         Self {
             temperature: 0.7,
-            max_tokens: Some(1000),
+            max_tokens: Some(4000),
             top_p: Some(0.9),
             frequency_penalty: Some(0.0),
             presence_penalty: Some(0.0),

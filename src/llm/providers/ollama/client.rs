@@ -18,7 +18,7 @@ use crate::llm::{
 
 use crate::llm::traits::{LLMProviderClient, ModelInfo, ProviderConfigRequirements};
 
-use super::config::{get_config_requirements, get_fallback_models, OllamaConfig};
+use super::config::{get_config_requirements, supports_function_calling, OllamaConfig};
 use super::types::{
     OllamaChatMessage, OllamaEmbeddingsRequest, OllamaEmbeddingsResponse, OllamaError,
     OllamaModelInfo, OllamaModelsResponse, OllamaOptions, OllamaRequest, OllamaResponse,
@@ -108,6 +108,21 @@ impl OllamaClient {
         // Handle system message - Ollama can accept it as a separate field
         let (system_message, filtered_messages) = extract_system_message(messages);
 
+        // Convert functions for function calling
+        let tools = request.functions.as_ref().map(|functions| {
+            functions
+                .iter()
+                .map(|function| super::types::OllamaTool {
+                    tool_type: "function".to_string(),
+                    function: super::types::OllamaFunction {
+                        name: function.name.clone(),
+                        description: function.description.clone(),
+                        parameters: function.parameters.clone(),
+                    },
+                })
+                .collect()
+        });
+
         let ollama_request = OllamaRequest {
             model: request.model.clone(),
             messages: filtered_messages,
@@ -118,6 +133,7 @@ impl OllamaClient {
             template: None,
             context: None, // TODO: Implement conversation context
             keep_alive: Some(self.config.keep_alive.clone()),
+            tools,
         };
 
         Ok(ollama_request)
@@ -663,7 +679,7 @@ impl OllamaClient {
             context_window,
             max_output_tokens,
             supports_streaming: true,
-            supports_function_calling: false,
+            supports_function_calling: supports_function_calling(model_id),
             cost_per_input_token: 0.0, // Local inference is free
             cost_per_output_token: 0.0,
             capabilities,
@@ -724,7 +740,7 @@ fn convert_ollama_model_to_info(ollama_model: OllamaModelInfo) -> ModelInfo {
         context_window,
         max_output_tokens,
         supports_streaming: true, // Most Ollama models support streaming
-        supports_function_calling: false, // Most local models don't support function calling yet
+        supports_function_calling: supports_function_calling(&ollama_model.name),
         cost_per_input_token: 0.0, // Local inference is free
         cost_per_output_token: 0.0,
         capabilities,
@@ -805,4 +821,127 @@ pub fn determine_model_capabilities(name: &str) -> Vec<crate::llm::traits::Model
 fn estimate_tokens(text: &str) -> u32 {
     // Rough estimation: ~4 characters per token for English text
     (text.len() as f32 / 4.0).ceil() as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::{ChatMessage, FunctionDefinition, LLMRequest, MessageRole};
+    use std::collections::HashMap;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_tool_calling_support_detection() {
+        // Test models that should support function calling
+        assert!(supports_function_calling("llama3.1:7b"));
+        assert!(supports_function_calling("mistral:8x7b"));
+        assert!(supports_function_calling("functionary:7b"));
+        assert!(supports_function_calling("hermes:13b"));
+        assert!(supports_function_calling("qwen2.5:7b"));
+        assert!(supports_function_calling("phi3.5:mini"));
+
+        // Test models that should NOT support function calling
+        assert!(!supports_function_calling("llama2:7b"));
+        assert!(!supports_function_calling("mistral:7b"));
+        assert!(!supports_function_calling("codellama:7b"));
+        assert!(!supports_function_calling("gemma:7b"));
+    }
+
+    #[test]
+    fn test_convert_request_with_tools() {
+        let config = OllamaConfig::default();
+        let client = OllamaClient::new(config);
+
+        let tool = FunctionDefinition {
+            name: "get_weather".to_string(),
+            description: "Get weather information for a location".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "The location to get weather for"
+                    }
+                },
+                "required": ["location"]
+            }),
+        };
+
+        let request = LLMRequest {
+            id: Uuid::new_v4(),
+            model: "llama3.1:7b".to_string(),
+            messages: vec![ChatMessage {
+                role: MessageRole::User,
+                content: "What's the weather like in Paris?".to_string(),
+                name: None,
+                function_call: None,
+            }],
+            temperature: Some(0.7),
+            max_tokens: Some(100),
+            functions: Some(vec![tool]),
+            stream: Some(false),
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            stop: None,
+            function_call: None,
+            user: None,
+            metadata: HashMap::new(),
+        };
+
+        let ollama_request = client.convert_request(&request).unwrap();
+
+        // Verify tools are converted properly
+        assert!(ollama_request.tools.is_some());
+        let tools = ollama_request.tools.unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].function.name, "get_weather");
+        assert_eq!(
+            tools[0].function.description,
+            "Get weather information for a location"
+        );
+    }
+
+    #[test]
+    fn test_message_conversion_with_tool_calls() {
+        let function_call = crate::llm::FunctionCall {
+            name: "get_weather".to_string(),
+            arguments: r#"{"location": "Paris"}"#.to_string(),
+        };
+
+        let chat_message = ChatMessage {
+            role: MessageRole::Assistant,
+            content: "I'll get the weather for Paris.".to_string(),
+            name: None,
+            function_call: Some(function_call),
+        };
+
+        let ollama_message: OllamaChatMessage = (&chat_message).into();
+
+        // Verify tool calls are converted
+        assert!(ollama_message.tool_calls.is_some());
+        let tool_calls = ollama_message.tool_calls.unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].function.name, "get_weather");
+
+        // Convert back and verify
+        let converted_back: ChatMessage = ollama_message.into();
+        assert!(converted_back.function_call.is_some());
+        let fc = converted_back.function_call.unwrap();
+        assert_eq!(fc.name, "get_weather");
+    }
+
+    #[test]
+    fn test_model_info_function_calling_support() {
+        let config = OllamaConfig::default();
+        let client = OllamaClient::new(config);
+
+        // Test model that supports function calling
+        let model_info = client.create_model_info_from_id("llama3.1:7b");
+        assert!(model_info.supports_function_calling);
+
+        // Test model that doesn't support function calling
+        let model_info = client.create_model_info_from_id("llama2:7b");
+        assert!(!model_info.supports_function_calling);
+    }
 }

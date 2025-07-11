@@ -94,7 +94,7 @@ pub fn get_available_models() -> Vec<ModelInfo> {
         context_window: 200000,
         max_output_tokens: 4096,
         supports_streaming: true,
-        supports_function_calling: false,
+        supports_function_calling: true,
         cost_per_input_token: 0.000003, // Default to Claude 3 Sonnet pricing
         cost_per_output_token: 0.000015,
         capabilities: vec![

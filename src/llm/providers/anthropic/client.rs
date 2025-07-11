@@ -4,26 +4,24 @@
 use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::{header::HeaderMap, header::HeaderValue, header::CONTENT_TYPE, Client};
-use tracing::{debug, error};
 use serde_json::json;
 use std::time::Duration;
+use tracing::{debug, error};
 
 use crate::llm::{
-    LLMError, LLMRequest, LLMResponse, LLMResult, StreamingChunk,
-    Choice, LLMProviderType, RoutingInfo, RoutingStrategy, MessageRole,
-    EmbeddingsRequest, EmbeddingsResponse,
-    sse::{response_to_sse_stream, anthropic::anthropic_event_to_chunk}
+    sse::{anthropic::anthropic_event_to_chunk, response_to_sse_stream},
+    Choice, EmbeddingsRequest, EmbeddingsResponse, LLMError, LLMProviderType, LLMRequest,
+    LLMResponse, LLMResult, MessageRole, RoutingInfo, RoutingStrategy, StreamingChunk,
 };
 
 use crate::llm::traits::{
-    LLMProviderClient, ModelInfo, ProviderConfigRequirements, CostCalculator, CostBreakdown
+    CostBreakdown, CostCalculator, LLMProviderClient, ModelInfo, ProviderConfigRequirements,
 };
 
+use super::config::{get_available_models, get_config_requirements, AnthropicConfig};
 use super::types::{
-    AnthropicRequest, AnthropicResponse, AnthropicUsage, AnthropicMessage,
-    AnthropicError
+    AnthropicError, AnthropicMessage, AnthropicRequest, AnthropicResponse, AnthropicUsage,
 };
-use super::config::{AnthropicConfig, get_config_requirements, get_available_models};
 
 /// Anthropic provider client
 pub struct AnthropicClient {
@@ -54,12 +52,12 @@ impl AnthropicClient {
         headers.insert(
             "x-api-key",
             HeaderValue::from_str(&self.config.api_key)
-                .map_err(|e| LLMError::Internal(format!("Invalid API key format: {}", e)))?
+                .map_err(|e| LLMError::Internal(format!("Invalid API key format: {}", e)))?,
         );
         headers.insert(
             "anthropic-version",
             HeaderValue::from_str(&self.config.api_version)
-                .map_err(|e| LLMError::Internal(format!("Invalid API version format: {}", e)))?
+                .map_err(|e| LLMError::Internal(format!("Invalid API version format: {}", e)))?,
         );
 
         // Add custom headers
@@ -69,7 +67,7 @@ impl AnthropicClient {
             headers.insert(
                 header_name,
                 HeaderValue::from_str(value)
-                    .map_err(|e| LLMError::Internal(format!("Invalid header value: {}", e)))?
+                    .map_err(|e| LLMError::Internal(format!("Invalid header value: {}", e)))?,
             );
         }
 
@@ -93,6 +91,18 @@ impl AnthropicClient {
             }
         }
 
+        // Convert function definitions to Anthropic tools format
+        let tools = request.functions.as_ref().map(|functions| {
+            functions
+                .iter()
+                .map(|func| super::types::AnthropicTool {
+                    name: func.name.clone(),
+                    description: func.description.clone(),
+                    input_schema: func.parameters.clone(),
+                })
+                .collect()
+        });
+
         let anthropic_request = AnthropicRequest {
             model: request.model.clone(),
             messages,
@@ -103,6 +113,7 @@ impl AnthropicClient {
             stop_sequences: request.stop.clone(),
             stream: Some(false), // Force non-streaming for regular chat_completion
             system: system_prompt,
+            tools,
         };
 
         Ok(anthropic_request)
@@ -173,10 +184,7 @@ impl AnthropicClient {
                 401 => LLMError::AuthenticationFailed(error_text.to_string()),
                 429 => LLMError::RateLimitExceeded(error_text.to_string()),
                 400 => LLMError::InvalidRequest(error_text.to_string()),
-                _ => LLMError::Internal(format!(
-                    "HTTP {}: {}",
-                    status_code, error_text
-                )),
+                _ => LLMError::Internal(format!("HTTP {}: {}", status_code, error_text)),
             }
         }
     }
@@ -196,11 +204,15 @@ impl LLMProviderClient for AnthropicClient {
         let anthropic_request = temp_client.convert_request(request)?;
 
         let request_url = format!("{}/v1/messages", temp_client.config.base_url);
-        
-        debug!("Anthropic API Request: URL={}, Model={}", request_url, request.model);
+
+        debug!(
+            "Anthropic API Request: URL={}, Model={}",
+            request_url, request.model
+        );
         debug!("API key: {}...", &api_key[..8.min(api_key.len())]);
 
-        let response = temp_client.client
+        let response = temp_client
+            .client
             .post(&request_url)
             .headers(headers)
             .json(&anthropic_request)
@@ -242,14 +254,14 @@ impl LLMProviderClient for AnthropicClient {
 
         let headers = temp_client.build_headers()?;
         let mut anthropic_request = temp_client.convert_request(&request)?;
-        
+
         // Enable streaming for this request
         anthropic_request.stream = Some(true);
 
         let request_url = format!("{}/v1/messages", temp_client.config.base_url);
-        
 
-        let response = temp_client.client
+        let response = temp_client
+            .client
             .post(&request_url)
             .headers(headers)
             .json(&anthropic_request)
@@ -265,16 +277,13 @@ impl LLMProviderClient for AnthropicClient {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
 
-
             return Err(temp_client.handle_error_response(status.as_u16(), &error_text));
         }
-
-
 
         // Convert response to SSE stream and parse Anthropic events
         let request_id = request.id.to_string();
         let model = request.model;
-        
+
         let sse_stream = response_to_sse_stream(response);
         let chunk_stream = sse_stream.filter_map(move |sse_result| {
             let request_id = request_id.clone();
@@ -306,7 +315,7 @@ impl LLMProviderClient for AnthropicClient {
         let temp_client = AnthropicClient::new(client_config);
 
         let headers = temp_client.build_headers()?;
-        
+
         // Use a simple health check request
         let health_request = json!({
             "model": "claude-3-haiku-20240307",
@@ -316,7 +325,8 @@ impl LLMProviderClient for AnthropicClient {
 
         let request_url = format!("{}/v1/messages", temp_client.config.base_url);
 
-        let response = temp_client.client
+        let response = temp_client
+            .client
             .post(&request_url)
             .headers(headers)
             .json(&health_request)
@@ -345,16 +355,23 @@ impl LLMProviderClient for AnthropicClient {
         self
     }
 
-    async fn embeddings(&self, _request: &EmbeddingsRequest, _api_key: &str) -> LLMResult<EmbeddingsResponse> {
+    async fn embeddings(
+        &self,
+        _request: &EmbeddingsRequest,
+        _api_key: &str,
+    ) -> LLMResult<EmbeddingsResponse> {
         // TODO: Implement Anthropic embeddings support (if they provide this service)
-        Err(LLMError::Provider("Embeddings not yet implemented for Anthropic provider".to_string()))
+        Err(LLMError::Provider(
+            "Embeddings not yet implemented for Anthropic provider".to_string(),
+        ))
     }
 }
 
 impl CostCalculator for AnthropicClient {
     fn calculate_cost(&self, usage: &crate::llm::TokenUsage, model: &str) -> f64 {
         if let Some((input_cost, output_cost)) = super::config::get_model_cost_info(model) {
-            (usage.prompt_tokens as f64 * input_cost) + (usage.completion_tokens as f64 * output_cost)
+            (usage.prompt_tokens as f64 * input_cost)
+                + (usage.completion_tokens as f64 * output_cost)
         } else {
             // Fallback to Claude 3 Sonnet pricing
             (usage.prompt_tokens as f64 * 0.000003) + (usage.completion_tokens as f64 * 0.000015)
@@ -374,7 +391,7 @@ impl CostCalculator for AnthropicClient {
         if let Some((input_cost, output_cost)) = super::config::get_model_cost_info(model) {
             let input_cost_total = usage.prompt_tokens as f64 * input_cost;
             let output_cost_total = usage.completion_tokens as f64 * output_cost;
-            
+
             CostBreakdown {
                 input_cost: input_cost_total,
                 output_cost: output_cost_total,
@@ -385,7 +402,7 @@ impl CostCalculator for AnthropicClient {
             // Fallback to Claude 3 Sonnet pricing
             let input_cost_total = usage.prompt_tokens as f64 * 0.000003;
             let output_cost_total = usage.completion_tokens as f64 * 0.000015;
-            
+
             CostBreakdown {
                 input_cost: input_cost_total,
                 output_cost: output_cost_total,
@@ -426,7 +443,7 @@ mod tests {
                     content: "Hello".to_string(),
                     name: None,
                     function_call: None,
-                }
+                },
             ],
             temperature: Some(0.7),
             max_tokens: Some(100),
@@ -443,7 +460,10 @@ mod tests {
 
         let anthropic_request = client.convert_request(&request).unwrap();
         assert_eq!(anthropic_request.model, "claude-3-sonnet-20240229");
-        assert_eq!(anthropic_request.system, Some("You are a helpful assistant".to_string()));
+        assert_eq!(
+            anthropic_request.system,
+            Some("You are a helpful assistant".to_string())
+        );
         assert_eq!(anthropic_request.messages.len(), 1);
         assert_eq!(anthropic_request.messages[0].content, "Hello");
     }

@@ -1,5 +1,5 @@
 //! Server-Sent Events (SSE) parsing utilities for LLM streaming
-//! 
+//!
 //! This module provides utilities for parsing SSE streams from different LLM providers.
 //! Each provider has slightly different SSE formats, so we provide both generic and
 //! provider-specific parsing functions.
@@ -7,7 +7,9 @@
 use futures::{Stream, StreamExt};
 use tracing::{debug, error};
 
-use crate::llm::{LLMError, LLMResult, StreamingChunk, StreamingChoice, ChatMessage, MessageRole, LLMProviderType};
+use crate::llm::{
+    ChatMessage, LLMError, LLMProviderType, LLMResult, MessageRole, StreamingChoice, StreamingChunk,
+};
 
 /// SSE event structure
 #[derive(Debug, Clone)]
@@ -34,23 +36,30 @@ impl SSEParser {
     pub fn parse_chunk(&mut self, chunk: &[u8]) -> LLMResult<Vec<SSEEvent>> {
         let chunk_str = std::str::from_utf8(chunk)
             .map_err(|e| LLMError::Parse(format!("Invalid UTF-8 in SSE stream: {}", e)))?;
-        
+
         self.buffer.push_str(chunk_str);
-        
+
         let mut events = Vec::new();
-        
+
         // Split buffer by double newlines (event boundaries)
         while let Some(double_newline_pos) = self.buffer.find("\n\n") {
             let event_block = self.buffer[..double_newline_pos].to_string();
             self.buffer = self.buffer[double_newline_pos + 2..].to_string();
-            
+
             debug!("Found event block: {:?}", event_block);
-            
+
             if !event_block.trim().is_empty() {
                 match self.parse_event_block(&event_block) {
                     Ok(event) => {
-                        debug!("Parsed event: type={:?}, data={:?}", event.event_type, 
-                                 if event.data.len() < 100 { &event.data } else { &event.data[..100] });
+                        debug!(
+                            "Parsed event: type={:?}, data={:?}",
+                            event.event_type,
+                            if event.data.len() < 100 {
+                                &event.data
+                            } else {
+                                &event.data[..100]
+                            }
+                        );
                         events.push(event);
                     }
                     Err(e) => {
@@ -59,8 +68,12 @@ impl SSEParser {
                 }
             }
         }
-        
-        debug!("Returning {} events, buffer remaining: {} chars", events.len(), self.buffer.len());
+
+        debug!(
+            "Returning {} events, buffer remaining: {} chars",
+            events.len(),
+            self.buffer.len()
+        );
         Ok(events)
     }
 
@@ -132,40 +145,35 @@ pub fn response_to_sse_stream(
     let byte_stream = response.bytes_stream();
     let mut parser = SSEParser::new();
 
-    Box::pin(byte_stream.map(move |chunk_result| {
-        match chunk_result {
-            Ok(chunk) => {
-                match parser.parse_chunk(&chunk) {
+    Box::pin(
+        byte_stream
+            .map(move |chunk_result| match chunk_result {
+                Ok(chunk) => match parser.parse_chunk(&chunk) {
+                    Ok(events) => Ok(events),
+                    Err(e) => Err(e),
+                },
+                Err(e) => Err(LLMError::Network(e.to_string())),
+            })
+            .filter_map(|result| async move {
+                match result {
                     Ok(events) => {
-                        Ok(events)
+                        if events.is_empty() {
+                            debug!("Skipping empty event list");
+                            None
+                        } else {
+                            Some(Ok(events))
+                        }
                     }
-                    Err(e) => {
-                        Err(e)
-                    }
+                    Err(e) => Some(Err(e)),
                 }
-            }
-            Err(e) => {
-                Err(LLMError::Network(e.to_string()))
-            }
-        }
-    }).filter_map(|result| async move {
-        match result {
-            Ok(events) => {
-                if events.is_empty() {
-                    debug!("Skipping empty event list");
-                    None
-                } else {
-                    Some(Ok(events))
-                }
-            }
-            Err(e) => Some(Err(e)),
-        }
-    }).flat_map(|events_result| {
-        futures::stream::iter(match events_result {
-            Ok(events) => events.into_iter().map(Ok).collect::<Vec<_>>(),
-            Err(e) => vec![Err(e)],
-        })
-    }))
+            })
+            .flat_map(|events_result| {
+                futures::stream::iter(match events_result {
+                    Ok(events) => events.into_iter().map(Ok).collect::<Vec<_>>(),
+                    Err(e) => vec![Err(e)],
+                })
+            }),
+    )
 }
 
 /// Anthropic-specific SSE parsing
@@ -178,31 +186,28 @@ pub mod anthropic {
     pub enum AnthropicStreamEvent {
         #[serde(rename = "ping")]
         Ping,
-        
+
         #[serde(rename = "message_start")]
         MessageStart { message: AnthropicMessageStart },
-        
+
         #[serde(rename = "content_block_start")]
-        ContentBlockStart { 
+        ContentBlockStart {
             index: u32,
             content_block: AnthropicContentBlock,
         },
-        
+
         #[serde(rename = "content_block_delta")]
-        ContentBlockDelta {
-            index: u32,
-            delta: AnthropicDelta,
-        },
-        
+        ContentBlockDelta { index: u32, delta: AnthropicDelta },
+
         #[serde(rename = "content_block_stop")]
         ContentBlockStop { index: u32 },
-        
+
         #[serde(rename = "message_delta")]
         MessageDelta { delta: AnthropicMessageDelta },
-        
+
         #[serde(rename = "message_stop")]
         MessageStop,
-        
+
         #[serde(rename = "error")]
         Error { error: AnthropicStreamError },
     }
@@ -253,22 +258,18 @@ pub mod anthropic {
         request_id: &str,
         model: &str,
     ) -> LLMResult<Option<StreamingChunk>> {
-
-        
         // Skip non-data events
         if event.data.trim().is_empty() || event.data.trim() == "[DONE]" {
             debug!("Skipping empty or DONE event");
             return Ok(None);
         }
 
-        let stream_event: AnthropicStreamEvent = serde_json::from_str(&event.data)
-            .map_err(|e| {
+        let stream_event: AnthropicStreamEvent =
+            serde_json::from_str(&event.data).map_err(|e| {
                 error!("Failed to parse Anthropic JSON: {}", e);
                 debug!("Raw data was: {}", event.data);
                 LLMError::Parse(format!("Failed to parse Anthropic stream event: {}", e))
             })?;
-            
-
 
         match stream_event {
             AnthropicStreamEvent::Ping => {
@@ -323,9 +324,10 @@ pub mod anthropic {
                     Ok(None)
                 }
             }
-            AnthropicStreamEvent::Error { error } => {
-                Err(LLMError::Provider(format!("Anthropic stream error: {}", error.message)))
-            }
+            AnthropicStreamEvent::Error { error } => Err(LLMError::Provider(format!(
+                "Anthropic stream error: {}",
+                error.message
+            ))),
             _ => {
                 Ok(None) // Ignore other event types for now
             }
@@ -358,6 +360,28 @@ pub mod openai {
     pub struct OpenAIDelta {
         pub role: Option<String>,
         pub content: Option<String>,
+        pub tool_calls: Option<Vec<StreamingToolCall>>,
+    }
+
+    /// Streaming-specific tool call structure that can handle partial data
+    #[derive(Debug, Deserialize)]
+    pub struct StreamingToolCall {
+        pub index: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub id: Option<String>,
+        #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+        pub call_type: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub function: Option<StreamingFunctionCall>,
+    }
+
+    /// Streaming-specific function call that can handle partial arguments
+    #[derive(Debug, Deserialize)]
+    pub struct StreamingFunctionCall {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub arguments: Option<String>,
     }
 
     /// Convert OpenAI SSE event to our StreamingChunk
@@ -372,14 +396,34 @@ pub mod openai {
 
         if let Some(choice) = chunk.choices.first() {
             let content = choice.delta.content.clone().unwrap_or_default();
-            let role = choice.delta.role.clone().unwrap_or_else(|| "assistant".to_string());
-            
+            let role = choice
+                .delta
+                .role
+                .clone()
+                .unwrap_or_else(|| "assistant".to_string());
+
             let message_role = match role.as_str() {
                 "user" => MessageRole::User,
                 "system" => MessageRole::System,
                 "assistant" => MessageRole::Assistant,
                 _ => MessageRole::Assistant,
             };
+
+            // Convert OpenAI tool_calls to our function_call format
+            let function_call = choice
+                .delta
+                .tool_calls
+                .as_ref()
+                .and_then(|tool_calls| tool_calls.first())
+                .and_then(|tool_call| {
+                    tool_call.function.as_ref().map(|func| {
+                        // Create function call even with partial data (name or arguments might be missing)
+                        crate::llm::FunctionCall {
+                            name: func.name.as_ref().unwrap_or(&String::new()).clone(),
+                            arguments: func.arguments.as_ref().unwrap_or(&String::new()).clone(),
+                        }
+                    })
+                });
 
             Ok(Some(StreamingChunk {
                 id: chunk.id,
@@ -392,7 +436,7 @@ pub mod openai {
                         role: message_role,
                         content,
                         name: None,
-                        function_call: None,
+                        function_call,
                     },
                     finish_reason: choice.finish_reason.clone(),
                 }],
@@ -460,7 +504,9 @@ pub mod google {
             .map_err(|e| LLMError::Parse(format!("Failed to parse Google stream chunk: {}", e)))?;
 
         if let Some(candidate) = chunk.candidates.first() {
-            let content = candidate.content.parts
+            let content = candidate
+                .content
+                .parts
                 .iter()
                 .filter_map(|part| part.text.as_ref())
                 .cloned()
@@ -501,10 +547,10 @@ mod tests {
     #[test]
     fn test_sse_parser_basic() {
         let mut parser = SSEParser::new();
-        
+
         let chunk = b"event: message\ndata: hello world\n\n";
         let events = parser.parse_chunk(chunk).unwrap();
-        
+
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, Some("message".to_string()));
         assert_eq!(events[0].data, "hello world");
@@ -513,10 +559,10 @@ mod tests {
     #[test]
     fn test_sse_parser_multiple_events() {
         let mut parser = SSEParser::new();
-        
+
         let chunk = b"data: first\n\ndata: second\n\n";
         let events = parser.parse_chunk(chunk).unwrap();
-        
+
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].data, "first");
         assert_eq!(events[1].data, "second");
@@ -525,12 +571,12 @@ mod tests {
     #[test]
     fn test_sse_parser_incomplete_event() {
         let mut parser = SSEParser::new();
-        
+
         // First chunk with incomplete event
         let chunk1 = b"data: incomplete";
         let events1 = parser.parse_chunk(chunk1).unwrap();
         assert_eq!(events1.len(), 0);
-        
+
         // Second chunk completes the event
         let chunk2 = b"\n\n";
         let events2 = parser.parse_chunk(chunk2).unwrap();
@@ -546,10 +592,11 @@ mod tests {
             id: None,
             retry: None,
         };
-        
-        let chunk = anthropic::anthropic_event_to_chunk(&event, "test-id", "claude-3-sonnet").unwrap();
+
+        let chunk =
+            anthropic::anthropic_event_to_chunk(&event, "test-id", "claude-3-sonnet").unwrap();
         assert!(chunk.is_some());
-        
+
         let chunk = chunk.unwrap();
         assert_eq!(chunk.choices[0].delta.content, "Hello");
         assert_eq!(chunk.provider, LLMProviderType::Anthropic);
@@ -563,12 +610,52 @@ mod tests {
             id: None,
             retry: None,
         };
-        
+
         let chunk = openai::openai_event_to_chunk(&event).unwrap();
         assert!(chunk.is_some());
-        
+
         let chunk = chunk.unwrap();
         assert_eq!(chunk.choices[0].delta.content, "Hello");
+        assert_eq!(chunk.provider, LLMProviderType::OpenAI);
+    }
+
+    #[test]
+    fn test_openai_streaming_tool_call_parsing() {
+        let event = SSEEvent {
+            event_type: None,
+            data: r#"{"id":"chatcmpl-test","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_test","type":"function","function":{"name":"test_function","arguments":"{\\"param\\": \\"value\\"}"}}]},"finish_reason":null}]}"#.to_string(),
+            id: None,
+            retry: None,
+        };
+
+        let chunk = openai::openai_event_to_chunk(&event).unwrap();
+        assert!(chunk.is_some());
+
+        let chunk = chunk.unwrap();
+        assert!(chunk.choices[0].delta.function_call.is_some());
+
+        let function_call = chunk.choices[0].delta.function_call.as_ref().unwrap();
+        assert_eq!(function_call.name, "test_function");
+        assert_eq!(function_call.arguments, r#"{"param": "value"}"#);
+        assert_eq!(chunk.provider, LLMProviderType::OpenAI);
+    }
+
+    #[test]
+    fn test_openai_streaming_tool_call_partial_parsing() {
+        // Test with partial tool call (no function name yet)
+        let event = SSEEvent {
+            event_type: None,
+            data: r#"{"id":"chatcmpl-test","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_test","type":"function","function":{"arguments":""}}]},"finish_reason":null}]}"#.to_string(),
+            id: None,
+            retry: None,
+        };
+
+        let chunk = openai::openai_event_to_chunk(&event).unwrap();
+        assert!(chunk.is_some());
+
+        let chunk = chunk.unwrap();
+        // Should be None because function name is missing
+        assert!(chunk.choices[0].delta.function_call.is_none());
         assert_eq!(chunk.provider, LLMProviderType::OpenAI);
     }
 }
