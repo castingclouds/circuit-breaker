@@ -233,7 +233,10 @@ impl AgentClient {
             .post(&full_url)
             .json(&backend_request)
             .header("Accept", "text/event-stream")
-            .header("Cache-Control", "no-cache");
+            .header("Cache-Control", "no-cache, no-store, must-revalidate")
+            .header("Connection", "keep-alive")
+            .header("X-Accel-Buffering", "no")
+            .header("Transfer-Encoding", "chunked");
 
         // Add tenant_id header if provided
         if let Some(tenant_id) = &request.tenant_id {
@@ -254,59 +257,42 @@ impl AgentClient {
             });
         }
 
-        let stream = response.bytes_stream().map(move |chunk_result| {
-            chunk_result
-                .map_err(|e| crate::Error::Network {
+        // Create raw streaming pipe using text stream for SSE
+        use futures::StreamExt;
+        let stream = response
+            .bytes_stream()
+            .map(|chunk_result| {
+                chunk_result.map_err(|e| crate::Error::Network {
                     message: e.to_string(),
                 })
-                .and_then(|chunk: Bytes| {
-                    // Parse SSE chunk into AgentStreamEvent
+            })
+            .map(|chunk_result| {
+                chunk_result.and_then(|chunk| {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis();
                     let chunk_str = String::from_utf8_lossy(&chunk);
+                    println!("🔍 RAW STREAM [{}ms]: Received {} bytes", now, chunk.len());
+                    println!("🔍 RAW CONTENT [{}ms]: {}", now, chunk_str);
 
-                    // Simple SSE parsing - look for data: lines
-                    for line in chunk_str.lines() {
-                        if let Some(data) = line.strip_prefix("data: ") {
-                            if data == "[DONE]" || data == "keep-alive" {
-                                // Stream completed or keep-alive
-                                continue;
-                            }
+                    // Just output raw content immediately
+                    print!("{}", chunk_str);
+                    use std::io::{self, Write};
+                    io::stdout().flush().unwrap();
 
-                            // Try to parse as structured SSE event
-                            match serde_json::from_str::<serde_json::Value>(data) {
-                                Ok(json_data) => {
-                                    return Ok(AgentStreamEvent {
-                                        event_type: json_data
-                                            .get("event")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("data")
-                                            .to_string(),
-                                        execution_id: "streaming".to_string(), // We don't have execution_id yet
-                                        data: json_data,
-                                        timestamp: chrono::Utc::now(),
-                                    });
-                                }
-                                Err(_) => {
-                                    // If not JSON, treat as plain text event
-                                    return Ok(AgentStreamEvent {
-                                        event_type: "data".to_string(),
-                                        execution_id: "streaming".to_string(),
-                                        data: serde_json::json!({"content": data}),
-                                        timestamp: chrono::Utc::now(),
-                                    });
-                                }
-                            }
-                        }
-                    }
-
-                    // If no valid data found, create a heartbeat event
+                    // Create a simple event with the raw content
                     Ok(AgentStreamEvent {
-                        event_type: "heartbeat".to_string(),
+                        event_type: "raw".to_string(),
                         execution_id: "streaming".to_string(),
-                        data: serde_json::json!({}),
+                        data: serde_json::json!({
+                            "raw_content": chunk_str,
+                            "byte_count": chunk.len()
+                        }),
                         timestamp: chrono::Utc::now(),
                     })
                 })
-        });
+            });
 
         Ok(Box::pin(stream))
     }
@@ -956,7 +942,7 @@ impl Agent {
             messages,
             temperature: Some(self.data.llm_config.temperature as f32),
             max_tokens: self.data.llm_config.max_tokens.map(|t| t as u32),
-            stream: None,
+            stream: Some(true),
             top_p: None,
             frequency_penalty: None,
             presence_penalty: None,

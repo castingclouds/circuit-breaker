@@ -512,11 +512,15 @@ pub async fn execute_agent_stream(
                         break;
                     }
 
+                    // Yield to ensure immediate flushing of SSE event
+                    tokio::task::yield_now().await;
+
                     // Terminate stream after completion or error
                     match &event {
                         AgentStreamEvent::Completed { .. } | AgentStreamEvent::Failed { .. } => {
                             // Send termination signal
                             let _ = sender.send_data("data: [DONE]\n\n".into()).await;
+                            tokio::task::yield_now().await;
                             break;
                         }
                         _ => {}

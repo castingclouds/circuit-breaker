@@ -589,7 +589,8 @@ mod storage_tests {
 
         fn create_test_agent_engine() -> AgentEngine {
             let storage = Arc::new(InMemoryAgentStorage::default());
-            AgentEngine::new(storage, AgentEngineConfig::default())
+            let llm_router = Arc::new(crate::llm::LLMRouter::new());
+            AgentEngine::new(storage, AgentEngineConfig::default(), llm_router)
         }
 
         #[test]
@@ -977,7 +978,7 @@ impl AgentEngine {
         let llm_start = std::time::Instant::now();
         info!("🎯 Calling call_llm_provider_streaming()...");
 
-        // Use streaming LLM call to emit ContentChunk events
+        // Start streaming LLM call - this now returns immediately and streams in background
         match self
             .call_llm_provider_streaming(
                 &agent.llm_provider,
@@ -989,30 +990,27 @@ impl AgentEngine {
         {
             Ok(response) => {
                 let llm_duration = llm_start.elapsed();
-                info!("✅ LLM call completed successfully in {:?}", llm_duration);
+                info!(
+                    "✅ LLM streaming started successfully in {:?}",
+                    llm_duration
+                );
                 debug!(
-                    "📋 LLM response: {}",
+                    "📋 LLM streaming response: {}",
                     serde_json::to_string(&response).unwrap_or_else(|_| "Invalid JSON".to_string())
                 );
 
-                info!("📝 Marking execution as complete");
+                info!("📝 Execution started - streaming in progress");
                 execution.complete(response.clone());
 
-                // Emit completion event
-                info!(
-                    "📡 Emitting Completed event for execution: {}",
-                    execution.id
-                );
-                let _ = self.stream_sender.send(AgentStreamEvent::Completed {
-                    execution_id: execution.id,
-                    final_response: response,
-                    usage: None, // TODO: Extract usage information if available
-                    context: Some(execution.context.clone()),
-                });
+                // Don't emit completion event here - it's handled by the background streaming task
+                info!("📡 Streaming events will be emitted as chunks arrive");
             }
             Err(e) => {
                 let llm_duration = llm_start.elapsed();
-                error!("❌ LLM call failed after {:?}: {}", llm_duration, e);
+                error!(
+                    "❌ LLM streaming failed to start after {:?}: {}",
+                    llm_duration, e
+                );
                 error!("❌ LLM error details: {:?}", e);
                 error!("❌ Failed execution: {}", execution.id);
 
@@ -1411,66 +1409,92 @@ impl AgentEngine {
                 metadata: std::collections::HashMap::new(),
             };
 
-            // Use streaming API
-            debug!(
-                "🎯 About to call stream_chat_completion with stop: {:?}",
-                request.stop
-            );
-            match self.llm_router.stream_chat_completion(request).await {
-                Ok(mut stream) => {
-                    let mut full_response = String::new();
-                    let mut sequence = 0u32;
+            // Start streaming in background task - don't await completion
+            let stream_sender = self.stream_sender.clone();
+            let llm_router = self.llm_router.clone();
+            let model_name_clone = model_name.clone();
+            let input_clone = input.clone();
 
-                    // Process streaming chunks
-                    while let Some(chunk_result) = stream.next().await {
-                        match chunk_result {
-                            Ok(chunk) => {
-                                if let Some(choice) = chunk.choices.first() {
-                                    if !choice.delta.content.is_empty() {
-                                        let content = &choice.delta.content;
-                                        full_response.push_str(content);
-                                        sequence += 1;
+            tokio::spawn(async move {
+                debug!(
+                    "🎯 About to call stream_chat_completion with stop: {:?}",
+                    request.stop
+                );
+                match llm_router.stream_chat_completion(request).await {
+                    Ok(mut stream) => {
+                        let mut full_response = String::new();
+                        let mut sequence = 0u32;
 
-                                        // Emit ContentChunk event
-                                        let _ = self.stream_sender.send(
-                                            AgentStreamEvent::ContentChunk {
-                                                execution_id,
-                                                chunk: content.clone(),
-                                                sequence,
-                                                context: None,
-                                            },
-                                        );
+                        // Process streaming chunks in real-time
+                        while let Some(chunk_result) = stream.next().await {
+                            match chunk_result {
+                                Ok(chunk) => {
+                                    if let Some(choice) = chunk.choices.first() {
+                                        if !choice.delta.content.is_empty() {
+                                            let content = &choice.delta.content;
+                                            full_response.push_str(content);
+                                            sequence += 1;
+
+                                            // Emit ContentChunk event immediately
+                                            let _ = stream_sender.send(
+                                                AgentStreamEvent::ContentChunk {
+                                                    execution_id,
+                                                    chunk: content.clone(),
+                                                    sequence,
+                                                    context: None,
+                                                },
+                                            );
+                                        }
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                error!("❌ Streaming chunk error: {}", e);
-                                return Err(crate::CircuitBreakerError::Internal(format!(
-                                    "Streaming error: {}",
-                                    e
-                                )));
+                                Err(e) => {
+                                    error!("❌ Streaming chunk error: {}", e);
+                                    let _ = stream_sender.send(AgentStreamEvent::Failed {
+                                        execution_id,
+                                        error: format!("Streaming error: {}", e),
+                                        context: None,
+                                    });
+                                    return;
+                                }
                             }
                         }
+
+                        // Emit completion event
+                        let response_json = serde_json::json!({
+                            "response": full_response,
+                            "model": model_name_clone,
+                            "provider": "streaming",
+                            "input_processed": input_clone
+                        });
+
+                        let _ = stream_sender.send(AgentStreamEvent::Completed {
+                            execution_id,
+                            final_response: response_json,
+                            usage: None,
+                            context: None,
+                        });
                     }
-
-                    // Return full response for completion
-                    let response_json = serde_json::json!({
-                        "response": full_response,
-                        "model": model_name,
-                        "provider": "streaming",
-                        "input_processed": input
-                    });
-
-                    Ok(response_json)
+                    Err(e) => {
+                        error!("❌ Streaming API call failed: {}", e);
+                        let _ = stream_sender.send(AgentStreamEvent::Failed {
+                            execution_id,
+                            error: format!("Streaming failed: {}", e),
+                            context: None,
+                        });
+                    }
                 }
-                Err(e) => {
-                    error!("❌ Streaming API call failed: {}", e);
-                    Err(crate::CircuitBreakerError::Internal(format!(
-                        "Streaming failed: {}",
-                        e
-                    )))
-                }
-            }
+            });
+
+            // Return immediately - streaming happens in background
+            let response_json = serde_json::json!({
+                "status": "streaming_started",
+                "execution_id": execution_id,
+                "model": model_name,
+                "provider": "streaming",
+                "input_processed": input
+            });
+
+            Ok(response_json)
         })
     }
 

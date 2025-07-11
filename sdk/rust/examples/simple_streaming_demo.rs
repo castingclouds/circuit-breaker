@@ -102,6 +102,24 @@ async fn test_sse_streaming(client: &Client, agent_id: &str, tenant_id: &str) {
                         event_count += 1;
 
                         match event.event_type.as_str() {
+                            "raw" => {
+                                // Extract content from raw SSE data
+                                if let Some(raw_content) =
+                                    event.data.get("raw_content").and_then(|v| v.as_str())
+                                {
+                                    // Look for data: lines and extract content
+                                    for line in raw_content.lines() {
+                                        if let Some(content) = line.strip_prefix("data: ") {
+                                            if !content.is_empty()
+                                                && content != "Starting agent execution"
+                                            {
+                                                print!("{}", content);
+                                                io::stdout().flush().unwrap();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             "thinking" => {
                                 println!(
                                     "      🤔 Event {}: Thinking - {}",
