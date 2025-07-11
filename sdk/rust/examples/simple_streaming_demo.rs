@@ -102,68 +102,73 @@ async fn test_sse_streaming(client: &Client, agent_id: &str, tenant_id: &str) {
                         event_count += 1;
 
                         match event.event_type.as_str() {
-                            "raw" => {
-                                // Extract content from raw SSE data
-                                if let Some(raw_content) =
-                                    event.data.get("raw_content").and_then(|v| v.as_str())
-                                {
-                                    // Look for data: lines and extract content
-                                    for line in raw_content.lines() {
-                                        if let Some(content) = line.strip_prefix("data: ") {
-                                            if !content.is_empty()
-                                                && content != "Starting agent execution"
-                                            {
-                                                print!("{}", content);
-                                                io::stdout().flush().unwrap();
-                                            }
-                                        }
-                                    }
-                                }
-                            }
                             "thinking" => {
-                                println!(
-                                    "      🤔 Event {}: Thinking - {}",
-                                    event_count,
-                                    event
-                                        .data
-                                        .get("status")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("processing")
-                                );
+                                if event_count == 1 {
+                                    print!("   🤔 Thinking... ");
+                                    io::stdout().flush().unwrap();
+                                }
                             }
                             "complete" => {
-                                println!("      ✅ Event {}: Complete", event_count);
-                                if let Some(response) = event.data.get("response") {
-                                    println!(
-                                        "      📝 Response: {}",
-                                        response.as_str().unwrap_or("No response")
-                                    );
-                                } else if let Some(content) = event.data.as_str() {
-                                    println!("      📝 Content: {}", content);
-                                } else {
-                                    println!("      📝 Data: {}", event.data);
-                                }
-                                println!("   ✅ SSE stream completed with {} events", event_count);
+                                println!("\n\n   ✅ SSE streaming completed!");
                                 return;
                             }
                             "chunk" => {
+                                if event_count == 1 {
+                                    print!("\n   📝 Response: ");
+                                }
                                 if let Some(chunk) = event.data.get("content") {
                                     print!("{}", chunk.as_str().unwrap_or(""));
                                 } else if let Some(chunk) = event.data.as_str() {
                                     print!("{}", chunk);
                                 }
-                                // Flush stdout to ensure immediate display
                                 io::stdout().flush().unwrap();
                             }
                             "error" => {
-                                println!("      ❌ Event {}: Error - {}", event_count, event.data);
+                                println!("\n   ❌ Streaming error: {}", event.data);
                                 return;
                             }
+                            "raw" => {
+                                // Parse SSE events from raw content
+                                if let Some(raw_content) =
+                                    event.data.get("raw_content").and_then(|v| v.as_str())
+                                {
+                                    let mut event_type = None;
+                                    let mut data = None;
+
+                                    for line in raw_content.lines() {
+                                        if let Some(evt) = line.strip_prefix("event: ") {
+                                            event_type = Some(evt);
+                                        } else if let Some(d) = line.strip_prefix("data: ") {
+                                            data = Some(d);
+                                        }
+                                    }
+
+                                    match (event_type, data) {
+                                        (Some("thinking"), Some(_)) => {
+                                            if event_count == 1 {
+                                                print!("   🤔 Thinking... ");
+                                                io::stdout().flush().unwrap();
+                                            }
+                                        }
+                                        (Some("chunk"), Some(content)) => {
+                                            if event_count == 1 {
+                                                print!("\n   📝 Response: ");
+                                            }
+                                            print!("{}", content);
+                                            io::stdout().flush().unwrap();
+                                        }
+                                        (Some("complete"), Some(_)) => {
+                                            println!("\n\n   ✅ SSE streaming completed!");
+                                            return;
+                                        }
+                                        _ => {
+                                            // Other SSE events - ignore for clean output
+                                        }
+                                    }
+                                }
+                            }
                             _ => {
-                                println!(
-                                    "      📡 Event {}: {} - {}",
-                                    event_count, event.event_type, event.data
-                                );
+                                // Ignore other event types for clean output
                             }
                         }
                     }
@@ -172,7 +177,7 @@ async fn test_sse_streaming(client: &Client, agent_id: &str, tenant_id: &str) {
                         return;
                     }
                     Ok(None) => {
-                        println!("   🔚 SSE stream ended");
+                        println!("\n   🔚 SSE stream ended");
                         return;
                     }
                     Err(_) => {
@@ -182,7 +187,7 @@ async fn test_sse_streaming(client: &Client, agent_id: &str, tenant_id: &str) {
                 }
             }
 
-            println!("   ⏰ SSE stream timeout");
+            println!("\n   ⏰ SSE stream timeout");
         }
         Err(e) => {
             println!("   ❌ SSE stream failed: {}", e);
@@ -234,12 +239,14 @@ async fn test_websocket(client: &Client, agent_id: &str, tenant_id: &str) {
                                 println!("      🤔 Message {}: Thinking - Execution: {}, Status: {}", message_count, execution_id, status);
                             }
                             circuit_breaker_sdk::agents::AgentWebSocketServerMessage::ContentChunk { execution_id, chunk, sequence, .. } => {
-                                println!("      📝 Message {}: Content Chunk #{} - {}", message_count, sequence, chunk);
+                                if message_count == 1 {
+                                    print!("   📝 Response: ");
+                                }
+                                print!("{}", chunk);
+                                io::stdout().flush().unwrap();
                             }
                             circuit_breaker_sdk::agents::AgentWebSocketServerMessage::Complete { execution_id, response, .. } => {
-                                println!("      ✅ Message {}: Complete - Execution: {}", message_count, execution_id);
-                                println!("      📝 Final Response: {}", response);
-                                println!("   ✅ WebSocket completed with {} messages", message_count);
+                                println!("\n\n   ✅ WebSocket streaming completed!");
                                 break;
                             }
                             circuit_breaker_sdk::agents::AgentWebSocketServerMessage::Error { execution_id, error, .. } => {

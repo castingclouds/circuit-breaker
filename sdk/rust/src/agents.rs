@@ -225,7 +225,6 @@ impl AgentClient {
         // Use the streaming execution endpoint
         let url = format!("agents/{}/execute/stream", agent_id);
         let full_url = format!("{}{}", self.client.get_endpoint_url("rest"), url);
-        println!("🔍 SDK DEBUG: Streaming execution URL: {}", full_url);
 
         let mut req_builder = self
             .client
@@ -268,18 +267,7 @@ impl AgentClient {
             })
             .map(|chunk_result| {
                 chunk_result.and_then(|chunk| {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis();
                     let chunk_str = String::from_utf8_lossy(&chunk);
-                    println!("🔍 RAW STREAM [{}ms]: Received {} bytes", now, chunk.len());
-                    println!("🔍 RAW CONTENT [{}ms]: {}", now, chunk_str);
-
-                    // Just output raw content immediately
-                    print!("{}", chunk_str);
-                    use std::io::{self, Write};
-                    io::stdout().flush().unwrap();
 
                     // Create a simple event with the raw content
                     Ok(AgentStreamEvent {
